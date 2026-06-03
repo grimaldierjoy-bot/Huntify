@@ -3,6 +3,10 @@ export const config = { runtime: 'edge' };
 const SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
 
+// ⚡ OPTIM : modèle centralisé + plafond questions de ciblage
+const MODEL = 'claude-haiku-4-5';
+const MAX_TARGETING_QUESTIONS = 5;
+
 async function getAdvertisers() {
   try {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/advertisers?active=eq.true`, {
@@ -53,23 +57,43 @@ function promoBox(code, store, desc, best) {
   const bg = best ? '#dcfce7' : '#f0fdf4';
   return `<div style="background:${bg};border:${border};border-radius:12px;padding:10px 14px;margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:8px">
     <div>
-      <span style="font-size:11px;color:#16a34a;font-weight:700">${best?'â­ MEILLEUR â€” ':''}ðŸ·ï¸ ${store}</span>
+      <span style="font-size:11px;color:#16a34a;font-weight:700">${best?'⭐ MEILLEUR — ':''}🏷️ ${store}</span>
       <div style="font-size:12px;color:#166534;font-weight:600">${desc}</div>
     </div>
-    <div onclick="navigator.clipboard.writeText('${code}');this.innerHTML='âœ“';setTimeout(()=>this.innerHTML='${code}',2000)" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0">${code}</div>
+    <div onclick="navigator.clipboard.writeText('${code}');this.innerHTML='✓';setTimeout(()=>this.innerHTML='${code}',2000)" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0">${code}</div>
   </div>`;
 }
 
 function priceHistoryBox(old, trend) {
-  const icon = trend==='down'?'ðŸ“‰':trend==='up'?'ðŸ“ˆ':'âž¡ï¸';
+  const icon = trend==='down'?'📉':trend==='up'?'📈':'➡️';
   const color = trend==='down'?'#dcfce7':trend==='up'?'#fee2e2':'#f1f5f9';
   const border = trend==='down'?'#86efac':trend==='up'?'#fca5a5':'#e2e8f0';
-  const msg = trend==='down'?`Prix en baisse ! Ã‰tait Ã  ${old} âœ…`:trend==='up'?`âš ï¸ Prix gonflÃ© ! Ã‰tait Ã  ${old}`:`Prix stable`;
+  const msg = trend==='down'?`Prix en baisse ! Était à ${old} ✅`:trend==='up'?`⚠️ Prix gonflé ! Était à ${old}`:`Prix stable`;
   return `<div style="background:${color};border:1.5px solid ${border};border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12px;font-weight:600;color:#374151">${icon} ${msg}</div>`;
 }
 
 function questionBox(question) {
-  return `<div style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:12px 14px;margin-top:8px;font-size:13px;color:#1e40af;font-weight:600">ðŸ’¬ ${question}</div>`;
+  // ⚡ OPTIM : data-qbox sert au comptage serveur des questions déjà posées
+  return `<div data-qbox="1" style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:12px 14px;margin-top:8px;font-size:13px;color:#1e40af;font-weight:600">💬 ${question}</div>`;
+}
+
+// ⚡ OPTIM : récap de ce que l'agent a compris, juste avant la recherche
+function recapBox(recap) {
+  return `<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12px;color:#5b21b6;font-weight:600">🔎 ${recap}</div>`;
+}
+
+// ⚡ OPTIM : compte les questions de ciblage déjà posées dans l'historique
+function countQuestionsAsked(history) {
+  return (history||[]).filter(m => m.role !== 'user' && (m.content||'').includes('data-qbox')).length;
+}
+
+// ⚡ OPTIM : extrait le bloc JSON de la réponse de façon robuste
+function parseAgentJSON(rawText) {
+  try {
+    const match = rawText.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+  } catch(e) {}
+  return {};
 }
 
 export default async function handler(req) {
@@ -94,41 +118,109 @@ export default async function handler(req) {
 
     const activeNames = advertisers.map(a=>a.name).join(', ');
 
-    // Compression agressive de l'historique â€” max 800 chars total
+    // Compression agressive de l'historique — max 800 chars total
     const histSummary = (history||[]).slice(-3).map(m => {
       const role = m.role==='user' ? 'Client' : 'Agent';
       const text = (m.content||'').replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim().slice(0,150);
       return `${role}: ${text}`;
     }).join('\n').slice(0,800);
 
+    // ⚡ OPTIM : combien de questions de ciblage déjà posées ?
+    const questionsAsked = countQuestionsAsked(history);
+    const mustSearchNow = questionsAsked >= MAX_TARGETING_QUESTIONS; // on a atteint le plafond → on cherche
+
+    // ===================================================================
+    // ⚡ PHASE 1 — CIBLAGE (sans web search, appel léger & peu coûteux)
+    // On ne paie le web search QUE quand on est prêt à chercher.
+    // ===================================================================
+    let decision = { ready: mustSearchNow, question: null, recap: null };
+
+    if (!mustSearchNow) {
+      const phase1Resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
+        body: JSON.stringify({
+          model: MODEL,
+          max_tokens: 250, // ⚡ OPTIM : décision courte, pas de produits ici
+          system: [{
+            type: 'text',
+            // ⚡ OPTIM : partie stable du prompt → mise en cache (payée 1x puis 10%)
+            text: `Tu es l'agent shopping IA de Huntify. Ta SEULE tâche ici : décider si tu as assez d'infos pour lancer une recherche produit, ou s'il faut poser UNE question de ciblage de plus.
+
+Infos clés à réunir avant de chercher : catégorie précise, budget, usage/critères (taille, marque, couleur, etc.).
+Tu peux poser au MAXIMUM ${MAX_TARGETING_QUESTIONS} questions au total sur la conversation.
+Pose UNE seule question à la fois, courte et utile. Si la demande initiale est déjà précise, ne pose AUCUNE question.
+
+Réponds en JSON UNIQUEMENT, rien d'autre :
+- Si besoin d'une question : {"ready":false,"question":"ta question"}
+- Si prêt à chercher : {"ready":true,"recap":"Je cherche X, budget Y, critères Z"}`,
+            cache_control: { type: 'ephemeral' }
+          }],
+          messages: [{
+            role: 'user',
+            content: `HISTORIQUE RÉCENT:\n${histSummary || 'Début de conversation'}\n\nQuestions déjà posées: ${questionsAsked}/${MAX_TARGETING_QUESTIONS}\n\nNOUVEAU MESSAGE CLIENT: ${message}`
+          }]
+        })
+      });
+
+      const phase1Data = await phase1Resp.json();
+      if (phase1Resp.ok) {
+        let t1 = '';
+        for (const b of phase1Data.content) { if (b.type==='text') t1 += b.text; }
+        const d = parseAgentJSON(t1);
+        decision.ready = d.ready === true;
+        decision.question = d.question || null;
+        decision.recap = d.recap || null;
+      } else {
+        // En cas d'échec phase 1, on bascule en recherche pour ne pas bloquer
+        decision.ready = true;
+      }
+    }
+
+    // L'agent veut une info de plus → on s'arrête là (aucun web search facturé)
+    if (!decision.ready && decision.question) {
+      return new Response(JSON.stringify({
+        reply: questionBox(decision.question),
+        sessionId: sid
+      }), { headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'} });
+    }
+
+    // ===================================================================
+    // ⚡ PHASE 2 — RECHERCHE (web search déclenché UNE seule fois)
+    // ===================================================================
+    const recapText = decision.recap || `Je cherche : ${message}`;
+
     const agentResp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
       body: JSON.stringify({
-        model: 'claude-haiku-4-5',
-        max_tokens: 800,
-        tools: [{ type:"web_search_20250305", name:"web_search" }],
-        system: `Tu es l'agent shopping IA de Huntify. Boutiques : ${activeNames}.
+        model: MODEL,
+        max_tokens: 600, // ⚡ OPTIM : 800 → 600, le JSON tient largement
+        // ⚡ OPTIM : max_uses borne le pire cas en tokens/min
+        tools: [{ type:"web_search_20250305", name:"web_search", max_uses: 2 }],
+        system: [{
+          type: 'text',
+          // ⚡ OPTIM : system stable → caché. Seul le message user change.
+          text: `Tu es l'agent shopping IA de Huntify. Boutiques : ${activeNames}.
 
-TES COMPÃ‰TENCES :
-1. CIBLER LE BESOIN â€” si la demande est vague (ex: "robe", "casque"), pose UNE question prÃ©cise pour mieux cibler (taille, budget, usage, marque prÃ©fÃ©rÃ©e). Ne propose pas de produit avant d'avoir assez d'infos.
-2. CHERCHER EN LIVE â€” fais 1-2 recherches web sur Amazon.fr ET Rakuten pour trouver des produits RÃ‰ELS avec prix EXACTS et URLs DIRECTES
-3. CODES PROMOS â€” cherche sur dealabs.com, note le meilleur avec â­
-4. CONTEXTE â€” utilise l'historique pour affiner (si client dit "moins cher" â†’ cherche moins cher que ce proposÃ© avant)
+TA TÂCHE :
+1. CHERCHER EN LIVE — fais 1-2 recherches web sur Amazon.fr ET Rakuten pour trouver des produits RÉELS avec prix EXACTS et URLs DIRECTES.
+2. CODES PROMOS — cherche sur dealabs.com, note le meilleur avec ⭐.
+3. CONTEXTE — utilise l'historique pour affiner (si "moins cher" → cherche moins cher que proposé avant).
 
-HISTORIQUE RÃ‰CENT :
-${histSummary || 'DÃ©but de conversation'}
-
-RÃˆGLES JSON :
-- "needsInfo": true si besoin de poser une question avant de chercher
-- "question": la question Ã  poser si needsInfo=true
-- Sinon : cherche et retourne les produits avec vrais prix et URLs directes
+RÈGLES :
 - Max 2 produits Amazon + 1 Rakuten
 - Max 2 codes promos
+- Prix exacts, URLs directes quand possible
 
 JSON UNIQUEMENT :
-{"needsInfo":false,"question":null,"summary":"1 phrase","products":[{"name":"nom","price":"XXâ‚¬","store":"amazon","keywords":"mots","url":"url ou null","img":null,"badge":null},{"name":"nom","price":"DÃ¨s XXâ‚¬","store":"rakuten","keywords":"mots","url":"url ou null","img":null,"badge":null}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}`,
-        messages: [{ role:'user', content: message }]
+{"summary":"1 phrase","products":[{"name":"nom","price":"XX€","store":"amazon","keywords":"mots","url":"url ou null","img":null,"badge":null},{"name":"nom","price":"Dès XX€","store":"rakuten","keywords":"mots","url":"url ou null","img":null,"badge":null}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}`,
+          cache_control: { type: 'ephemeral' }
+        }],
+        messages: [{
+          role: 'user',
+          content: `HISTORIQUE:\n${histSummary || 'Début'}\n\nBESOIN CIBLÉ: ${recapText}\n\nMESSAGE: ${message}`
+        }]
       })
     });
 
@@ -138,30 +230,14 @@ JSON UNIQUEMENT :
     let rawText = '';
     for (const b of agentData.content) { if (b.type==='text') rawText += b.text; }
 
-    let needsInfo=false, question=null, products=[], promoCodes=[], summary='';
-    try {
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (match) {
-        const p = JSON.parse(match[0]);
-        needsInfo  = p.needsInfo   || false;
-        question   = p.question    || null;
-        products   = p.products    || [];
-        promoCodes = p.promoCodes  || [];
-        summary    = p.summary     || '';
-      }
-    } catch(e) {}
-
-    // L'agent pose une question pour mieux cibler
-    if (needsInfo && question) {
-      return new Response(JSON.stringify({
-        reply: questionBox(question),
-        sessionId: sid
-      }), { headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'} });
-    }
+    const p = parseAgentJSON(rawText);
+    let products   = p.products    || [];
+    let promoCodes = p.promoCodes  || [];
+    let summary    = p.summary     || '';
 
     if (!products.length) {
       products = advertisers.slice(0,2).map(a=>({name:message,price:'Voir prix',store:a.slug,keywords:message,url:null,img:null,badge:null}));
-      summary = `RÃ©sultats pour "${message}" :`;
+      summary = `Résultats pour "${message}" :`;
     }
 
     // Historique prix
@@ -174,18 +250,18 @@ JSON UNIQUEMENT :
       if (hist.length > 1 && !isNaN(cur)) {
         const old = hist[hist.length-1].price;
         const trend = cur < old*0.97 ? 'down' : cur > old*1.03 ? 'up' : 'stable';
-        priceHistoryHtml = priceHistoryBox(`${old}â‚¬`, trend);
+        priceHistoryHtml = priceHistoryBox(`${old}€`, trend);
       }
       if (!isNaN(cur)) sbFetch('price_history','POST',{product_id:slug,product_name:mainProduct.name,price:cur,store:'amazon',url:mainProduct.url||null});
     }
 
     // AUTO-ALIMENTATION : sauvegarde prix Rakuten + codes promos
-    for (const p of products) {
-      if (!p.price || p.price==='Voir prix' || p.store==='amazon') continue;
-      const priceNum = parseFloat(p.price.replace('DÃ¨s ','').replace(/[^0-9.,]/g,'').replace(',','.'));
+    for (const pr of products) {
+      if (!pr.price || pr.price==='Voir prix' || pr.store==='amazon') continue;
+      const priceNum = parseFloat(pr.price.replace('Dès ','').replace(/[^0-9.,]/g,'').replace(',','.'));
       if (!isNaN(priceNum)) {
-        const pSlug = p.name.toLowerCase().replace(/\s+/g,'-').slice(0,50);
-        sbFetch('price_history','POST',{product_id:pSlug,product_name:p.name,price:priceNum,store:p.store,url:p.url||null});
+        const pSlug = pr.name.toLowerCase().replace(/\s+/g,'-').slice(0,50);
+        sbFetch('price_history','POST',{product_id:pSlug,product_name:pr.name,price:priceNum,store:pr.store,url:pr.url||null});
       }
     }
     for (const c of (promoCodes||[]).filter(c=>c.code)) {
@@ -194,30 +270,31 @@ JSON UNIQUEMENT :
 
     // Cartes produits avec image
     let buttons = '';
-    for (const p of products) {
-      if (!p.name) continue;
-      const adv = findAdvertiser(advertisers, p.store);
+    for (const pr of products) {
+      if (!pr.name) continue;
+      const adv = findAdvertiser(advertisers, pr.store);
       if (!adv) continue;
-      const url = buildAffiliateLink(adv, p.keywords||p.name, p.url||null);
+      const url = buildAffiliateLink(adv, pr.keywords||pr.name, pr.url||null);
       if (!url) continue;
-      buttons += productCard(p.name, p.price||'Voir prix', url, adv.color, adv.emoji, p.img||null, p.badge||null);
+      buttons += productCard(pr.name, pr.price||'Voir prix', url, adv.color, adv.emoji, pr.img||null, pr.badge||null);
     }
 
-    // Codes promos â€” meilleur en premier
+    // Codes promos — meilleur en premier
     let promos = '';
     const sorted = (promoCodes||[]).filter(c=>c.code).sort((a,b)=>b.best-a.best).slice(0,2);
     for (const c of sorted) {
-      promos += promoBox(c.code, c.store||'boutique', c.discount||'RÃ©duction', c.best||false);
+      promos += promoBox(c.code, c.store||'boutique', c.discount||'Réduction', c.best||false);
     }
 
     // Wishlist
     const first = products[0];
     const adv0 = first ? findAdvertiser(advertisers, first.store) : null;
     const wishlistBtn = first && adv0
-      ? `<button onclick="addToWishlist(${JSON.stringify({name:first.name,price:first.price,store:first.store,url:buildAffiliateLink(adv0,first.keywords||first.name,first.url||null)}).replace(/"/g,'&quot;')})" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">â™¡ Ajouter Ã  ma wishlist</button>`
+      ? `<button onclick="addToWishlist(${JSON.stringify({name:first.name,price:first.price,store:first.store,url:buildAffiliateLink(adv0,first.keywords||first.name,first.url||null)}).replace(/"/g,'&quot;')})" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">♡ Ajouter à ma wishlist</button>`
       : '';
 
-    const reply = `<div style="font-size:13px;color:#374151;margin-bottom:6px;font-weight:500">${summary}</div>` + priceHistoryHtml + buttons + (promos ? `<div style="margin-top:4px">${promos}</div>` : '') + wishlistBtn;
+    // ⚡ OPTIM : on affiche le récap juste avant les résultats
+    const reply = `<div style="font-size:13px;color:#374151;margin-bottom:6px;font-weight:500">${summary}</div>` + recapBox(recapText) + priceHistoryHtml + buttons + (promos ? `<div style="margin-top:4px">${promos}</div>` : '') + wishlistBtn;
 
     return new Response(JSON.stringify({reply, sessionId:sid}), {
       headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}
@@ -225,7 +302,7 @@ JSON UNIQUEMENT :
 
   } catch(error) {
     console.error('Error:', error.message);
-    return new Response(JSON.stringify({reply:"DÃ©solÃ©, problÃ¨me technique. RÃ©essayez."}), {
+    return new Response(JSON.stringify({reply:"Désolé, problème technique. Réessayez."}), {
       status:200, headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}
     });
   }
