@@ -221,15 +221,41 @@ function renderChat(){
  chatBox.scrollTop=chatBox.scrollHeight;
 }
 
+// Historique pour contexte IA
+let chatHistory = [];
+
 async function send(txt){
  const q=(txt||chatInput.value).trim();
- if(!q)return;
+ if(!q||typing)return;
  msgs.push({from:"user",text:q});
  chatInput.value="";
  typing=true; renderChat();
- await new Promise(r=>setTimeout(r,1400));
- typing=false;
- msgs.push({from:"bot",text:REPLIES[rIdx++%REPLIES.length](q)});
+ 
+ try {
+   // Ajoute au contexte
+   chatHistory.push({role:"user", content:q});
+   
+   const res = await fetch('/api/chat', {
+     method:'POST',
+     headers:{'Content-Type':'application/json'},
+     body: JSON.stringify({
+       message: q,
+       history: chatHistory.slice(-6) // 6 derniers messages max
+     })
+   });
+   
+   const data = await res.json();
+   const reply = data.reply || "Désolé, réessayez.";
+   
+   // Sauvegarde réponse dans l'historique
+   chatHistory.push({role:"assistant", content:reply});
+   
+   typing=false;
+   msgs.push({from:"bot", text:reply});
+ } catch(e) {
+   typing=false;
+   msgs.push({from:"bot", text:"Désolé, je rencontre un problème. Réessayez dans quelques secondes."});
+ }
  renderChat();
 }
 
