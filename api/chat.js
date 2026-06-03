@@ -53,23 +53,23 @@ function promoBox(code, store, desc, best) {
   const bg = best ? '#dcfce7' : '#f0fdf4';
   return `<div style="background:${bg};border:${border};border-radius:12px;padding:10px 14px;margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:8px">
     <div>
-      <span style="font-size:11px;color:#16a34a;font-weight:700">${best?'⭐ MEILLEUR — ':''}🏷️ ${store}</span>
+      <span style="font-size:11px;color:#16a34a;font-weight:700">${best?'â­ MEILLEUR â€” ':''}ðŸ·ï¸ ${store}</span>
       <div style="font-size:12px;color:#166534;font-weight:600">${desc}</div>
     </div>
-    <div onclick="navigator.clipboard.writeText('${code}');this.innerHTML='✓';setTimeout(()=>this.innerHTML='${code}',2000)" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0">${code}</div>
+    <div onclick="navigator.clipboard.writeText('${code}');this.innerHTML='âœ“';setTimeout(()=>this.innerHTML='${code}',2000)" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0">${code}</div>
   </div>`;
 }
 
 function priceHistoryBox(old, trend) {
-  const icon = trend==='down'?'📉':trend==='up'?'📈':'➡️';
+  const icon = trend==='down'?'ðŸ“‰':trend==='up'?'ðŸ“ˆ':'âž¡ï¸';
   const color = trend==='down'?'#dcfce7':trend==='up'?'#fee2e2':'#f1f5f9';
   const border = trend==='down'?'#86efac':trend==='up'?'#fca5a5':'#e2e8f0';
-  const msg = trend==='down'?`Prix en baisse ! Était à ${old} ✅`:trend==='up'?`⚠️ Prix gonflé ! Était à ${old}`:`Prix stable`;
+  const msg = trend==='down'?`Prix en baisse ! Ã‰tait Ã  ${old} âœ…`:trend==='up'?`âš ï¸ Prix gonflÃ© ! Ã‰tait Ã  ${old}`:`Prix stable`;
   return `<div style="background:${color};border:1.5px solid ${border};border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12px;font-weight:600;color:#374151">${icon} ${msg}</div>`;
 }
 
 function questionBox(question) {
-  return `<div style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:12px 14px;margin-top:8px;font-size:13px;color:#1e40af;font-weight:600">💬 ${question}</div>`;
+  return `<div style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:12px 14px;margin-top:8px;font-size:13px;color:#1e40af;font-weight:600">ðŸ’¬ ${question}</div>`;
 }
 
 export default async function handler(req) {
@@ -94,50 +94,40 @@ export default async function handler(req) {
 
     const activeNames = advertisers.map(a=>a.name).join(', ');
 
-    // Résumé court de l'historique pour économiser les tokens
-    const histSummary = (history||[]).slice(-4).map(m =>
-      `${m.role==='user'?'Client':'Agent'}: ${(m.content||'').replace(/<[^>]*>/g,'').slice(0,120)}`
-    ).join('\n');
+    // Compression agressive de l'historique â€” max 800 chars total
+    const histSummary = (history||[]).slice(-3).map(m => {
+      const role = m.role==='user' ? 'Client' : 'Agent';
+      const text = (m.content||'').replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim().slice(0,150);
+      return `${role}: ${text}`;
+    }).join('\n').slice(0,800);
 
     const agentResp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
       body: JSON.stringify({
         model: 'claude-haiku-4-5',
-        max_tokens: 1200,
+        max_tokens: 800,
         tools: [{ type:"web_search_20250305", name:"web_search" }],
         system: `Tu es l'agent shopping IA de Huntify. Boutiques : ${activeNames}.
 
-TES COMPÉTENCES :
-1. CIBLER LE BESOIN — si la demande est vague (ex: "robe", "casque"), pose UNE question précise pour mieux cibler (taille, budget, usage, marque préférée). Ne propose pas de produit avant d'avoir assez d'infos.
-2. CHERCHER EN LIVE — fais 1-2 recherches web sur Amazon.fr ET Rakuten pour trouver des produits RÉELS avec prix EXACTS et URLs DIRECTES
-3. CODES PROMOS — cherche sur dealabs.com, note le meilleur avec ⭐
-4. CONTEXTE — utilise l'historique pour affiner (si client dit "moins cher" → cherche moins cher que ce proposé avant)
+TES COMPÃ‰TENCES :
+1. CIBLER LE BESOIN â€” si la demande est vague (ex: "robe", "casque"), pose UNE question prÃ©cise pour mieux cibler (taille, budget, usage, marque prÃ©fÃ©rÃ©e). Ne propose pas de produit avant d'avoir assez d'infos.
+2. CHERCHER EN LIVE â€” fais 1-2 recherches web sur Amazon.fr ET Rakuten pour trouver des produits RÃ‰ELS avec prix EXACTS et URLs DIRECTES
+3. CODES PROMOS â€” cherche sur dealabs.com, note le meilleur avec â­
+4. CONTEXTE â€” utilise l'historique pour affiner (si client dit "moins cher" â†’ cherche moins cher que ce proposÃ© avant)
 
-HISTORIQUE RÉCENT :
-${histSummary || 'Début de conversation'}
+HISTORIQUE RÃ‰CENT :
+${histSummary || 'DÃ©but de conversation'}
 
-RÈGLES JSON :
+RÃˆGLES JSON :
 - "needsInfo": true si besoin de poser une question avant de chercher
-- "question": la question à poser si needsInfo=true
+- "question": la question Ã  poser si needsInfo=true
 - Sinon : cherche et retourne les produits avec vrais prix et URLs directes
 - Max 2 produits Amazon + 1 Rakuten
 - Max 2 codes promos
 
-RÉPONDS UNIQUEMENT avec ce JSON :
-{
-  "needsInfo": false,
-  "question": null,
-  "summary": "1 phrase comparant les offres trouvées",
-  "products": [
-    {"name":"nom exact produit","price":"XX,XX€","store":"amazon","keywords":"mots clés","url":"https://www.amazon.fr/dp/...","img":"url image produit ou null","badge":"TOP VENTE"},
-    {"name":"nom exact produit","price":"Dès XX€","store":"rakuten","keywords":"mots clés","url":"https://fr.shopping.rakuten.com/offer/...","img":null,"badge":null}
-  ],
-  "promoCodes": [
-    {"code":"CODE","store":"Amazon","discount":"-15% sur casques","best":true},
-    {"code":"CODE2","store":"Rakuten","discount":"-5€","best":false}
-  ]
-}`,
+JSON UNIQUEMENT :
+{"needsInfo":false,"question":null,"summary":"1 phrase","products":[{"name":"nom","price":"XXâ‚¬","store":"amazon","keywords":"mots","url":"url ou null","img":null,"badge":null},{"name":"nom","price":"DÃ¨s XXâ‚¬","store":"rakuten","keywords":"mots","url":"url ou null","img":null,"badge":null}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}`,
         messages: [{ role:'user', content: message }]
       })
     });
@@ -171,7 +161,7 @@ RÉPONDS UNIQUEMENT avec ce JSON :
 
     if (!products.length) {
       products = advertisers.slice(0,2).map(a=>({name:message,price:'Voir prix',store:a.slug,keywords:message,url:null,img:null,badge:null}));
-      summary = `Résultats pour "${message}" :`;
+      summary = `RÃ©sultats pour "${message}" :`;
     }
 
     // Historique prix
@@ -184,9 +174,22 @@ RÉPONDS UNIQUEMENT avec ce JSON :
       if (hist.length > 1 && !isNaN(cur)) {
         const old = hist[hist.length-1].price;
         const trend = cur < old*0.97 ? 'down' : cur > old*1.03 ? 'up' : 'stable';
-        priceHistoryHtml = priceHistoryBox(`${old}€`, trend);
+        priceHistoryHtml = priceHistoryBox(`${old}â‚¬`, trend);
       }
       if (!isNaN(cur)) sbFetch('price_history','POST',{product_id:slug,product_name:mainProduct.name,price:cur,store:'amazon',url:mainProduct.url||null});
+    }
+
+    // AUTO-ALIMENTATION : sauvegarde prix Rakuten + codes promos
+    for (const p of products) {
+      if (!p.price || p.price==='Voir prix' || p.store==='amazon') continue;
+      const priceNum = parseFloat(p.price.replace('DÃ¨s ','').replace(/[^0-9.,]/g,'').replace(',','.'));
+      if (!isNaN(priceNum)) {
+        const pSlug = p.name.toLowerCase().replace(/\s+/g,'-').slice(0,50);
+        sbFetch('price_history','POST',{product_id:pSlug,product_name:p.name,price:priceNum,store:p.store,url:p.url||null});
+      }
+    }
+    for (const c of (promoCodes||[]).filter(c=>c.code)) {
+      sbFetch('promo_codes','POST',{code:c.code,store:c.store||'unknown',discount:c.discount||'',product_query:message,found_at:new Date().toISOString(),valid:true}).catch(()=>{});
     }
 
     // Cartes produits avec image
@@ -200,18 +203,18 @@ RÉPONDS UNIQUEMENT avec ce JSON :
       buttons += productCard(p.name, p.price||'Voir prix', url, adv.color, adv.emoji, p.img||null, p.badge||null);
     }
 
-    // Codes promos — meilleur en premier
+    // Codes promos â€” meilleur en premier
     let promos = '';
     const sorted = (promoCodes||[]).filter(c=>c.code).sort((a,b)=>b.best-a.best).slice(0,2);
     for (const c of sorted) {
-      promos += promoBox(c.code, c.store||'boutique', c.discount||'Réduction', c.best||false);
+      promos += promoBox(c.code, c.store||'boutique', c.discount||'RÃ©duction', c.best||false);
     }
 
     // Wishlist
     const first = products[0];
     const adv0 = first ? findAdvertiser(advertisers, first.store) : null;
     const wishlistBtn = first && adv0
-      ? `<button onclick="addToWishlist(${JSON.stringify({name:first.name,price:first.price,store:first.store,url:buildAffiliateLink(adv0,first.keywords||first.name,first.url||null)}).replace(/"/g,'&quot;')})" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">♡ Ajouter à ma wishlist</button>`
+      ? `<button onclick="addToWishlist(${JSON.stringify({name:first.name,price:first.price,store:first.store,url:buildAffiliateLink(adv0,first.keywords||first.name,first.url||null)}).replace(/"/g,'&quot;')})" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">â™¡ Ajouter Ã  ma wishlist</button>`
       : '';
 
     const reply = `<div style="font-size:13px;color:#374151;margin-bottom:6px;font-weight:500">${summary}</div>` + priceHistoryHtml + buttons + (promos ? `<div style="margin-top:4px">${promos}</div>` : '') + wishlistBtn;
@@ -222,7 +225,7 @@ RÉPONDS UNIQUEMENT avec ce JSON :
 
   } catch(error) {
     console.error('Error:', error.message);
-    return new Response(JSON.stringify({reply:"Désolé, problème technique. Réessayez."}), {
+    return new Response(JSON.stringify({reply:"DÃ©solÃ©, problÃ¨me technique. RÃ©essayez."}), {
       status:200, headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}
     });
   }
