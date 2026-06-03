@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mentions légales · Huntify</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',system-ui,sans-serif;background:#f0f4ff;color:#1a1a2e;line-height:1.7}
+  .wrap{max-width:680px;margin:0 auto;padding:0 20px 60px}
+  header{background:#fff;border-bottom:1.5px solid #e8edf8;padding:16px 20px;position:sticky;top:0;z-index:10}
+  .logo{font-size:20px;font-weight:900;max-width:680px;margin:0 auto;display:block}
+  .logo span{color:#3b5bdb}
+  h1{font-size:30px;font-weight:900;letter-spacing:-1px;margin:40px 0 8px}
+  h2{font-size:20px;font-weight:800;letter-spacing:-.4px;margin:32px 0 10px;color:#3b5bdb}
+  p{margin-bottom:14px;color:#374151}
+  .sub{color:#94a3b8;font-size:14px;margin-bottom:30px}
+  .tabs{display:flex;gap:8px;margin:24px 0 10px;flex-wrap:wrap}
+  .tab{background:#fff;border:1.5px solid #e8edf8;border-radius:100px;padding:8px 16px;font-size:13px;font-weight:700;color:#3b5bdb;cursor:pointer;text-decoration:none}
+  .tab.active{background:linear-gradient(135deg,#3b5bdb,#4f46e5);color:#fff;border:none}
+  .box{background:#fff;border:1.5px solid #e8edf8;border-radius:16px;padding:24px;margin-top:16px}
+  section{display:none}
+  section.show{display:block}
+  a{color:#3b5bdb}
+  .back{display:inline-block;margin-top:30px;color:#3b5bdb;font-weight:700;text-decoration:none}
+</style>
+</head>
+<body>
+<header><a href="/" class="logo">Hunt<span>ify</span></a></header>
+<div class="wrap">
+
+  <div class="tabs">
+    <a class="tab active" onclick="show('ml',this)">Mentions légales</a>
+    <a class="tab" onclick="show('conf',this)">Confidentialité</a>
+    <a class="tab" onclick="show('cgu',this)">CGU</a>
+  </div>
+
+  <!-- MENTIONS LÉGALES -->
+  <section id="ml" class="show">
+    <h1>Mentions légales</h1>
+    <p class="sub">Dernière mise à jour : juin 2026</p>
+    <div class="box">
+      <h2>Éditeur du site</h2>
+      <p>Le site huntify.shop est édité par un éditeur individuel. Pour toute demande, contactez-nous à l'adresse : contact@huntify.shop</p>
+      <h2>Hébergement</h2>
+      <p>Le site est hébergé par Vercel Inc., 340 S Lemon Ave #4133, Walnut, CA 91789, États-Unis.</p>
+      <p>Le nom de domaine est enregistré auprès d'OVH SAS, 2 rue Kellermann, 59100 Roubaix, France.</p>
+      <h2>Liens d'affiliation</h2>
+      <p>Huntify participe à des programmes d'affiliation, notamment le Programme Partenaires d'Amazon EU, ainsi que d'autres réseaux d'affiliation. À ce titre, Huntify perçoit une commission sur les achats éligibles réalisés via les liens présents sur le site. Cette commission n'entraîne aucun surcoût pour l'utilisateur : le prix payé est identique à un achat direct sur la boutique.</p>
+      <h2>Propriété intellectuelle</h2>
+      <p>L'ensemble des éléments du site (textes, logo, design) sont la propriété de l'éditeur, sauf mention contraire. Les marques et visuels des produits appartiennent à leurs propriétaires respectifs.</p>
+    </div>
+  </section>
+
+  <!-- CONFIDENTIALITÉ -->
+  <section id="conf">
+    <h1>Politique de confidentialité</h1>
+    <p class="sub">Conforme au RGPD · Dernière mise à jour : juin 2026</p>
+    <div class="box">
+      <h2>Données collectées</h2>
+      <p>Huntify collecte uniquement les données que vous nous fournissez volontairement, notamment votre adresse email lorsque vous créez une alerte prix. Aucune donnée bancaire n'est collectée par Huntify : les achats se font directement sur les sites des boutiques partenaires.</p>
+      <h2>Utilisation des données</h2>
+      <p>Votre adresse email est utilisée exclusivement pour vous envoyer les alertes prix que vous avez demandées. Vos données ne sont jamais revendues ni cédées à des tiers.</p>
+      <h2>Vos droits</h2>
+      <p>Conformément au RGPD, vous disposez d'un droit d'accès, de rectification et de suppression de vos données. Pour exercer ces droits, écrivez à contact@huntify.shop. Vous pouvez vous désinscrire des alertes à tout moment via le lien présent dans chaque email.</p>
+      <h2>Cookies</h2>
+      <p>Huntify utilise des cookies d'affiliation lorsque vous cliquez sur un lien vers une boutique partenaire. Ces cookies permettent de comptabiliser les commissions et n'enregistrent aucune donnée personnelle identifiable.</p>
+    </div>
+  </section>
+
+  <!-- CGU -->
+  <section id="cgu">
+    <h1>Conditions générales d'utilisation</h1>
+    <p class="sub">Dernière mise à jour : juin 2026</p>
+    <div class="box">
+      <h2>Objet</h2>
+      <p>Huntify est un service de comparaison de prix qui oriente les utilisateurs vers des offres proposées par des boutiques tierces. Huntify ne vend aucun produit directement et n'intervient pas dans la transaction entre l'utilisateur et la boutique.</p>
+      <h2>Prix et disponibilité</h2>
+      <p>Les prix affichés sur Huntify sont fournis à titre indicatif et peuvent évoluer. Seul le prix affiché sur le site de la boutique au moment de l'achat fait foi. Huntify s'efforce de maintenir des informations à jour mais ne peut garantir leur exactitude permanente.</p>
+      <h2>Responsabilité</h2>
+      <p>Huntify ne saurait être tenu responsable de la qualité des produits, des délais de livraison, ou de tout litige lié à un achat effectué sur une boutique partenaire. Toute réclamation doit être adressée directement à la boutique concernée.</p>
+      <h2>Acceptation</h2>
+      <p>En utilisant Huntify, vous acceptez les présentes conditions. Pour toute question : contact@huntify.shop</p>
+    </div>
+  </section>
+
+  <a href="/" class="back">← Retour à l'accueil</a>
+</div>
+
+<script>
+function show(id,el){
+  document.querySelectorAll('section').forEach(s=>s.classList.remove('show'));
+  document.getElementById(id).classList.add('show');
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  window.scrollTo(0,0);
+}
+</script>
+</body>
+</html>
