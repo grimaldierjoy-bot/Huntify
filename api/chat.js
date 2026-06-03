@@ -1,6 +1,18 @@
 export const config = { runtime: 'edge' };
 
 export default async function handler(req) {
+  // ✅ Fix #1 : gérer le preflight CORS
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      }
+    });
+  }
+
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 });
   }
@@ -23,7 +35,6 @@ Règles importantes :
 - Propose toujours le meilleur prix disponible
 - Mentionne les économies réalisées
 - Encourage à cliquer sur le produit pour l'acheter
-- Pour Sephora : ne jamais mentionner Dior, Chanel, Guerlain, Hermès
 - Termine toujours par une question ou une suggestion utile
 - Ne jamais inventer des prix — utilise uniquement les produits listés ci-dessus`;
 
@@ -40,7 +51,7 @@ Règles importantes :
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-haiku-4-5-20251001', // ✅ Fix #2 : modèle valide + moins cher
         max_tokens: 1000,
         system: systemPrompt,
         messages: messages
@@ -48,7 +59,7 @@ Règles importantes :
     });
 
     const data = await response.json();
-    
+
     if (!response.ok) {
       throw new Error(data.error?.message || 'API error');
     }
@@ -56,18 +67,21 @@ Règles importantes :
     return new Response(JSON.stringify({
       reply: data.content[0].text
     }), {
-      headers: { 
+      headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
       }
     });
 
   } catch (error) {
-    return new Response(JSON.stringify({ 
-      reply: "Désolé, je rencontre un problème technique. Réessayez dans quelques secondes." 
+    return new Response(JSON.stringify({
+      reply: "Désolé, je rencontre un problème technique. Réessayez dans quelques secondes."
     }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'  // ✅ Fix #3 : CORS aussi sur l'erreur
+      }
     });
   }
 }
