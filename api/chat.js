@@ -1,75 +1,102 @@
 export const config = { runtime: 'edge' };
 
 // ══════════════════════════════════════════════
-// HUNTIFY AGENT — Configuration affiliation
+// CONFIG
 // ══════════════════════════════════════════════
-const AMZ_TAG     = "huntify21-21";
-const AWIN_AFF    = "2920215";
-const RAKUTEN_MID = "55615";
+const AMZ_TAG      = "huntify21-21";
+const AWIN_AFF     = "2920215";
+const RAKUTEN_MID  = "55615";
+const SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
+const SUPABASE_KEY = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
 
-// Construit un lien affilié Amazon
-function amazonLink(keywords) {
-  return `https://www.amazon.fr/s?k=${encodeURIComponent(keywords)}&tag=${AMZ_TAG}`;
+function amazonLink(k) {
+  return `https://www.amazon.fr/s?k=${encodeURIComponent(k)}&tag=${AMZ_TAG}`;
+}
+function rakutenLink(dest) {
+  return `https://www.awin1.com/cread.php?awinmid=${RAKUTEN_MID}&awinaffid=${AWIN_AFF}&ued=${encodeURIComponent(dest)}`;
+}
+function btn(label, price, url, color) {
+  return `<a href="${url}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;background:${color};color:#fff;text-decoration:none;border-radius:12px;padding:11px 16px;margin-top:8px;font-weight:700;font-size:13px">${label}<span style="background:rgba(255,255,255,.25);border-radius:8px;padding:3px 10px;white-space:nowrap;margin-left:8px">${price}</span></a>`;
 }
 
-// Construit un lien affilié Rakuten via Awin
-function rakutenLink(url) {
-  return `https://www.awin1.com/cread.php?awinmid=${RAKUTEN_MID}&awinaffid=${AWIN_AFF}&ued=${encodeURIComponent(url)}`;
+// ── Sauvegarde dans Supabase ──────────────────
+async function saveSearch(query, sessionId, userId = null) {
+  try {
+    // Sauvegarde la recherche
+    await fetch(`${SUPABASE_URL}/rest/v1/searches`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`
+      },
+      body: JSON.stringify({ query, session_id: sessionId, user_id: userId })
+    });
+
+    // Met à jour les tendances
+    await fetch(`${SUPABASE_URL}/rest/v1/trends`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({ query: query.toLowerCase().trim(), count: 1, last_searched: new Date().toISOString() })
+    });
+  } catch(e) {
+    console.error('Supabase save error:', e.message);
+  }
 }
 
-// Bouton HTML stylé
-function makeButton(label, url, color) {
-  return `<a href="${url}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;background:${color};color:#fff;text-decoration:none;border-radius:12px;padding:11px 16px;margin-top:8px;font-weight:700;font-size:13px;gap:8px">${label}</a>`;
+async function saveClick(productName, store, price, url, sessionId, userId = null) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/clicks`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`
+      },
+      body: JSON.stringify({ product_name: productName, store, price, url, session_id: sessionId, user_id: userId })
+    });
+  } catch(e) {}
+}
+
+async function getTrends() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/trends?order=count.desc&limit=5`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    return await res.json();
+  } catch(e) { return []; }
 }
 
 export default async function handler(req) {
   if (req.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      }
-    });
+    return new Response(null, { status: 204, headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    }});
   }
-
-  if (req.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405 });
-  }
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 
   try {
-    const { message, history } = await req.json();
+    const { message, history, sessionId, userId } = await req.json();
+    const sid = sessionId || `anon_${Date.now()}`;
 
-    // ══════════════════════════════════════════
-    // ÉTAPE 1 — L'AGENT cherche sur le web
-    // ══════════════════════════════════════════
-    const agentSystemPrompt = `Tu es un agent de recherche shopping expert.
-    
-Ton travail : rechercher des produits réels disponibles à l'achat en France.
+    // ── Sauvegarde la recherche + tendances ──
+    saveSearch(message, sid, userId || null);
 
-Quand l'utilisateur demande un produit :
-1. Utilise l'outil web_search pour chercher sur Amazon.fr ET Rakuten.fr
-2. Trouve des produits RÉELS avec leurs vrais prix
-3. Vérifie que les URLs existent vraiment
-4. Retourne un JSON structuré UNIQUEMENT, sans texte autour :
+    // ── Récupère les tendances pour enrichir l'agent ──
+    const trends = await getTrends();
+    const trendContext = trends.length > 0
+      ? `Produits tendance sur Huntify en ce moment : ${trends.map(t => t.query).join(', ')}.`
+      : '';
 
-{
-  "summary": "Résumé en 2-3 lignes du meilleur choix",
-  "products": [
-    {
-      "name": "Nom exact du produit",
-      "price": "Prix constaté",
-      "store": "amazon" ou "rakuten",
-      "keywords": "mots clés pour recherche",
-      "url": "URL directe du produit si trouvée, sinon null"
-    }
-  ]
-}
-
-Retourne maximum 3 produits. Uniquement des produits RÉELS trouvés via recherche.`;
-
-    const agentResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    // ── AGENT : Recherche web réelle ─────────
+    const searchResp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -78,116 +105,79 @@ Retourne maximum 3 produits. Uniquement des produits RÉELS trouvés via recherc
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5',
-        max_tokens: 2000,
-        system: agentSystemPrompt,
-        tools: [
-          {
-            type: "web_search_20250305",
-            name: "web_search"
-          }
-        ],
+        max_tokens: 1500,
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
+        system: `Tu es un agent shopping expert pour Huntify.
+${trendContext}
+Recherche des produits RÉELS sur Amazon.fr et fr.shopping.rakuten.com.
+Retourne UNIQUEMENT ce JSON strict (zéro texte autour) :
+{"summary":"conseil utile en 1-2 phrases","products":[{"name":"nom exact du produit","price":"prix réel constaté","store":"amazon","keywords":"mots clés","url":"url directe ou null"},{"name":"nom exact","price":"prix réel","store":"rakuten","keywords":"mots clés","url":"url directe ou null"}]}
+Prix RÉELS uniquement. Maximum 2 Amazon + 2 Rakuten.`,
         messages: [
-          {
-            role: 'user',
-            content: `Recherche ce produit sur Amazon.fr et fr.shopping.rakuten.com : "${message}". Trouve les vrais prix et URLs disponibles aujourd'hui.`
-          }
+          ...(history || []).slice(-4),
+          { role: 'user', content: `Cherche sur Amazon.fr et fr.shopping.rakuten.com : ${message}` }
         ]
       })
     });
 
-    const agentData = await agentResponse.json();
+    const searchData = await searchResp.json();
+    if (!searchResp.ok) throw new Error(searchData.error?.message || 'Search error');
 
-    if (!agentResponse.ok) {
-      throw new Error(agentData.error?.message || 'Agent error');
+    let rawText = '';
+    for (const block of searchData.content) {
+      if (block.type === 'text') rawText += block.text;
     }
 
-    // Extraire le texte de la réponse agent
-    let agentText = '';
-    for (const block of agentData.content) {
-      if (block.type === 'text') agentText += block.text;
-    }
-
-    // Parser le JSON retourné par l'agent
-    let searchResult = null;
+    // ── Parser JSON ──────────────────────────
+    let products = [];
+    let summary = '';
     try {
-      const jsonMatch = agentText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) searchResult = JSON.parse(jsonMatch[0]);
-    } catch(e) {
-      console.error('JSON parse error:', e.message);
+      const match = rawText.match(/\{[\s\S]*"products"[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        products = parsed.products || [];
+        summary = parsed.summary || '';
+      }
+    } catch(e) {}
+
+    // ── Fallback si JSON rate ────────────────
+    if (products.length === 0) {
+      products = [
+        { name: message, price: 'Voir prix', store: 'amazon', keywords: message, url: null },
+        { name: message, price: 'Voir prix', store: 'rakuten', keywords: message, url: null }
+      ];
+      summary = `Voici les résultats pour "${message}" :`;
     }
 
-    // ══════════════════════════════════════════
-    // ÉTAPE 2 — Construire la réponse finale
-    // ══════════════════════════════════════════
-    let reply = '';
-
-    if (searchResult && searchResult.summary) {
-      reply += searchResult.summary;
-    } else {
-      // Fallback si l'agent n'a pas trouvé de JSON
-      reply += agentText.replace(/\{[\s\S]*\}/, '').trim() || "Voici ce que j'ai trouvé pour vous :";
-    }
-
-    // Générer les boutons avec vrais liens affiliés
+    // ── Construire les boutons ───────────────
     let buttons = '';
-    if (searchResult && searchResult.products && searchResult.products.length > 0) {
-      for (const p of searchResult.products) {
-        if (p.store === 'rakuten') {
-          const dest = p.url || `https://fr.shopping.rakuten.com/search?keyword=${encodeURIComponent(p.keywords)}`;
-          // Vérifier que c'est bien une URL Rakuten
-          if (dest.includes('rakuten.com')) {
-            const affUrl = rakutenLink(dest);
-            buttons += makeButton(
-              `🛍️ <span style="flex:1">${p.name}</span><span style="background:rgba(255,255,255,.25);border-radius:8px;padding:3px 10px">${p.price}</span>`,
-              affUrl,
-              'linear-gradient(135deg,#bf0000,#e00)'
-            );
-          }
-        } else {
-          // Amazon
-          const affUrl = p.url
-            ? `${p.url}${p.url.includes('?') ? '&' : '?'}tag=${AMZ_TAG}`
-            : amazonLink(p.keywords);
-          buttons += makeButton(
-            `🛒 <span style="flex:1">${p.name}</span><span style="background:rgba(255,255,255,.25);border-radius:8px;padding:3px 10px">${p.price}</span>`,
-            affUrl,
-            'linear-gradient(135deg,#ff9900,#ff6600)'
-          );
-        }
+    for (const p of products) {
+      if (!p.name) continue;
+      if (p.store === 'rakuten') {
+        const dest = (p.url && p.url.includes('rakuten'))
+          ? p.url
+          : `https://fr.shopping.rakuten.com/search?keyword=${encodeURIComponent(p.keywords || p.name)}`;
+        const affUrl = rakutenLink(dest);
+        buttons += btn(`🛍️ ${p.name}`, p.price || 'Voir prix', affUrl, 'linear-gradient(135deg,#bf0000,#e00)');
+      } else {
+        const affUrl = (p.url && p.url.includes('amazon.fr'))
+          ? `${p.url}${p.url.includes('?') ? '&' : '?'}tag=${AMZ_TAG}`
+          : amazonLink(p.keywords || p.name);
+        buttons += btn(`🛒 ${p.name}`, p.price || 'Voir prix', affUrl, 'linear-gradient(135deg,#ff9900,#ff6600)');
       }
-    } else {
-      // Fallback : boutons de recherche générique
-      buttons += makeButton(
-        `🛒 <span style="flex:1">Voir sur Amazon</span><span style="background:rgba(255,255,255,.25);border-radius:8px;padding:3px 10px">Meilleur prix</span>`,
-        amazonLink(message),
-        'linear-gradient(135deg,#ff9900,#ff6600)'
-      );
-      buttons += makeButton(
-        `🛍️ <span style="flex:1">Voir sur Rakuten</span><span style="background:rgba(255,255,255,.25);border-radius:8px;padding:3px 10px">Comparer</span>`,
-        rakutenLink(`https://fr.shopping.rakuten.com/search?keyword=${encodeURIComponent(message)}`),
-        'linear-gradient(135deg,#bf0000,#e00)'
-      );
     }
 
-    reply = reply + buttons;
+    const reply = (summary || `Résultats pour "${message}" :`) + buttons;
 
-    return new Response(JSON.stringify({ reply }), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      }
+    return new Response(JSON.stringify({ reply, sessionId: sid }), {
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
     });
 
   } catch (error) {
-    console.error('Handler error:', error.message);
-    return new Response(JSON.stringify({
-      reply: "Désolé, problème technique. Réessayez."
-    }), {
+    console.error('Error:', error.message);
+    return new Response(JSON.stringify({ reply: "Désolé, problème technique. Réessayez." }), {
       status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      }
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
     });
   }
 }
