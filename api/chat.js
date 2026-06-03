@@ -16,14 +16,32 @@ async function getAdvertisers() {
   } catch(e) { return []; }
 }
 
+// ⚡ FIX RAKUTEN : nettoie les keywords pour une recherche e-commerce valide.
+// L'agent renvoie parfois "satin, longue, trapèze, style classique" (liste
+// d'adjectifs) -> page de résultats vide. On retire virgules et mots vides,
+// et on limite à 4-5 termes utiles.
+function cleanKeywords(kw) {
+  if (!kw) return '';
+  const stop = new Set(['style','classique','de','la','le','les','un','une','des','pour','avec','et','en','du','au','aux','très','plus','moins']);
+  return kw
+    .replace(/,/g, ' ')                 // virgules -> espaces
+    .replace(/\s+/g, ' ')               // espaces multiples
+    .trim()
+    .split(' ')
+    .filter(w => w.length > 1 && !stop.has(w.toLowerCase()))
+    .slice(0, 5)                        // max 5 termes
+    .join(' ');
+}
+
 function buildAffiliateLink(adv, keywords, directUrl=null) {
   if (!adv?.active) return null;
+  const kw = cleanKeywords(keywords); // ⚡ FIX : keywords nettoyés
   if (adv.slug === 'amazon') {
-    const base = directUrl && directUrl.includes('amazon.fr') ? directUrl : `https://www.amazon.fr/s?k=${encodeURIComponent(keywords)}`;
+    const base = directUrl && directUrl.includes('amazon.fr') ? directUrl : `https://www.amazon.fr/s?k=${encodeURIComponent(kw)}`;
     return `${base}${base.includes('?')?'&':'?'}tag=${adv.amazon_tag}`;
   }
   if (adv.awin_mid) {
-    const dest = directUrl && directUrl.includes('rakuten') ? directUrl : adv.search_url.replace('{keywords}', encodeURIComponent(keywords));
+    const dest = directUrl && directUrl.includes('rakuten') ? directUrl : adv.search_url.replace('{keywords}', encodeURIComponent(kw));
     return `https://www.awin1.com/cread.php?awinmid=${adv.awin_mid}&awinaffid=${adv.awin_aff}&ued=${encodeURIComponent(dest)}`;
   }
   return null;
@@ -266,6 +284,8 @@ RÈGLES :
 - Max 2 produits Amazon + 1 Rakuten
 - Max 2 codes promos
 - Prix exacts, URLs directes quand possible
+- "keywords" = terme de recherche e-commerce SIMPLE qui retourne des résultats. TOUJOURS commencer par le TYPE de produit (ex: "robe satin longue", "casque sans fil bluetooth"). JAMAIS une liste d'adjectifs séparés par des virgules (ex INTERDIT: "satin, longue, trapèze, classique"). Max 4-5 mots.
+- "url" : ne mets une URL QUE si tu es certain qu'elle existe vraiment. Sinon laisse null (le lien de recherche sera construit automatiquement).
 
 JSON UNIQUEMENT :
 {"summary":"1 phrase","products":[{"name":"nom","price":"XX€","store":"amazon","keywords":"mots","url":"url ou null","img":null,"badge":null},{"name":"nom","price":"Dès XX€","store":"rakuten","keywords":"mots","url":"url ou null","img":null,"badge":null}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}`,
