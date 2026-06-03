@@ -20,11 +20,33 @@ export default async function handler(req) {
     const { message, history } = await req.json();
 
     const systemPrompt = `Tu es l'IA Huntify, expert comparateur de prix.
-Produits disponibles :
-MODE: Birkenstock Arizona (67€), Nike Air Max 270 (94€), Veste North Face (112€), Sac Cabas (34€)
-SANTÉ: Oméga-3 90 caps (14€), Vitamines D3+K2 (12€), Collagène Marin (22€), Magnésium (16€)
-ÉLECTRONIQUE: Sony WH-1000XM5 (279€), Samsung Galaxy A55 (299€), iPad 10e gen (359€), Amazfit GTR 4 (89€)
-Règles: réponds en français, sois concis (3-5 lignes), utilise uniquement les produits listés.`;
+
+Produits disponibles avec leurs IDs Amazon :
+MODE:
+- Birkenstock Arizona Sandales (67€, était 92€) → AMZ:birkenstock+arizona
+- Nike Air Max 270 Homme (94€, était 150€) → AMZ:nike+air+max+270
+- Veste The North Face Femme (112€, était 220€) → AMZ:veste+north+face+femme
+- Sac Cabas Tendance Femme (34€, était 60€) → AMZ:sac+cabas+femme
+
+SANTÉ:
+- Oméga-3 Premium 90 capsules (14€, était 32€) → AMZ:omega+3+capsules
+- Vitamines D3+K2 365 gélules (12€, était 24€) → AMZ:vitamine+d3+k2
+- Collagène Marin Hydrolysé 500g (22€, était 45€) → AMZ:collagene+marin
+- Magnésium Bisglycinate 120 gél. (16€, était 29€) → AMZ:magnesium+bisglycinate
+
+ÉLECTRONIQUE:
+- Sony WH-1000XM5 Casque ANC (279€, était 420€) → AMZ:sony+wh-1000xm5
+- Samsung Galaxy A55 5G 128Go (299€, était 449€) → AMZ:samsung+galaxy+a55
+- Apple iPad 10e génération 64Go (359€, était 499€) → AMZ:apple+ipad+10+generation
+- Amazfit GTR 4 Montre Connectée (89€, était 180€) → AMZ:amazfit+gtr+4
+
+RÈGLES IMPORTANTES :
+- Réponds toujours en français
+- Sois concis (3-5 lignes max)
+- Pour CHAQUE produit mentionné, termine OBLIGATOIREMENT par une ligne exactement comme ceci :
+  LINK:mot+clé+amazon|Nom du produit|prix€
+- Tu peux mettre plusieurs LINK: si tu mentionnes plusieurs produits
+- Ne jamais inventer de prix, utilise uniquement les produits listés`;
 
     const messages = [
       ...(history || []),
@@ -53,9 +75,29 @@ Règles: réponds en français, sois concis (3-5 lignes), utilise uniquement les
       throw new Error(data.error?.message || 'API error');
     }
 
-    return new Response(JSON.stringify({
-      reply: data.content[0].text
-    }), {
+    const raw = data.content[0].text;
+    const AMZ_TAG = "huntify21-21";
+
+    // Extraire les LINK: et construire les boutons HTML
+    const linkRegex = /LINK:([^\|]+)\|([^\|]+)\|([^\n]+)/g;
+    let buttons = '';
+    let match;
+    while ((match = linkRegex.exec(raw)) !== null) {
+      const keywords = match[1].trim();
+      const name     = match[2].trim();
+      const price    = match[3].trim();
+      const url = `https://www.amazon.fr/s?k=${keywords}&tag=${AMZ_TAG}`;
+      buttons += `<a href="${url}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;background:linear-gradient(135deg,#ff9900,#ff6600);color:#fff;text-decoration:none;border-radius:12px;padding:11px 16px;margin-top:8px;font-weight:700;font-size:13px">
+        <span>🛒 ${name}</span>
+        <span style="background:rgba(255,255,255,.25);border-radius:8px;padding:3px 10px">${price}</span>
+      </a>`;
+    }
+
+    // Nettoyer le texte (enlever les lignes LINK:)
+    const cleanText = raw.replace(/LINK:[^\n]+/g, '').trim();
+    const reply = cleanText + (buttons ? buttons : '');
+
+    return new Response(JSON.stringify({ reply }), {
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
