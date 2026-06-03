@@ -21,25 +21,24 @@ export default async function handler(req) {
 
     const systemPrompt = `Tu es l'IA Huntify, expert comparateur de prix shopping.
 
-Ton rôle : pour TOUTE demande de produit, tu réponds en français avec une recommandation concise ET tu génères toujours un ou plusieurs liens Amazon.
+Pour TOUTE demande de produit, tu réponds en français avec une recommandation concise ET tu génères toujours des liens vers plusieurs boutiques.
 
-FORMAT DE RÉPONSE OBLIGATOIRE :
-1. Une réponse courte et utile (2-4 lignes max)
-2. Ensuite, pour chaque produit recommandé, une ligne LINK: comme ceci :
-   LINK:mots+clés+amazon|Nom du produit|fourchette de prix
+FORMAT OBLIGATOIRE — après ta réponse, liste les liens comme ceci :
+LINK:mots+clés|Nom du produit|prix estimé|amazon
+LINK:mots+clés|Nom du produit|prix estimé|rakuten
 
 RÈGLES :
-- Génère TOUJOURS au moins un LINK: même si le produit n'est pas dans ta liste
-- Pour les mots-clés, utilise des termes Amazon français précis
-- Donne une fourchette de prix réaliste (ex: "50-80€")
-- Tu peux recommander 1 à 3 produits max par réponse
-- Sois direct et helpful, pas de blabla
+- Génère TOUJOURS au moins 2 LINK: (un Amazon + un Rakuten) par réponse
+- Pour Rakuten, utilise les mêmes mots-clés qu'Amazon
+- Donne une fourchette de prix réaliste en euros
+- Réponds en 2-4 lignes max, sois direct et utile
+- Ne mets JAMAIS de balises HTML dans ta réponse texte
 
-EXEMPLES DE LINK: :
-LINK:sony+wh1000xm5|Sony WH-1000XM5|279€
-LINK:nike+air+force+1+homme|Nike Air Force 1|80-120€
-LINK:aspirateur+robot+roomba|Aspirateur Robot Roomba|200-350€
-LINK:cafetiere+delonghi+expresso|Cafetière DeLonghi|150-300€`;
+EXEMPLES :
+LINK:sony+wh1000xm5|Sony WH-1000XM5|250-290€|amazon
+LINK:sony+wh1000xm5+casque|Sony WH-1000XM5|250-290€|rakuten
+LINK:nike+air+force+1|Nike Air Force 1|80-120€|amazon
+LINK:nike+air+force+1|Nike Air Force 1|80-120€|rakuten`;
 
     const messages = [
       ...(history || []),
@@ -69,24 +68,43 @@ LINK:cafetiere+delonghi+expresso|Cafetière DeLonghi|150-300€`;
     }
 
     const raw = data.content[0].text;
-    const AMZ_TAG = "huntify21-21";
 
-    // Extraire les LINK: et construire les boutons
-    const linkRegex = /LINK:([^\|]+)\|([^\|]+)\|([^\n]+)/g;
+    // Infos affiliation
+    const AMZ_TAG      = "huntify21-21";
+    const AWIN_AFF     = "2920215";
+    const RAKUTEN_MID  = "55615";
+
+    // Construire les boutons
+    const linkRegex = /LINK:([^\|]+)\|([^\|]+)\|([^\|]+)\|([^\n]+)/g;
     let buttons = '';
     let match;
+
     while ((match = linkRegex.exec(raw)) !== null) {
       const keywords = match[1].trim();
       const name     = match[2].trim();
       const price    = match[3].trim();
-      const url = `https://www.amazon.fr/s?k=${keywords}&tag=${AMZ_TAG}`;
-      buttons += `<a href="${url}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;background:linear-gradient(135deg,#ff9900,#ff6600);color:#fff;text-decoration:none;border-radius:12px;padding:11px 16px;margin-top:8px;font-weight:700;font-size:13px;gap:8px">
-        <span>🛒 ${name}</span>
+      const store    = match[4].trim().toLowerCase();
+
+      let url, label, color;
+
+      if (store === 'rakuten') {
+        const dest = `https://fr.shopping.rakuten.com/search?keyword=${keywords}`;
+        url   = `https://www.awin1.com/cread.php?awinmid=${RAKUTEN_MID}&awinaffid=${AWIN_AFF}&ued=${encodeURIComponent(dest)}`;
+        label = '🛍️ Voir sur Rakuten';
+        color = 'linear-gradient(135deg,#bf0000,#e00)';
+      } else {
+        url   = `https://www.amazon.fr/s?k=${keywords}&tag=${AMZ_TAG}`;
+        label = '🛒 Voir sur Amazon';
+        color = 'linear-gradient(135deg,#ff9900,#ff6600)';
+      }
+
+      buttons += `<a href="${url}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;background:${color};color:#fff;text-decoration:none;border-radius:12px;padding:11px 16px;margin-top:8px;font-weight:700;font-size:13px;gap:8px">
+        <span>${label} — ${name}</span>
         <span style="background:rgba(255,255,255,.25);border-radius:8px;padding:3px 10px;white-space:nowrap">${price}</span>
       </a>`;
     }
 
-    // Texte propre sans les lignes LINK:
+    // Texte propre sans les LINK:
     const cleanText = raw.replace(/LINK:[^\n]*/g, '').replace(/\n{3,}/g, '\n\n').trim();
     const reply = cleanText + (buttons ? buttons : '');
 
