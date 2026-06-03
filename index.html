@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Huntify · Le bon prix, trouvé pour vous</title>
+<meta name="description" content="Huntify, l'assistant shopping IA qui compare 50+ boutiques et vous trouve le meilleur prix. Mode, santé, électronique.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',system-ui,sans-serif;background:#f0f4ff}
+::-webkit-scrollbar{width:0}
+.wrap{max-width:480px;margin:0 auto}
+@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes blink{0%,100%{opacity:.2;transform:scale(.7)}50%{opacity:1;transform:scale(1)}}
+@keyframes pop{0%{transform:scale(.95);opacity:0}100%{transform:scale(1);opacity:1}}
+@keyframes shimmer{0%,100%{opacity:.7}50%{opacity:1}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.up{animation:up .3s ease both}
+.pop{animation:pop .25s ease both}
+.card{background:#fff;border-radius:20px;overflow:hidden;border:1.5px solid #e8edf8;transition:transform .22s,box-shadow .22s;cursor:pointer}
+.card:active{transform:scale(.98)}
+.chip{background:#fff;border:1.5px solid #dde4f5;color:#3b5bdb;border-radius:100px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;transition:all .18s;white-space:nowrap;font-family:inherit}
+.chip:active{background:#3b5bdb;color:#fff}
+.tab{border:none;border-radius:100px;padding:7px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .18s;background:transparent;color:#6366f1}
+.tab.active{color:#fff;background:linear-gradient(135deg,#3b5bdb,#4f46e5);box-shadow:0 2px 8px rgba(59,91,219,.3)}
+.send{background:linear-gradient(135deg,#3b5bdb,#2563eb);border:none;color:#fff;font-weight:700;border-radius:14px;padding:13px 18px;cursor:pointer;font-family:inherit;transition:all .2s;display:flex;align-items:center;justify-content:center}
+.send:active{transform:scale(.96)}
+.inp{background:#f5f7ff;border:2px solid #e8edf8;border-radius:14px;padding:13px 18px;font-size:16px;color:#1a1a2e;font-family:inherit;outline:none;transition:border .2s,box-shadow .2s;width:100%}
+.inp:focus{border-color:#3b5bdb;box-shadow:0 0 0 4px rgba(59,91,219,.08)}
+.inp::placeholder{color:#b0bdd8}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:100px;font-size:11px;font-weight:700;padding:3px 10px;letter-spacing:.03em}
+h1,h2,h3{letter-spacing:-.6px}
+.modal-bg{position:fixed;inset:0;background:rgba(26,26,46,.55);backdrop-filter:blur(4px);display:none;align-items:flex-end;justify-content:center;z-index:999}
+.modal-bg.open{display:flex;animation:fadeIn .25s ease}
+.modal{background:#fff;border-radius:28px 28px 0 0;width:100%;max-width:480px;padding:28px 22px 36px;animation:up .35s ease;max-height:90vh;overflow-y:auto}
+.prod-img{width:100%;height:120px;object-fit:cover;display:block;background:#eef2ff}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- NAV -->
+<header style="background:#fff;border-bottom:1.5px solid #e8edf8;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:200">
+  <div style="display:flex;align-items:center;gap:10px">
+    <div style="width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#3b5bdb,#2563eb);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(59,91,219,.35)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    </div>
+    <div><div style="font-size:20px;font-weight:900;color:#1a1a2e">Hunt<span style="color:#3b5bdb">ify</span></div>
+    <div style="font-size:10px;color:#94a3b8;font-weight:500;letter-spacing:.08em;margin-top:-1px">AI PRICE HUNTER</div></div>
+  </div>
+  <div style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:100px;padding:5px 12px;display:flex;align-items:center;gap:5px">
+    <div style="width:7px;height:7px;border-radius:50%;background:#22c55e;animation:shimmer 2s infinite"></div>
+    <span style="font-size:11px;color:#16a34a;font-weight:700">IA Active</span>
+  </div>
+</header>
+
+<!-- HERO -->
+<section style="background:linear-gradient(160deg,#fff 0%,#eef2ff 60%,#e0e7ff 100%);padding:40px 22px 32px">
+  <div class="pill" style="background:#eff6ff;color:#3b5bdb;border:1.5px solid #bfdbfe;margin-bottom:22px">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="#3b5bdb"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>Propulsé par l'Intelligence Artificielle
+  </div>
+  <h1 style="font-size:42px;font-weight:900;line-height:1.08;color:#1a1a2e;margin-bottom:6px">Le bon prix,</h1>
+  <h1 style="font-size:42px;font-weight:900;line-height:1.08;background:linear-gradient(135deg,#3b5bdb,#6366f1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:6px">trouvé pour vous.</h1>
+  <p style="font-size:17px;color:#64748b;font-weight:500;margin-bottom:30px">Comparez moins. Économisez plus.</p>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+    <div style="background:#fff;border-radius:18px;border:1.5px solid #e8edf8;padding:16px 8px;text-align:center;box-shadow:0 2px 8px rgba(59,91,219,.05)"><div style="font-size:20px;margin-bottom:4px">💰</div><div style="font-size:19px;font-weight:900;color:#3b5bdb">284k€</div><div style="font-size:11px;color:#94a3b8;font-weight:500;margin-top:2px">Économisés</div></div>
+    <div style="background:#fff;border-radius:18px;border:1.5px solid #e8edf8;padding:16px 8px;text-align:center;box-shadow:0 2px 8px rgba(59,91,219,.05)"><div style="font-size:20px;margin-bottom:4px">🛍️</div><div style="font-size:19px;font-weight:900;color:#3b5bdb">50+</div><div style="font-size:11px;color:#94a3b8;font-weight:500;margin-top:2px">Boutiques</div></div>
+    <div style="background:#fff;border-radius:18px;border:1.5px solid #e8edf8;padding:16px 8px;text-align:center;box-shadow:0 2px 8px rgba(59,91,219,.05)"><div style="font-size:20px;margin-bottom:4px">⚡</div><div style="font-size:19px;font-weight:900;color:#3b5bdb">1 200+</div><div style="font-size:11px;color:#94a3b8;font-weight:500;margin-top:2px">Deals/jour</div></div>
+  </div>
+</section>
+
+<!-- CHAT -->
+<section style="margin:20px 14px;background:#fff;border-radius:24px;border:1.5px solid #e8edf8;overflow:hidden;box-shadow:0 4px 24px rgba(59,91,219,.07)">
+  <div style="background:linear-gradient(135deg,#3b5bdb,#4f46e5);padding:16px 20px;display:flex;align-items:center;gap:12px">
+    <div style="width:42px;height:42px;border-radius:14px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:22px">✨</div>
+    <div><div style="font-weight:800;font-size:15px;color:#fff">Intelligence Artificielle Huntify</div><div style="font-size:12px;color:rgba(255,255,255,.7)">Analyse 50+ sources · Répond en 2 s</div></div>
+    <div style="margin-left:auto;background:rgba(255,255,255,.15);border-radius:100px;padding:4px 12px"><span style="font-size:11px;color:rgba(255,255,255,.9);font-weight:600">EN LIGNE</span></div>
+  </div>
+  <div id="chatBox" style="height:280px;overflow-y:auto;padding:16px 16px 8px;display:flex;flex-direction:column;gap:12px;background:#f8faff"></div>
+  <div style="padding:10px 14px 8px;display:flex;gap:8px;overflow-x:auto;background:#fff;border-top:1.5px solid #f0f4ff" id="chipRow"></div>
+  <div style="padding:12px 14px 16px;display:flex;gap:10px;background:#fff;border-top:1.5px solid #f0f4ff">
+    <input class="inp" id="chatInput" placeholder="Ex : casque, veste, vitamines..." autocomplete="off">
+    <button class="send" id="sendBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="m22 2-7 20-4-9-9-4 20-7z"/></svg></button>
+  </div>
+</section>
+
+<!-- DEALS -->
+<section style="padding:4px 14px 28px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+    <div><h2 style="font-size:22px;font-weight:900;color:#1a1a2e">Deals du moment</h2><p style="font-size:12px;color:#94a3b8;font-weight:500;margin-top:2px">Mis à jour régulièrement</p></div>
+  </div>
+  <div style="display:flex;background:#eff2ff;border-radius:100px;padding:4px;gap:2px;margin-bottom:16px;flex-wrap:wrap" id="tabRow"></div>
+  <div id="dealsBox" style="display:flex;flex-direction:column;gap:14px"></div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section style="padding:8px 22px 32px">
+  <h2 style="font-size:20px;font-weight:900;color:#1a1a2e;text-align:center;margin-bottom:6px">Comment ça marche ?</h2>
+  <p style="font-size:13px;color:#94a3b8;font-weight:500;text-align:center;margin-bottom:24px">Simple, rapide, gratuit</p>
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="background:#fff;border:1.5px solid #e8edf8;border-radius:16px;padding:16px;display:flex;gap:14px;align-items:center"><div style="width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,#3b5bdb,#4f46e5);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;flex-shrink:0">1</div><div><div style="font-size:14px;font-weight:800;color:#1a1a2e">Dites ce que vous cherchez</div><div style="font-size:12px;color:#94a3b8;font-weight:500;margin-top:2px;line-height:1.4">Posez votre question à l'IA en langage naturel.</div></div></div>
+    <div style="background:#fff;border:1.5px solid #e8edf8;border-radius:16px;padding:16px;display:flex;gap:14px;align-items:center"><div style="width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,#3b5bdb,#4f46e5);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;flex-shrink:0">2</div><div><div style="font-size:14px;font-weight:800;color:#1a1a2e">L'IA compare 50+ boutiques</div><div style="font-size:12px;color:#94a3b8;font-weight:500;margin-top:2px;line-height:1.4">En 2 secondes, elle trouve le meilleur prix.</div></div></div>
+    <div style="background:#fff;border:1.5px solid #e8edf8;border-radius:16px;padding:16px;display:flex;gap:14px;align-items:center"><div style="width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,#3b5bdb,#4f46e5);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;flex-shrink:0">3</div><div><div style="font-size:14px;font-weight:800;color:#1a1a2e">Vous achetez au meilleur prix</div><div style="font-size:12px;color:#94a3b8;font-weight:500;margin-top:2px;line-height:1.4">Lien direct vers la boutique officielle, en sécurité.</div></div></div>
+  </div>
+</section>
+
+<!-- ALERT CTA -->
+<section style="margin:0 14px 24px;border-radius:24px;overflow:hidden">
+  <div style="background:linear-gradient(135deg,#3b5bdb 0%,#4f46e5 50%,#7c3aed 100%);padding:36px 26px;text-align:center;position:relative">
+    <div style="position:absolute;top:-30px;right:-30px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
+    <div style="position:relative;z-index:1">
+      <div style="font-size:44px;margin-bottom:14px">🔔</div>
+      <h3 style="font-size:26px;font-weight:900;color:#fff;margin-bottom:10px">Alertes prix<br>personnalisées</h3>
+      <p style="color:rgba(255,255,255,.75);font-size:15px;line-height:1.65;margin-bottom:26px">Suivez n'importe quel produit. On vous prévient dès qu'une meilleure offre apparaît.</p>
+      <button id="ctaAlert" style="background:#fff;border:none;color:#3b5bdb;font-weight:800;border-radius:14px;padding:15px 32px;font-size:15px;cursor:pointer;font-family:inherit;width:100%">Créer mon alerte gratuite</button>
+    </div>
+  </div>
+</section>
+
+<!-- SECURITY BADGES -->
+<section style="margin:0 14px 24px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+  <div style="background:#fff;border:1.5px solid #e8edf8;border-radius:16px;padding:16px 14px;display:flex;gap:11px;align-items:flex-start"><div style="font-size:22px;line-height:1">🔒</div><div><div style="font-size:13px;font-weight:800;color:#1a1a2e;line-height:1.25">Paiement sécurisé</div><div style="font-size:11px;color:#94a3b8;font-weight:500;margin-top:3px;line-height:1.35">Vous achetez sur le site officiel</div></div></div>
+  <div style="background:#fff;border:1.5px solid #e8edf8;border-radius:16px;padding:16px 14px;display:flex;gap:11px;align-items:flex-start"><div style="font-size:22px;line-height:1">🛡️</div><div><div style="font-size:13px;font-weight:800;color:#1a1a2e;line-height:1.25">Données protégées</div><div style="font-size:11px;color:#94a3b8;font-weight:500;margin-top:3px;line-height:1.35">Conforme RGPD · jamais revendues</div></div></div>
+  <div style="background:#fff;border:1.5px solid #e8edf8;border-radius:16px;padding:16px 14px;display:flex;gap:11px;align-items:flex-start"><div style="font-size:22px;line-height:1">✅</div><div><div style="font-size:13px;font-weight:800;color:#1a1a2e;line-height:1.25">Prix vérifiés</div><div style="font-size:11px;color:#94a3b8;font-weight:500;margin-top:3px;line-height:1.35">Comparés sur 50+ boutiques</div></div></div>
+  <div style="background:#fff;border:1.5px solid #e8edf8;border-radius:16px;padding:16px 14px;display:flex;gap:11px;align-items:flex-start"><div style="font-size:22px;line-height:1">🎁</div><div><div style="font-size:13px;font-weight:800;color:#1a1a2e;line-height:1.25">100% gratuit</div><div style="font-size:11px;color:#94a3b8;font-weight:500;margin-top:3px;line-height:1.35">Aucun frais caché, jamais</div></div></div>
+</section>
+
+<!-- FOOTER -->
+<footer style="background:#fff;border-top:1.5px solid #e8edf8;padding:28px 22px;text-align:center">
+  <div style="font-size:22px;font-weight:900;color:#1a1a2e;margin-bottom:6px">Hunt<span style="color:#3b5bdb">ify</span></div>
+  <div style="font-size:12px;color:#94a3b8;font-weight:500;margin-bottom:14px">huntify.shop · Le bon prix, trouvé pour vous.</div>
+  <div style="display:flex;justify-content:center;gap:18px;font-size:12px;color:#94a3b8;flex-wrap:wrap;margin-bottom:14px"><a href="/legal.html" style="color:#94a3b8;text-decoration:none">À propos</a><a href="mailto:contact@huntify.shop" style="color:#94a3b8;text-decoration:none">Contact</a><a href="/legal.html" style="color:#94a3b8;text-decoration:none">CGU</a><a href="/legal.html" style="color:#94a3b8;text-decoration:none">Confidentialité</a></div>
+  <div style="font-size:9px;color:#dbe2f0;line-height:1.4;max-width:340px;margin:0 auto">En tant que Partenaire Amazon, Huntify réalise un bénéfice sur les achats remplissant les conditions requises.</div>
+</footer>
+
+</div>
+
+<!-- MODAL ALERTE -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal" id="modalContent">
+    <div style="width:40px;height:4px;background:#e8edf8;border-radius:100px;margin:0 auto 22px"></div>
+    <div style="font-size:40px;text-align:center;margin-bottom:10px">🔔</div>
+    <h3 style="font-size:22px;font-weight:900;color:#1a1a2e;text-align:center;margin-bottom:8px">Créer une alerte prix</h3>
+    <p style="font-size:13px;color:#94a3b8;font-weight:500;text-align:center;margin-bottom:24px">On vous prévient par email dès que le prix passe sous votre seuil.</p>
+    <label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:6px">Produit recherché</label>
+    <input class="inp" id="alProduct" placeholder="Ex : Casque Sony" style="margin-bottom:16px">
+    <label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:6px">Prix maximum souhaité (€)</label>
+    <input class="inp" id="alPrice" type="number" placeholder="Ex : 250" style="margin-bottom:16px">
+    <label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:6px">Votre email</label>
+    <input class="inp" id="alEmail" type="email" placeholder="votre@email.com" style="margin-bottom:22px">
+    <button id="submitAlertBtn" style="background:linear-gradient(135deg,#3b5bdb,#4f46e5);border:none;color:#fff;font-weight:800;border-radius:16px;padding:16px;font-size:15px;width:100%;cursor:pointer;font-family:inherit">Activer mon alerte gratuite</button>
+    <button id="closeModalBtn" style="background:none;border:none;color:#94a3b8;font-weight:600;font-size:13px;width:100%;margin-top:14px;cursor:pointer;font-family:inherit">Annuler</button>
+    <p style="font-size:11px;color:#cbd5e1;text-align:center;margin-top:14px">🔒 Aucun spam · Données protégées · 100% gratuit</p>
+  </div>
+</div>
+
+<script>
+const AMZ_TAG = "huntify21-21";
+const amz = (keywords) => `https://www.amazon.fr/s?k=${encodeURIComponent(keywords)}&tag=${AMZ_TAG}`;
+
+const PRODUCTS=[
+  {name:"Birkenstock Arizona Sandales",cat:"Mode",price:"67€",was:"92€",pct:"-27%",store:"Amazon",img:"https://images.unsplash.com/photo-1603487742131-4160ec999306?w=400&q=80",hot:true,url:amz("birkenstock arizona")},
+  {name:"Nike Air Max 270 Homme",cat:"Mode",price:"94€",was:"150€",pct:"-37%",store:"Amazon",img:"https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&q=80",hot:false,url:amz("nike air max 270")},
+  {name:"Veste The North Face Femme",cat:"Mode",price:"112€",was:"220€",pct:"-49%",store:"Amazon",img:"https://images.unsplash.com/photo-1544022613-e87ca75a784a?w=400&q=80",hot:false,url:amz("veste north face femme")},
+  {name:"Sac Cabas Tendance Femme",cat:"Mode",price:"34€",was:"60€",pct:"-43%",store:"Amazon",img:"https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=400&q=80",hot:false,url:amz("sac cabas femme")},
+  {name:"Oméga-3 Premium 90 capsules",cat:"Santé",price:"14€",was:"32€",pct:"-56%",store:"Amazon",img:"https://images.unsplash.com/photo-1550572017-edd951b55104?w=400&q=80",hot:true,url:amz("omega 3 capsules")},
+  {name:"Vitamines D3 + K2 — 365 gélules",cat:"Santé",price:"12€",was:"24€",pct:"-50%",store:"Amazon",img:"https://images.unsplash.com/photo-1607619056574-7b8d3ee536b2?w=400&q=80",hot:false,url:amz("vitamine d3 k2")},
+  {name:"Collagène Marin Hydrolysé 500g",cat:"Santé",price:"22€",was:"45€",pct:"-51%",store:"Amazon",img:"https://images.unsplash.com/photo-1556228578-8c89e6adf883?w=400&q=80",hot:false,url:amz("collagene marin")},
+  {name:"Magnésium Bisglycinate 120 gél.",cat:"Santé",price:"16€",was:"29€",pct:"-45%",store:"Amazon",img:"https://images.unsplash.com/photo-1607620842762-50f70c14f6a8?w=400&q=80",hot:true,url:amz("magnesium bisglycinate")},
+  {name:"Sony WH-1000XM5 Casque ANC",cat:"Électronique",price:"279€",was:"420€",pct:"-34%",store:"Amazon",img:"https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&q=80",hot:true,url:amz("sony wh-1000xm5")},
+  {name:"Samsung Galaxy A55 5G 128Go",cat:"Électronique",price:"299€",was:"449€",pct:"-33%",store:"Amazon",img:"https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?w=400&q=80",hot:false,url:amz("samsung galaxy a55")},
+  {name:"Apple iPad 10e génération 64Go",cat:"Électronique",price:"359€",was:"499€",pct:"-28%",store:"Amazon",img:"https://images.unsplash.com/photo-1544244015-0df4b3ffc6b0?w=400&q=80",hot:false,url:amz("apple ipad 10 generation")},
+  {name:"Amazfit GTR 4 Montre Connectée",cat:"Électronique",price:"89€",was:"180€",pct:"-51%",store:"Amazon",img:"https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400&q=80",hot:true,url:amz("amazfit gtr 4")},
+];
+
+const CHIPS=["Casque audio","Sneakers","Veste femme","Vitamines","Montre connectée","Smartphone"];
+const CATS=["Tous","Mode","Santé","Électronique"];
+
+let tab="Tous", typing=false;
+let msgs=[{from:"bot",text:"Bonjour ! Je suis l'Intelligence Artificielle Huntify.<br><br>Dites-moi ce que vous cherchez — mode, santé, électronique — et je trouve le meilleur prix sur 50+ boutiques de confiance."}];
+
+// ✅ FIX : historique propre sans HTML pour l'API Claude
+let chatHistory = [];
+
+const chatBox=document.getElementById('chatBox');
+const chatInput=document.getElementById('chatInput');
+
+function stripHtml(str){ return str.replace(/<[^>]*>/g,''); }
+
+function renderChat(){
+  chatBox.innerHTML=msgs.map(m=>`<div class="up" style="display:flex;justify-content:${m.from==='user'?'flex-end':'flex-start'};align-items:flex-end;gap:8px">
+    ${m.from==='bot'?'<div style="width:30px;height:30px;border-radius:10px;background:linear-gradient(135deg,#3b5bdb,#4f46e5);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">✨</div>':''}
+    <div style="max-width:80%;padding:12px 16px;border-radius:${m.from==='user'?'18px 18px 4px 18px':'4px 18px 18px 18px'};background:${m.from==='user'?'linear-gradient(135deg,#3b5bdb,#4f46e5)':'#fff'};border:${m.from==='bot'?'1.5px solid #e8edf8':'none'};font-size:14px;line-height:1.65;color:${m.from==='user'?'#fff':'#374151'};box-shadow:0 2px 8px rgba(59,91,219,${m.from==='bot'?'.06':'.2'})">${m.text}</div>
+  </div>`).join("")
+  +(typing?`<div class="up" style="display:flex;align-items:flex-end;gap:8px"><div style="width:30px;height:30px;border-radius:10px;background:linear-gradient(135deg,#3b5bdb,#4f46e5);display:flex;align-items:center;justify-content:center;font-size:15px">✨</div><div style="display:flex;gap:5px;padding:14px 18px;background:#fff;border:1.5px solid #e8edf8;border-radius:4px 18px 18px 18px">${[0,1,2].map(i=>`<div style="width:8px;height:8px;border-radius:50%;background:#3b5bdb;animation:blink 1.1s ${i*.18}s infinite"></div>`).join("")}</div></div>`:"");
+  chatBox.scrollTop=chatBox.scrollHeight;
+}
+
+async function send(txt){
+  const q=(txt||chatInput.value).trim();
+  if(!q||typing)return;
+  msgs.push({from:"user",text:q});
+  chatInput.value="";
+  typing=true; renderChat();
+
+  try {
+    // ✅ FIX : on stocke le texte sans HTML dans l'historique
+    chatHistory.push({role:"user", content:stripHtml(q)});
+
+    const res = await fetch('/api/chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        message: stripHtml(q),
+        history: chatHistory.slice(-6)
+      })
+    });
+
+    const data = await res.json();
+    const reply = data.reply || "Désolé, réessayez.";
+
+    // ✅ FIX : réponse stockée sans HTML
+    chatHistory.push({role:"assistant", content:stripHtml(reply)});
+
+    typing=false;
+    msgs.push({from:"bot", text:reply});
+  } catch(e) {
+    typing=false;
+    msgs.push({from:"bot", text:"Désolé, je rencontre un problème. Réessayez dans quelques secondes."});
+  }
+  renderChat();
+}
+
+function renderChips(){
+  document.getElementById('chipRow').innerHTML=CHIPS.map(c=>`<button class="chip">${c}</button>`).join("");
+  document.querySelectorAll('#chipRow .chip').forEach((b,i)=>b.onclick=()=>send(CHIPS[i]));
+}
+
+function renderTabs(){
+  document.getElementById('tabRow').innerHTML=CATS.map(t=>`<button class="tab ${tab===t?'active':''}">${t}</button>`).join("");
+  document.querySelectorAll('#tabRow .tab').forEach((b,i)=>b.onclick=()=>{tab=CATS[i];renderTabs();renderDeals();});
+}
+
+function renderDeals(){
+  const shown = tab==="Tous"?PRODUCTS:PRODUCTS.filter(p=>p.cat===tab);
+  document.getElementById('dealsBox').innerHTML=shown.map((p,i)=>`
+    <div class="card pop" style="display:flex;animation-delay:${i*50}ms" data-url="${p.url}">
+      <div style="width:110px;flex-shrink:0;position:relative">
+        <img class="prod-img" src="${p.img}" alt="${p.name}" loading="lazy" onerror="this.style.background='#eef2ff';this.removeAttribute('src')">
+        ${p.hot?'<div style="position:absolute;top:8px;left:8px;background:#ef4444;color:#fff;border-radius:100px;font-size:10px;font-weight:800;padding:3px 9px">🔥 HOT</div>':''}
+      </div>
+      <div style="flex:1;padding:14px 16px;display:flex;flex-direction:column;justify-content:space-between">
+        <div><div style="font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">${p.cat} · ${p.store}</div><div style="font-size:15px;font-weight:700;color:#1a1a2e;line-height:1.3">${p.name}</div></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap"><span style="font-size:22px;font-weight:900;color:#3b5bdb">${p.price}</span><span style="font-size:13px;color:#cbd5e1;text-decoration:line-through">${p.was}</span><span style="font-size:11px;background:#f0fdf4;color:#16a34a;border:1.5px solid #bbf7d0;padding:3px 9px;border-radius:100px;font-weight:800">${p.pct}</span></div>
+      </div>
+    </div>`).join("");
+  document.querySelectorAll('#dealsBox .card').forEach(c=>{
+    c.onclick=()=>window.open(c.dataset.url,'_blank');
+  });
+}
+
+// MODAL
+const modalBg=document.getElementById('modalBg');
+function openModal(prefName){ document.getElementById('alProduct').value=prefName||""; document.getElementById('alPrice').value=""; document.getElementById('alEmail').value=""; modalBg.classList.add('open'); }
+function closeModal(){ modalBg.classList.remove('open'); }
+
+document.getElementById('ctaAlert').onclick=()=>openModal("");
+document.getElementById('closeModalBtn').onclick=closeModal;
+document.getElementById('submitAlertBtn').onclick=()=>{
+  const p=document.getElementById('alProduct').value.trim();
+  const pr=document.getElementById('alPrice').value.trim();
+  const e=document.getElementById('alEmail').value.trim();
+  if(!p||!pr||!e){alert("Merci de remplir tous les champs.");return;}
+  if(!e.includes('@')){alert("Email invalide.");return;}
+  document.getElementById('modalContent').innerHTML=`<div style="text-align:center;padding:30px 10px"><div style="font-size:54px;margin-bottom:16px">✅</div><h3 style="font-size:22px;font-weight:900;color:#1a1a2e;margin-bottom:10px">Alerte activée !</h3><p style="font-size:14px;color:#64748b;line-height:1.6;margin-bottom:24px">Nous surveillons <b>${p}</b>.<br>Vous recevrez un email à <b>${e}</b> dès que le prix passe sous <b>${pr}€</b>.</p><button onclick="document.getElementById('modalBg').classList.remove('open')" style="background:linear-gradient(135deg,#3b5bdb,#4f46e5);border:none;color:#fff;font-weight:800;border-radius:14px;padding:14px 32px;font-size:15px;cursor:pointer;font-family:inherit;width:100%">Parfait, merci !</button></div>`;
+};
+
+document.getElementById('sendBtn').onclick=()=>send();
+chatInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();send();}});
+
+// INIT
+renderChat();
+renderChips();
+renderTabs();
+renderDeals();
+</script>
+</body>
+</html>
