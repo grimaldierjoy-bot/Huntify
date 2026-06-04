@@ -579,7 +579,11 @@ Feuille de route complète :
       if(itin.hotels?.length) {
         html+=`<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">🏨 Hébergements sur Booking.com</div>`;
         const nights=parseInt((itin.duration||'').match(/\d+/)?.[0]||'5');
-        for(const h of itin.hotels) html+=hotelCard(h, buildBookingLink(itin.destination||'', nights));
+        for(const h of itin.hotels) {
+          // Lien direct vers L'HÔTEL précis (pas juste la destination)
+          const hotelSearch = h.name ? (h.name + ' ' + (itin.destination||'')) : (itin.destination||'');
+          html+=hotelCard(h, h.booking_link || buildBookingLink(hotelSearch, nights));
+        }
       }
 
       // Programme jour par jour
@@ -704,8 +708,15 @@ JSON UNIQUEMENT (mais le champ message doit etre naturel et conversationnel) :
     const recap    = decision.recap||`Je cherche : ${message}`;
     const budget   = detectBudget(recap)||detectBudget(hist)||detectBudget(message);
     const roi      = estimateROI(budget, message, hist);
-    // ROI scoring -> strategy mapping
-    const strategy = roi.useWebSearch ? 'paid_deep' : (roi.depth==='medium' ? 'free_deep' : 'free_fast');
+
+    // STRATÉGIE HYBRIDE :
+    // 1er envoi produits → Claude + web search (liens directs, conversion x3)
+    // Envois suivants → IA gratuite (recherche par nom produit, gratuit)
+    // Détection : si un message assistant précédent fait plus de 150 chars = résultats déjà envoyés
+    // Un message avec "€" dedans = des résultats produits ont déjà été envoyés
+    const hasProductResults = (history||[]).some(m => m.role !== 'user' && /\d+€/.test(m.content||''));
+    const isFirstSearch = !hasProductResults;
+    const strategy = isFirstSearch ? 'paid_deep' : (roi.depth==='medium' ? 'free_deep' : 'free_fast');
 
     let products=[], promoCodes=[], summary='';
 
