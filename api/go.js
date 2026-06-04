@@ -3,7 +3,7 @@ export const config = { runtime: 'edge' };
 const SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
 
-// Passerelles d'affiliation toujours autorisÃ©es (communes Ã  plusieurs annonceurs)
+// Passerelles d'affiliation toujours autorisées (communes à plusieurs annonceurs)
 const ALWAYS_ALLOWED = ['awin1.com', 'awin.com'];
 
 function extractHost(url) {
@@ -11,7 +11,7 @@ function extractHost(url) {
   catch(e){ return null; }
 }
 
-// âš¡ UNIVERSEL : construit la liste des domaines autorisÃ©s depuis la table advertisers
+// ⚡ UNIVERSEL : construit la liste des domaines autorisés depuis la table advertisers
 async function getAllowedHosts() {
   const hosts = new Set(ALWAYS_ALLOWED);
   try {
@@ -27,7 +27,7 @@ async function getAllowedHosts() {
       const h2 = a.site_url ? extractHost(a.site_url) : null;
       if (h2) hosts.add(h2);
     });
-  } catch(e) { /* en cas d'Ã©chec, on garde au moins les passerelles */ }
+  } catch(e) { /* en cas d'échec, on garde au moins les passerelles */ }
   return hosts;
 }
 
@@ -58,7 +58,7 @@ export default async function handler(req) {
 
   if (!dest) return Response.redirect('https://huntify.shop', 302);
 
-  // âš¡ VÃ©rifie contre les domaines de TES annonceurs (table advertisers)
+  // ⚡ Vérifie contre les domaines de TES annonceurs (table advertisers)
   const allowedHosts = await getAllowedHosts();
   if (!isAllowed(dest, allowedHosts)) {
     return Response.redirect('https://huntify.shop', 302);
@@ -71,13 +71,13 @@ export default async function handler(req) {
     user_agent: req.headers.get('user-agent') || null
   });
 
-  // Page intermÃ©diaire : sur iOS, rester sur huntify.shop puis rediriger
-  // en JS tend Ã  garder l'utilisateur dans le navigateur plutÃ´t que l'app.
+  // Page intermédiaire : sur iOS, rester sur huntify.shop puis rediriger
+  // en JS tend à garder l'utilisateur dans le navigateur plutôt que l'app.
   const html = `<!DOCTYPE html>
 <html lang="fr"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Redirection vers l'offreâ€¦</title>
+<title>Redirection vers l'offre…</title>
 <style>
   body{font-family:system-ui,sans-serif;background:#f4f7ff;color:#0e1430;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
   .box{text-align:center;padding:24px}
@@ -88,7 +88,7 @@ export default async function handler(req) {
 </head><body>
 <div class="box">
   <div class="spin"></div>
-  <div style="font-weight:700;font-size:15px">Redirection vers la meilleure offreâ€¦</div>
+  <div style="font-weight:700;font-size:15px">Redirection vers la meilleure offre…</div>
   <div style="font-size:12px;color:#7c89a8;margin-top:8px">Si rien ne se passe, <a href="${dest}">clique ici</a>.</div>
 </div>
 <script>window.location.replace(${JSON.stringify(dest)});</script>
