@@ -543,32 +543,135 @@ function renderChips(){
   document.querySelectorAll('#chipRow .chip').forEach((b,i)=>b.onclick=()=>send(CHIPS[i]));
 }
 
-function renderTabs(){
-  document.getElementById('tabRow').innerHTML = CATS.map(t=>`<button class="tab ${tab===t?'active':''}">${t}</button>`).join('');
-  document.querySelectorAll('#tabRow .tab').forEach((b,i)=>b.onclick=()=>{tab=CATS[i];renderTabs();renderDeals();});
+// ── DEALS DYNAMIQUES (daily_deals + fallback data.js) ──────────
+let DEALS_DATA = [];          // deals réels chargés
+let dealCat = "Tous";
+let dealSort = "pct";
+
+const CAT_META = [
+  {key:"Tous",em:"✨"},{key:"Mode",em:"👕"},{key:"Électronique",em:"📱"},
+  {key:"Maison",em:"🏠"},{key:"Santé",em:"💊"}
+];
+const SORT_META = [
+  {key:"pct",label:"🔥 Réductions"},
+  {key:"new",label:"⏱ Nouveautés"},
+  {key:"price",label:"€ Prix bas"}
+];
+
+// Normalise un deal (depuis daily_deals OU data.js) vers un format unique
+function normalizeDeal(d){
+  const toNum = v => {
+    if (v == null) return null;
+    const n = parseFloat(String(v).replace(/[^0-9.,]/g,'').replace(',','.'));
+    return isNaN(n) ? null : n;
+  };
+  const price = toNum(d.price);
+  const was   = toNum(d.was);
+  const pct   = (price!=null && was!=null && was>0) ? Math.round((1-price/was)*100)
+              : (d.pct ? Math.abs(parseInt(d.pct)) : null);
+  // date de génération → "nouveau" si < 24h
+  let hoursAgo = 999;
+  if (d.generated_at){ hoursAgo = (Date.now() - new Date(d.generated_at).getTime())/3600000; }
+  return {
+    name: d.name || d.product || '—',
+    cat: d.cat || 'Autres',
+    store: d.store || '',
+    price, was, pct,
+    url: d.url || '#',
+    img: d.img || '',
+    hoursAgo
+  };
+}
+
+async function loadDeals(){
+  // 1) Essaye daily_deals (vrais deals du jour)
+  let rows = [];
+  try {
+    const { data } = await sb.from('daily_deals')
+      .select('*').order('generated_at',{ascending:false}).limit(40);
+    rows = data || [];
+  } catch(e){ rows = []; }
+
+  // 2) Fallback : data.js si daily_deals vide
+  if (!rows.length && typeof PRODUCTS !== 'undefined') {
+    rows = PRODUCTS;
+  }
+
+  DEALS_DATA = rows.map(normalizeDeal).filter(d=>d.name && d.name!=='—');
+  const dl = document.getElementById('dealsDate');
+  if (dl) dl.textContent = new Date().toLocaleDateString('fr',{day:'numeric',month:'long'});
+  renderCatRow(); renderSortRow(); renderDeals();
+}
+
+function dealCountFor(cat){
+  return cat==="Tous" ? DEALS_DATA.length : DEALS_DATA.filter(d=>d.cat===cat).length;
+}
+
+function renderCatRow(){
+  const row = document.getElementById('catRow');
+  if (!row) return;
+  row.innerHTML = CAT_META.map(c=>{
+    const on = c.key===dealCat;
+    return `<button data-c="${c.key}" style="display:flex;align-items:center;gap:7px;white-space:nowrap;border:1.5px solid ${on?'transparent':'#e6ebf7'};background:${on?'linear-gradient(135deg,#2f54ff,#4a6bff)':'#fff'};color:${on?'#fff':'#43507a'};border-radius:100px;padding:9px 15px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;${on?'box-shadow:0 8px 20px -8px rgba(47,84,255,.6)':''}">
+      <span style="font-size:15px">${c.em}</span>${c.key}
+      <span style="font-size:11px;font-weight:800;background:${on?'rgba(255,255,255,.25)':'#eef2ff'};color:${on?'#fff':'#2f54ff'};border-radius:100px;padding:1px 7px">${dealCountFor(c.key)}</span>
+    </button>`;
+  }).join('');
+  row.querySelectorAll('button').forEach(b=>b.onclick=()=>{dealCat=b.dataset.c;renderCatRow();renderDeals();});
+}
+
+function renderSortRow(){
+  const row = document.getElementById('sortRow');
+  if (!row) return;
+  row.innerHTML = SORT_META.map(s=>{
+    const on = s.key===dealSort;
+    return `<button data-s="${s.key}" style="border:1.5px solid ${on?'transparent':'#e6ebf7'};background:${on?'#1a1a2e':'#fff'};color:${on?'#fff':'#43507a'};border-radius:100px;padding:6px 12px;font-size:11.5px;font-weight:700;font-family:inherit;cursor:pointer">${s.label}</button>`;
+  }).join('');
+  row.querySelectorAll('button').forEach(b=>b.onclick=()=>{dealSort=b.dataset.s;renderSortRow();renderDeals();});
 }
 
 function renderDeals(){
-  const shown = tab==="Tous" ? PRODUCTS : PRODUCTS.filter(p=>p.cat===tab);
-  document.getElementById('dealsBox').innerHTML = shown.map((p,i)=>`
-    <div class="card pop" style="display:flex;animation-delay:${i*50}ms" data-url="${p.url}">
-      <div style="width:110px;flex-shrink:0;position:relative">
-        <img class="prod-img" src="${p.img}" alt="${p.name}" loading="lazy" onerror="this.style.background='#eef2ff';this.removeAttribute('src')">
-        ${p.hot?'<div style="position:absolute;top:8px;left:8px;background:#ef4444;color:#fff;border-radius:100px;font-size:10px;font-weight:800;padding:3px 9px">🔥 HOT</div>':''}
+  let list = dealCat==="Tous" ? [...DEALS_DATA] : DEALS_DATA.filter(d=>d.cat===dealCat);
+  if (dealSort==="pct")   list.sort((a,b)=>(b.pct||0)-(a.pct||0));
+  if (dealSort==="new")   list.sort((a,b)=>a.hoursAgo-b.hoursAgo);
+  if (dealSort==="price") list.sort((a,b)=>(a.price||1e9)-(b.price||1e9));
+
+  const cnt = document.getElementById('dealsCount');
+  if (cnt) cnt.textContent = list.length;
+
+  const box = document.getElementById('dealsBox');
+  if (!list.length){
+    box.innerHTML = `<div style="text-align:center;padding:44px 20px;color:#94a3b8"><div style="font-size:38px;margin-bottom:10px">🔍</div>Aucun deal dans cette catégorie aujourd'hui.</div>`;
+    return;
+  }
+  box.innerHTML = list.map((d,i)=>{
+    const hot = (d.pct||0) >= 20;
+    const isNew = d.hoursAgo <= 24;
+    const wasHtml = d.was!=null ? `<span style="font-size:13px;color:#c2cce3;text-decoration:line-through">${d.was}€</span>` : '';
+    const pctHtml = d.pct!=null ? `<span style="font-size:11px;background:#e9fbef;color:#16a34a;border:1px solid #b6f0c6;padding:2px 8px;border-radius:100px;font-weight:800">-${d.pct}%</span>` : '';
+    const priceHtml = d.price!=null ? `${d.price}€` : 'Voir prix';
+    const imgHtml = d.img ? `<img src="${d.img}" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.style.opacity=0">` : '';
+    return `<div class="card pop" data-url="${d.url}" style="display:flex;animation-delay:${i*45}ms">
+      <div style="width:114px;flex-shrink:0;position:relative;background:#eef2ff">
+        ${imgHtml}
+        <div style="position:absolute;top:8px;left:8px;display:flex;flex-direction:column;gap:5px">
+          ${hot?'<span style="font-size:9.5px;font-weight:800;background:#ef4444;color:#fff;border-radius:100px;padding:3px 8px">🔥 HOT</span>':''}
+          ${isNew?'<span style="font-size:9.5px;font-weight:800;background:#1a1a2e;color:#fff;border-radius:100px;padding:3px 8px">⏱ Nouveau</span>':''}
+        </div>
       </div>
-      <div style="flex:1;padding:14px 16px;display:flex;flex-direction:column;justify-content:space-between">
+      <div style="flex:1;padding:13px 15px;display:flex;flex-direction:column;justify-content:space-between;min-width:0">
         <div>
-          <div style="font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">${p.cat} · ${p.store}</div>
-          <div style="font-size:15px;font-weight:700;color:#1a1a2e;line-height:1.3">${p.name}</div>
+          <div style="font-size:10px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.05em">${d.cat}${d.store?' · '+d.store:''}</div>
+          <div style="font-size:14.5px;font-weight:700;color:#1a1a2e;line-height:1.3;margin-top:4px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${d.name}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
-          <span style="font-size:22px;font-weight:900;color:#3b5bdb">${p.price}</span>
-          <span style="font-size:13px;color:#cbd5e1;text-decoration:line-through">${p.was}</span>
-          <span style="font-size:11px;background:#f0fdf4;color:#16a34a;border:1.5px solid #bbf7d0;padding:3px 9px;border-radius:100px;font-weight:800">${p.pct}</span>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <span style="font-size:21px;font-weight:900;color:#2f54ff">${priceHtml}</span>
+          ${wasHtml}${pctHtml}
         </div>
       </div>
-    </div>`).join('');
-  document.querySelectorAll('#dealsBox .card').forEach(c=>c.onclick=()=>window.open(c.dataset.url,'_blank'));
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.card').forEach(c=>c.onclick=()=>{ if(c.dataset.url && c.dataset.url!=='#') window.open(c.dataset.url,'_blank'); });
 }
 
 // ── MODAL ALERTE ─────────────────────────────
@@ -671,8 +774,7 @@ chatInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();
 checkUser().then(loadAlerts);initCookieBanner();
 renderChat();
 renderChips();
-renderTabs();
-renderDeals();
+loadDeals();
 </script>
 </body>
 </html>
