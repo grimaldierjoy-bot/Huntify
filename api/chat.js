@@ -490,10 +490,23 @@ JSON UNIQUEMENT :
         return new Response(JSON.stringify({reply:html,sessionId:sid}),{headers:H});
       }
 
+      // ── Garde-fou : infos essentielles avant Phase 2 ──
+      const hasDestination = !!(merged.destination || (tP1.recap||'').length > 5);
+      const hasDeparture   = !!(merged.ville_depart || /depuis|de [a-z]/i.test(hist+message));
+
+      if (!hasDestination) {
+        return new Response(JSON.stringify({reply:`<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">Où souhaitez-vous partir ? 🌍</div>`,sessionId:sid}),{headers:H});
+      }
+      if (!hasDeparture) {
+        return new Response(JSON.stringify({reply:`<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">D'où partez-vous ? (ville de départ — indispensable pour calculer les vols ✈️)</div>`,sessionId:sid}),{headers:H});
+      }
+
       // ── Phase 2 : Génération itinéraire (Claude + web search) ──
       // recap2 = tout ce qu'on sait sur le voyage
-      const recap2 = tP1.recap || mergedStr ||
-        `${message} — infos collectées: ${mergedStr||'voir historique'}`;
+      // recap2 TOUJOURS une string (pas un objet)
+      const recap2 = (typeof tP1.recap === 'string' && tP1.recap.length > 3)
+        ? tP1.recap
+        : mergedStr || message;
       const tUser2 = `PROFIL VOYAGE: ${recap2}\n\nHISTORIQUE:\n${hist||''}\n\nMESSAGE: ${message}`;
 
       const tSys = `Tu es un expert agent de voyage pour Huntify. Tu crées des feuilles de route complètes et réalistes.
@@ -520,14 +533,15 @@ NE PROPOSE PAS de vols hors budget vols calculé.
 
 GÉNÈRE LA FEUILLE DE ROUTE COMPLÈTE :
 
-1. UNE SEULE RECHERCHE WEB — Combine vols + hôtels en une requête :
-   "vol [ville_depart] [destination] [dates] + hotel [destination] [dates] prix"
-   
-   Depuis la recherche, extrais :
-   - Vol : compagnie, horaires, durée, prix réel → lien Skyscanner
-   - Hôtels : 2-3 options dans le budget → liens Booking directs
+1. VOLS — Depuis ta connaissance, donne une estimation réaliste :
+   - Compagnie habituelle sur cette route, durée de vol typique
+   - Prix approximatif (fourchette fiable pour la saison)
+   - Lien Skyscanner direct pour les vrais prix en temps réel
 
-2. HÔTELS (depuis la recherche web) :
+2. HÔTELS — Depuis ta connaissance, propose des hôtels réels :
+   - Hôtels que tu connais vraiment (pas inventés)
+   - Prix approximatifs par nuit (fourchettes stables)
+   - Liens Booking directs pour réserver et voir vrais prix
    - Prix réels disponibles, dans le budget hébergement calculé
    - 3 hôtels (budget/confort/luxe), liens Booking directs
    - Lien filtre Booking pour explorer d'autres options
@@ -555,25 +569,15 @@ JSON UNIQUEMENT :
       // Restaurants et activités depuis connaissance Claude (prix stables)
       // 1 seule web search : vols + hôtels en une recherche combinée
       // Évite timeout Edge Function (30s) et réduit le coût input
-      const maxSearches = 1;
-      const tools2 = [{type:"web_search_20250305",name:"web_search",max_uses:maxSearches}];
-      const tRaw2  = await callClaude(tSys, tUser2, 1500, tools2);
+      // Sans web search : rapide, pas de timeout, ~0.02$ au lieu de 0.04$
+      // Claude connait les destinations populaires + liens Booking/Skyscanner pour vrais prix
+      const tRaw2 = await callClaude(tSys, tUser2, 1500, []);
       const tP     = parseJSON(tRaw2||'');
 
       let itin = tP.itinerary;
 
-      // Si Phase 2 a échoué (JSON trop long ou tronqué) → retry sans web search
-      if (!itin && recap2 && recap2.length > 10) {
-        try {
-          const retry = await callClaude(tSys, tUser2, 3000, []);
-          const retryP = parseJSON(retry||'');
-          itin = retryP.itinerary;
-        } catch(e) {}
-      }
-
       if (!itin) {
-        // Dernier recours : retourner à la conversation
-        return new Response(JSON.stringify({reply:`<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">J'ai bien noté votre profil (${recap2}). Laissez-moi générer votre itinéraire... Un instant ! ✈️</div>`,sessionId:sid}),{headers:H});
+        return new Response(JSON.stringify({reply:`<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">Je n'ai pas pu générer l'itinéraire. Pouvez-vous reformuler votre demande avec destination, dates et ville de départ ?</div>`,sessionId:sid}),{headers:H});
       }
 
       // ── Rendu HTML de l'itinéraire ──────────────────────────
