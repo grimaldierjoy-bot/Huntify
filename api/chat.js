@@ -119,7 +119,13 @@ function buildAffiliateLink(adv, keywords, directUrl=null) {
   }
   if (adv.awin_mid) {
     const rakutenKw = encodeURIComponent(kw).replace(/%20/g, '+');
-    const dest = adv.search_url.replace('{keywords}', rakutenKw);
+    // ⚡ FIX DÉFINITIF : force le format /s/ même si search_url en DB est encore l'ancien format
+    let searchBase = adv.search_url || 'https://fr.shopping.rakuten.com/s/{keywords}';
+    if (searchBase.includes('/search?keyword=') || searchBase.includes('?keyword=')) {
+      // Ancien format détecté → on force le bon
+      searchBase = 'https://fr.shopping.rakuten.com/s/{keywords}';
+    }
+    const dest = searchBase.replace('{keywords}', rakutenKw);
     return `https://www.awin1.com/cread.php?awinmid=${adv.awin_mid}&awinaffid=${adv.awin_aff}&ued=${encodeURIComponent(dest)}`;
   }
   return null;
@@ -328,50 +334,81 @@ export default async function handler(req) {
         .join(', ');
 
       // Prompt système voyage complet
-      const travelSys = `Tu es l'agent voyage IA de Huntify. Tu crées des voyages sur-mesure.
+      const travelSys = `Tu es l'agent voyage IA de Huntify. Tu génères des FEUILLES DE ROUTE complètes comme un vrai agent de voyage.
 
-CONTEXTE DÉJÀ COLLECTÉ (NE PAS REDEMANDER) :
+CONTEXTE DÉJÀ COLLECTÉ (NE PAS REDEMANDER CES INFOS) :
 ${ctxSummary ? ctxSummary : 'Aucun — début de conversation'}
 
-Tu es l'agent voyage IA de Huntify. Tu crées des voyages sur-mesure.
-
 HISTORIQUE : ${histSummary || 'Début de conversation'}
-Questions déjà posées : ${travelQAsked}/5
+Questions posées : ${travelQAsked}/5
 
-RÈGLE ABSOLUE : ne repose JAMAIS une question dont la réponse est déjà dans l'historique.
+═══════════════════════════════════════
+RÈGLE ABSOLUE ANTI-BOUCLE :
+- NE REDEMANDE JAMAIS une info déjà dans le contexte ou l'historique
+- NE REPROPOSE JAMAIS les mêmes destinations si déjà proposées
+- Si l'utilisateur a choisi une destination → GÉNÈRE L'ITINÉRAIRE, ne pose plus de questions sur la destination
+- Si tu as déjà l'essentiel (destination + budget OU durée) → génère directement
+═══════════════════════════════════════
 
-CAS 1 — L'UTILISATEUR N'A PAS DE DESTINATION PRÉCISE
-Si le client dit "je sais pas", "propose-moi", "surprends-moi", "peu importe" ou donne seulement un style/budget/durée sans destination → PROPOSE 3 destinations adaptées.
-Pour cela, tu dois d'abord connaître : budget, durée, style, nombre de voyageurs.
-Si ces 4 infos sont disponibles → propose les destinations.
-Sinon → pose UNE question pour collecter ce qui manque parmi ces 4.
+INFOS NÉCESSAIRES (collecte UNE seule à la fois si manquante) :
+1. Destination — ou style/envie si pas de destination précise
+2. Durée ou dates
+3. Budget total
+4. Nombre de voyageurs
+5. Style (optionnel — chill/culture/aventure/famille/romantique)
 
-CAS 2 — L'UTILISATEUR A UNE DESTINATION PRÉCISE
-Collecte : dates/durée, nombre de voyageurs, budget, style.
-Quand tout est réuni OU 5 questions posées → génère l'itinéraire complet.
+CAS 1 — PAS DE DESTINATION PRÉCISE :
+Si l'utilisateur dit "je sais pas", "propose", "surprends-moi", ou donne juste budget+style → PROPOSE 3 destinations.
+NE REPROPOSE PAS si tu l'as déjà fait — génère l'itinéraire de la destination choisie.
 
-QUAND TU PROPOSES DES DESTINATIONS (CAS 1) :
-- 3 destinations variées et adaptées au profil (budget, style, durée)
-- Pour chaque : nom, pays, pourquoi c'est parfait pour lui, fourchette de prix indicative
-- Demande ensuite laquelle lui plaît
+CAS 2 — DESTINATION CONNUE + infos suffisantes :
+GÉNÈRE LA FEUILLE DE ROUTE COMPLÈTE avec vrais prix trouvés via web search.
 
-QUAND TU GÉNÈRES L'ITINÉRAIRE :
-- Programme jour par jour (matin/après-midi/soirée)
-- Adapté au style ET au budget
-- 2-3 hébergements Booking.com avec prix réalistes
-- Budget détaillé (hébergement/activités/repas/transport)
-- 3-5 conseils pratiques
+═══════════════════════════════════════
+QUAND TU GÉNÈRES LA FEUILLE DE ROUTE :
 
-JSON UNIQUEMENT — 3 formats possibles :
+1. VOLS — cherche sur Google Flights / Skyscanner / Kayak :
+   - Meilleur prix aller-retour depuis Paris (ou ville proche)
+   - Compagnie, durée, escales
+   - Lien de réservation direct
 
-1. Question de ciblage :
-{"type":"question","question":"ta question"}
+2. HÔTELS — cherche sur Booking.com :
+   - 3 options (budget/confort/luxe) avec VRAIS prix par nuit
+   - Quartier, note, points forts
+   - Lien Booking direct
 
-2. Suggestions de destinations :
-{"type":"suggestions","intro":"Selon tes critères, voici 3 destinations parfaites :","destinations":[{"name":"Lisbonne, Portugal","emoji":"🇵🇹","why":"Idéale pour la culture, abordable, soleil garanti","price":"Dès 600€/semaine pour 2","tags":["culture","soleil","gastronomie"]},{"name":"Marrakech, Maroc","emoji":"🇲🇦","why":"Dépaysement total, budget serré, authenticité","price":"Dès 500€/semaine pour 2","tags":["dépaysement","culture","aventure"]},{"name":"Budapest, Hongrie","emoji":"🇭🇺","why":"Romantique, architecture splendide, très abordable","price":"Dès 550€/semaine pour 2","tags":["romantique","culture","fêtes"]}],"question":"Laquelle te tente le plus ? Je génère ton itinéraire complet !"}
+3. PROGRAMME JOUR PAR JOUR :
+   - Matin / Après-midi / Soirée
+   - Activités concrètes avec prix d'entrée si payant
+   - Restaurant recommandé le soir avec fourchette de prix
+   - Transport entre les étapes
 
-3. Itinéraire complet :
-{"type":"itinerary","recap":"Destination X, Y nuits, Z pers, budget W€, style S","itinerary":{"destination":"X","duration":"Y jours","style":"S","days":[{"num":1,"title":"Titre","morning":"...","afternoon":"...","evening":"...","hotel":"Nom hôtel","budget":150}],"hotels":[{"name":"Nom","stars":3,"price":"90€","location":"Quartier","highlight":"Point fort"}],"budget":{"total":1200,"hebergement":450,"activites":200,"repas":300,"transport":150,"note":"Estimations"},"tips":["Conseil 1","Conseil 2","Conseil 3"]}}`;
+4. BUDGET TOTAL DÉTAILLÉ :
+   - Vols (aller-retour total)
+   - Hébergement (X nuits × prix/nuit)
+   - Activités et visites
+   - Restaurants et repas
+   - Transport local
+   - TOTAL avec marge de sécurité 10%
+
+5. CONSEILS PRATIQUES :
+   - Meilleure période pour réserver
+   - Transport depuis l'aéroport
+   - Carte SIM / WiFi local
+   - Ce qu'il ne faut pas manquer
+   - Ce qu'il faut éviter
+
+═══════════════════════════════════════
+JSON UNIQUEMENT — 3 formats :
+
+FORMAT 1 — Question :
+{"type":"question","question":"ta question courte"}
+
+FORMAT 2 — Suggestions destinations :
+{"type":"suggestions","intro":"Voici 3 destinations parfaites selon tes critères :","destinations":[{"name":"Lisbonne, Portugal","emoji":"🇵🇹","why":"Culture riche, gastronomie excellente, soleil garanti, très abordable","price":"Dès 600€/semaine tout compris pour 2","tags":["culture","soleil","gastronomie"],"flight":"~150€ A/R depuis Paris","hotel":"Dès 80€/nuit centre-ville"}],"question":"Laquelle te tente ? Je génère ta feuille de route complète avec vols et hôtels !"}
+
+FORMAT 3 — Feuille de route complète :
+{"type":"itinerary","recap":"...","itinerary":{"destination":"Lisbonne","country":"Portugal","flag":"🇵🇹","duration":"7 jours","dates":"adaptable","travelers":"2 adultes","style":"culture","flights":{"outbound":{"from":"Paris CDG","to":"Lisbonne LIS","price":"142€/pers","airline":"TAP Air Portugal","duration":"2h30","link":"https://www.skyscanner.fr/..."},"return":{"from":"Lisbonne LIS","to":"Paris CDG","price":"142€/pers","airline":"TAP Air Portugal","duration":"2h30","link":"https://www.skyscanner.fr/..."}},"hotels":[{"name":"Hotel do Chiado","stars":4,"price":"95€","location":"Chiado — centre historique","highlight":"Vue sur les toits, petit-déjeuner inclus","booking_link":"https://www.booking.com/hotel/pt/do-chiado.fr.html","category":"confort"},{"name":"Lisbon Calling Hostel","stars":3,"price":"45€","location":"Mouraria","highlight":"Ambiance locale, rooftop","booking_link":"https://www.booking.com/...","category":"budget"},{"name":"Bairro Alto Hotel","stars":5,"price":"280€","location":"Bairro Alto","highlight":"Vue panoramique, spa","booking_link":"https://www.booking.com/...","category":"luxe"}],"days":[{"num":1,"title":"Arrivée et Alfama","morning":"Arrivée à LIS, transfert en metro (1.65€) jusqu'au centre. Check-in hôtel.","afternoon":"Découverte du quartier Alfama, Miradouro da Graça (gratuit), vue panoramique sur la ville","evening":"Dîner au restaurant Solar dos Presuntos — spécialités portugaises, budget 35€/2 pers","hotel":"Hotel do Chiado","budget":80,"activities":["Miradouro da Graça — gratuit","Cathédrale Sé — 5€/pers"],"restaurant":{"name":"Solar dos Presuntos","price":"35€ pour 2","specialty":"Bacalhau traditionnel"}}],"budget":{"flights_total":284,"accommodation_total":665,"activities_total":150,"food_total":280,"transport_local":45,"total":1424,"total_with_margin":1566,"per_person":783,"note":"Prix relevés le ${new Date().toLocaleDateString('fr')} — peuvent varier selon les dates exactes"},"tips":["Réserver les vols 6-8 semaines à l'avance pour les meilleurs prix","Le metro est le transport idéal : ticket 10 trajets = 9.10€","Éviter août (très chaud et touristique) — mai/juin ou septembre sont idéaux","Carte Lisboa Card (24h = 20€) : transports illimités + musées gratuits","Télécharger l'app MB Way pour payer partout sans frais"]}}`;`;
 
       const travelUser = `HISTORIQUE:
 ${histSummary||'Début'}
@@ -437,51 +474,151 @@ MESSAGE: ${message}`;
         return new Response(JSON.stringify({ reply: sugHtml, sessionId:sid }), { headers:HEADERS });
       }
 
-      // CAS 3 : itinéraire complet
+      // CAS 3 : feuille de route complète
       const itin = tP.itinerary || (tP.type === 'itinerary' ? tP.itinerary : null);
       if (!itin) {
-        return new Response(JSON.stringify({ reply: questionBox("Dis-moi ton budget, la durée et le style de voyage souhaité !"), sessionId:sid }), { headers:HEADERS });
+        return new Response(JSON.stringify({ reply: questionBox("Dis-moi ta destination et ton budget pour que je génère ta feuille de route complète !"), sessionId:sid }), { headers:HEADERS });
       }
 
-      // Construction de la réponse voyage
       let travelHtml = '';
 
-      // Header destination
-      travelHtml += `<div style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:16px;margin-bottom:4px;text-align:center">
-        <div style="font-size:24px;margin-bottom:6px">✈️</div>
-        <div style="font-family:'Sora',sans-serif;font-size:18px;font-weight:800;color:#fff">${itin.destination}</div>
-        <div style="font-size:12px;color:rgba(255,255,255,.75);margin-top:4px">${itin.duration} · ${itin.style} · ${travelBudget||''}${travelBudget?'€':''}</div>
+      // ── Header destination ──────────────────────────────────
+      travelHtml += `<div style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:18px;margin-bottom:4px;text-align:center">
+        <div style="font-size:32px;margin-bottom:6px">${itin.flag||'✈️'}</div>
+        <div style="font-family:'Sora',sans-serif;font-size:20px;font-weight:800;color:#fff">${itin.destination}${itin.country?', '+itin.country:''}</div>
+        <div style="font-size:12px;color:rgba(255,255,255,.75);margin-top:6px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap">
+          <span>📅 ${itin.duration}</span>
+          <span>👥 ${itin.travelers||'2 pers.'}</span>
+          ${itin.budget?.total?`<span>💰 ${itin.budget.total}€ estimé</span>`:''}
+        </div>
       </div>`;
 
-      // Récap
+      // ── Récap ───────────────────────────────────────────────
       if (tP.recap) travelHtml += recapBox(tP.recap);
 
-      // Jours
-      if (itin.days?.length) {
-        travelHtml += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:12px 0 4px">📅 Programme jour par jour</div>`;
-        for (const d of itin.days) travelHtml += dayCard(d);
+      // ── VOLS ────────────────────────────────────────────────
+      if (itin.flights) {
+        const f = itin.flights;
+        travelHtml += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">✈️ Vols recommandés</div>`;
+        const flightTotal = f.outbound?.price && f.return?.price
+          ? `(Total A/R : ~${parseInt(f.outbound.price)*parseInt(itin.travelers||'2')*2||'voir site'}€)`
+          : '';
+        travelHtml += `<div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;overflow:hidden;margin-bottom:8px">`;
+        if (f.outbound) {
+          travelHtml += `<div style="padding:12px 14px;border-bottom:1px solid #f0f4ff">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div><span style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Aller</span>
+                <div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">${f.outbound.from||''} → ${f.outbound.to||''}</div>
+                <div style="font-size:11px;color:#7c89a8">${f.outbound.airline||''} · ${f.outbound.duration||''}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:16px;font-weight:900;color:#2f54ff">${f.outbound.price||'Voir prix'}</div>
+                <div style="font-size:10px;color:#7c89a8">par pers.</div>
+              </div>
+            </div>
+          </div>`;
+        }
+        if (f.return) {
+          travelHtml += `<div style="padding:12px 14px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div><span style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Retour</span>
+                <div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">${f.return.from||''} → ${f.return.to||''}</div>
+                <div style="font-size:11px;color:#7c89a8">${f.return.airline||''} · ${f.return.duration||''}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:16px;font-weight:900;color:#2f54ff">${f.return.price||'Voir prix'}</div>
+                <div style="font-size:10px;color:#7c89a8">par pers.</div>
+              </div>
+            </div>
+          </div>`;
+        }
+        travelHtml += `</div>`;
+        const flightLink = f.outbound?.link || `https://www.skyscanner.fr/transport/vols/${encodeURIComponent((f.outbound?.from||'PAR').slice(0,3))}/${encodeURIComponent((f.outbound?.to||'LIS').slice(0,3))}/`;
+        travelHtml += `<a href="${flightLink}" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:11px;font-size:13px;font-weight:700;margin-bottom:4px">🔍 Comparer les vols sur Skyscanner →</a>`;
       }
 
-      // Hôtels Booking
+      // ── HÔTELS ──────────────────────────────────────────────
       if (itin.hotels?.length) {
-        travelHtml += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 4px">🏨 Hébergements suggérés sur Booking.com</div>`;
+        travelHtml += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">🏨 Hébergements sur Booking.com</div>`;
+        const catLabels = {budget:'💚 Budget',confort:'💙 Confort',luxe:'💎 Luxe'};
         for (const h of itin.hotels) {
-          const dest = itin.destination;
           const nights = parseInt((itin.duration||'').match(/\d+/)?.[0]||'3');
-          travelHtml += hotelCard({...h, url: buildBookingLink(dest, nights)});
+          const bookUrl = h.booking_link || buildBookingLink(itin.destination, nights);
+          const stars = '⭐'.repeat(Math.min(h.stars||3,5));
+          const catLabel = catLabels[h.category] || '';
+          travelHtml += `<a href="${bookUrl}" target="_blank" style="display:flex;flex-direction:column;background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;padding:13px;margin-top:7px;text-decoration:none;gap:5px">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+                  ${catLabel?`<span style="font-size:10px;font-weight:800;background:#eff6ff;color:#2f54ff;border-radius:100px;padding:1px 8px">${catLabel}</span>`:''}
+                </div>
+                <div style="font-size:13px;font-weight:800;color:#0e1430">${h.name}</div>
+                <div style="font-size:11px;color:#7c89a8">${stars} · ${h.location||''}</div>
+              </div>
+              <div style="background:linear-gradient(135deg,#2f54ff,#4a6bff);color:#fff;border-radius:10px;padding:6px 10px;text-align:right;flex-shrink:0;margin-left:8px">
+                <div style="font-size:15px;font-weight:900">${h.price||'?'}€</div>
+                <div style="font-size:9px;opacity:.8">/nuit</div>
+              </div>
+            </div>
+            ${h.highlight?`<div style="font-size:11px;color:#2f54ff;font-weight:600;background:#eff6ff;border-radius:8px;padding:4px 10px">✨ ${h.highlight}</div>`:''}
+            <div style="font-size:10.5px;color:#94a3b8;font-weight:600">Voir sur Booking.com →</div>
+          </a>`;
         }
       }
 
-      // Budget
-      if (itin.budget) travelHtml += budgetCard(itin.budget);
+      // ── PROGRAMME JOUR PAR JOUR ─────────────────────────────
+      if (itin.days?.length) {
+        travelHtml += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">📅 Programme jour par jour</div>`;
+        for (const d of itin.days) {
+          travelHtml += `<div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;padding:14px;margin-top:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+              <div style="background:linear-gradient(135deg,#2f54ff,#4a6bff);color:#fff;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:800">Jour ${d.num}</div>
+              <div style="font-size:12px;font-weight:700;color:#0e1430">${d.title||''}</div>
+              ${d.budget?`<div style="font-size:11px;color:#16a34a;font-weight:700">~${d.budget}€</div>`:''}
+            </div>
+            ${d.morning?`<div style="display:flex;gap:8px;margin-bottom:7px"><span style="font-size:16px">🌅</span><div><div style="font-size:11px;font-weight:700;color:#7c89a8;text-transform:uppercase;margin-bottom:1px">Matin</div><div style="font-size:12px;color:#374151">${d.morning}</div></div></div>`:''}
+            ${d.afternoon?`<div style="display:flex;gap:8px;margin-bottom:7px"><span style="font-size:16px">☀️</span><div><div style="font-size:11px;font-weight:700;color:#7c89a8;text-transform:uppercase;margin-bottom:1px">Après-midi</div><div style="font-size:12px;color:#374151">${d.afternoon}</div></div></div>`:''}
+            ${d.evening?`<div style="display:flex;gap:8px;margin-bottom:7px"><span style="font-size:16px">🌙</span><div><div style="font-size:11px;font-weight:700;color:#7c89a8;text-transform:uppercase;margin-bottom:1px">Soirée</div><div style="font-size:12px;color:#374151">${d.evening}</div></div></div>`:''}
+            ${d.restaurant?`<div style="background:#f0fdf4;border-radius:8px;padding:7px 10px;margin-top:4px;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:#16a34a;font-weight:700">🍽️ ${d.restaurant.name||''}</div><div style="font-size:11px;color:#16a34a">${d.restaurant.price||''}</div></div>`:''}
+            ${d.activities?.length?`<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${d.activities.map(a=>`<span style="background:#eff6ff;color:#2f54ff;border-radius:100px;padding:2px 9px;font-size:10.5px;font-weight:600">${a}</span>`).join('')}</div>`:''}
+          </div>`;
+        }
+      }
 
-      // Conseils
+      // ── BUDGET TOTAL ────────────────────────────────────────
+      if (itin.budget) {
+        const b = itin.budget;
+        const items = [
+          ['✈️ Vols A/R', b.flights_total],
+          ['🏨 Hébergement', b.accommodation_total],
+          ['🎯 Activités', b.activities_total],
+          ['🍽️ Restaurants', b.food_total],
+          ['🚇 Transport local', b.transport_local],
+        ].filter(i=>i[1]);
+        travelHtml += `<div style="background:linear-gradient(135deg,#0e1430,#1f2da0);border-radius:16px;padding:16px;margin-top:14px">
+          <div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:12px">💰 Budget total estimé</div>
+          ${items.map(([l,v])=>`<div style="display:flex;justify-content:space-between;margin-bottom:7px"><span style="font-size:12px;color:rgba(255,255,255,.75)">${l}</span><span style="font-size:12px;font-weight:700;color:#fff">${v}€</span></div>`).join('')}
+          <div style="border-top:1px solid rgba(255,255,255,.2);margin-top:10px;padding-top:10px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+              <span style="font-size:13px;font-weight:800;color:#fff">TOTAL</span>
+              <span style="font-size:16px;font-weight:900;color:#bcd0ff">${b.total||''}€</span>
+            </div>
+            ${b.per_person?`<div style="font-size:11px;color:rgba(255,255,255,.6);text-align:right">soit ${b.per_person}€/personne</div>`:''}
+          </div>
+          ${b.note?`<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:8px;line-height:1.4">${b.note}</div>`:''}
+        </div>`;
+      }
+
+      // ── CONSEILS PRATIQUES ──────────────────────────────────
       if (itin.tips?.length) travelHtml += tipsCard(itin.tips);
 
-      // Indicateur ROI
-      if (travelStrategy === 'free') {
-        travelHtml += `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:8px 12px;margin-top:10px;font-size:11px;color:#16a34a;font-weight:600">🔍 Mode économique — pour des disponibilités et prix en temps réel, précise un budget plus élevé</div>`;
-      }
+      // ── BOUTON WISHLIST VOYAGE ──────────────────────────────
+      const voyageName = `Voyage ${(itin.destination||'')}${itin.country?' ('+itin.country+')':''}`;
+      const voyagePrice = itin.budget?.total ? itin.budget.total+'€' : '';
+      const voyageUrl = (itin.hotels||[])[0]?.booking_link || buildBookingLink(itin.destination||'', 5);
+      const voyageData = JSON.stringify({name:voyageName,price:voyagePrice,store:'booking',url:voyageUrl}).replace(/"/g,'&quot;');
+      travelHtml += `<button onclick="addToWishlist(${voyageData})" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border:none;color:#fff;border-radius:12px;padding:12px 16px;margin-top:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;width:100%">♡ Sauvegarder ce voyage dans ma wishlist</button>`;
+      travelHtml += '<div style="font-size:10px;color:#7c89a8;text-align:center;margin-top:6px">Retrouve cette feuille de route dans ton compte → Wishlist ✈️</div>';
 
       // Tracking Supabase
       if (trackingEnabled) {
@@ -555,8 +692,12 @@ JSON UNIQUEMENT :
         : 'Cherche sur Amazon.fr avec prix réalistes.';
 
       const p2sys = `Tu es l'agent shopping de Huntify. Boutiques: ${activeNames}.
+CONTEXTE : ${recapText}
 ${storeMsg}
+SOIS INTELLIGENT : adapte les produits au contexte (occasion, pour qui, usage).
+Ex: "cadeau 2 ans relation" → propose bijoux, expériences, accessoires romantiques selon budget.
 Utilise ta connaissance des prix courants. Si prix inconnu, donne fourchette réaliste.
+Mets badge utile : "Idéal en cadeau", "Coup de coeur", "Bestseller".
 Ne fournis pas d'URL directes (risque 404), laisse url:null.
 
 JSON UNIQUEMENT :
@@ -588,13 +729,21 @@ JSON UNIQUEMENT :
       // Claude + web search (budget > 150EUR, ROI positif)
       const p2sys = `Tu es l'agent shopping de Huntify. Boutiques: ${activeNames}.
 
-1. CHERCHE SUR AMAZON - 1 recherche web sur amazon.fr, 2 produits prix réels.
+CONTEXTE DU BESOIN : ${recapText}
+
+1. CHERCHE SUR AMAZON - 1 recherche web sur amazon.fr, 2 produits ADAPTÉS au contexte avec prix réels.
 2. CHERCHE SUR RAKUTEN - 1 recherche web sur fr.shopping.rakuten.com, 1 produit. OBLIGATOIRE.
 3. CODES PROMOS - dealabs.com si possible.
 
+INTELLIGENCE CONTEXTUELLE :
+- "cadeau 2 ans relation" → cherche idées cadeaux romantiques/expériences/bijoux selon budget
+- "cadeau enfant 5 ans" → cherche jouets éducatifs adaptés à l'âge
+- Adapte TOUJOURS les produits au contexte émotionnel et à l'occasion
+- Mets dans "badge" une suggestion utile : "Idéal en cadeau", "Bestseller", "Livraison rapide"
+
 RÈGLES :
 - 2 Amazon + 1 Rakuten OBLIGATOIRES
-- keywords: termes simples sans virgules (ex: "casque sony bluetooth")
+- keywords: termes de recherche précis et adaptés au contexte (ex: "cadeau romantique couple bijou")
 - url: null si pas certain
 - Max 2 codes promos
 
