@@ -1,3 +1,4 @@
+
 export const config = { runtime: 'edge' };
 
 // ============================================================
@@ -132,13 +133,36 @@ function buildDBContext(dbData) {
   return parts.join('\n');
 }
 
-function buildBookingLink(destination, nights=5, adults=2) {
+function buildBookingLink(destination, nights=5, adults=2, minPrice=null, maxPrice=null) {
   const pubId = process.env.CJ_PUBLISHER_ID||null;
   const advId = process.env.CJ_BOOKING_ADVERTISER_ID||null;
   const dest  = encodeURIComponent(destination||'');
-  const base  = `https://www.booking.com/search.html?ss=${dest}&group_adults=${adults}&nights=${nights}`;
+  let base = `https://www.booking.com/search.html?ss=${dest}&group_adults=${adults}&nights=${nights}`;
+  // Filtre prix si fourchette fournie (format Booking : nflt=price%3DMIN-MAX-1)
+  if (minPrice && maxPrice) {
+    base += `&nflt=price%3D${minPrice}-${maxPrice}-1`;
+  }
   if (!pubId||!advId) return base;
   return `https://www.anrdoezrs.net/click-${pubId}-${advId}?url=${encodeURIComponent(base)}`;
+}
+
+// Carte hôtel GÉNÉRIQUE (fourchette de prix, pas d'hôtel spécifique)
+function hotelRangeCard(category, label, priceRange, description, bookingUrl) {
+  const catColors = {budget:'#16a34a', confort:'#2f54ff', luxe:'#7c3aed'};
+  const catIcons  = {budget:'💚', confort:'💙', luxe:'💎'};
+  const cc = catColors[category]||'#2f54ff';
+  const ci = catIcons[category]||'🏨';
+  return `<a href="${bookingUrl}" target="_blank" style="display:flex;align-items:center;gap:12px;background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;padding:13px;margin-top:8px;text-decoration:none">
+    <div style="width:44px;height:44px;border-radius:10px;background:${cc}18;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">${ci}</div>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:11px;font-weight:800;color:${cc}">${label}</span>
+        <span style="font-size:14px;font-weight:900;color:${cc}">${priceRange}</span>
+      </div>
+      <div style="font-size:12px;color:#374151;margin-top:3px">${description}</div>
+      <div style="font-size:10px;color:#94a3b8;margin-top:3px">Voir les disponibilités sur Booking.com →</div>
+    </div>
+  </a>`;
 }
 
 // ── ROI routing ───────────────────────────────────────────────
@@ -507,7 +531,10 @@ Ne re-propose pas si déjà fait — génère l'itinéraire de celle choisie.
 CAS 2 — DESTINATION CONNUE :
 Génère la FEUILLE DE ROUTE COMPLÈTE :
 1. VOLS — Recherche aller/retour depuis Paris : prix réaliste, compagnie, durée
-2. HÔTELS BOOKING — 3 catégories (budget/confort/luxe) avec prix/nuit réaliste et lien Booking direct
+2. HÔTELS BOOKING — CHOIX DU MODE selon ce que tu peux trouver :
+   MODE PRÉCIS (si deep search disponible) : 3 hôtels nommés (budget/confort/luxe) avec vrais prix
+   MODE GÉNÉRIQUE (si pas de web search) : 3 fourchettes de prix avec description du type d'hébergement
+   Dans les deux cas, les champs minPrice/maxPrice permettent de filtrer sur Booking
 3. PROGRAMME JOUR PAR JOUR — Matin/Après-midi/Soirée avec activités concrètes et prix
 4. RESTAURANTS — 1 restaurant recommandé par soirée avec spécialité et fourchette de prix
 5. BUDGET TOTAL — vols + hébergement + activités + restaurants + transport local + marge 10%
@@ -521,7 +548,7 @@ Suggestions destinations :
 {"type":"suggestions","intro":"...","destinations":[{"name":"Lisbonne, Portugal","emoji":"🇵🇹","why":"...","price":"Dès 700€/semaine pour 2","flight":"~150€ A/R","hotel":"Dès 80€/nuit","tags":["culture","soleil"]}],"question":"Laquelle te tente ?"}
 
 Feuille de route complète :
-{"type":"itinerary","recap":"...","itinerary":{"destination":"Lisbonne","country":"Portugal","flag":"🇵🇹","duration":"7 jours","travelers":"2 adultes","style":"culture","flights":{"outbound":{"from":"Paris CDG","to":"Lisbonne LIS","price":"145€","airline":"TAP Air Portugal","duration":"2h30","link":null},"return":{"from":"Lisbonne LIS","to":"Paris CDG","price":"145€","airline":"TAP Air Portugal","duration":"2h30","link":null}},"hotels":[{"name":"Hotel do Chiado","stars":4,"price":"95","location":"Chiado","highlight":"Vue sur les toits","booking_link":null,"category":"confort"},{"name":"Yes! Lisbon Hostel","stars":3,"price":"40","location":"Mouraria","highlight":"Ambiance locale","booking_link":null,"category":"budget"},{"name":"Bairro Alto Hotel","stars":5,"price":"290","location":"Bairro Alto","highlight":"Vue panoramique","booking_link":null,"category":"luxe"}],"days":[{"num":1,"title":"Arrivée et Alfama","morning":"Arrivée LIS, metro vers le centre (1.65€)","afternoon":"Quartier Alfama, Miradouro da Graça — gratuit","evening":"Découverte du Bairro Alto animé","restaurant":{"name":"Solar dos Presuntos","price":"35€/2 pers","specialty":"Bacalhau traditionnel"},"activities":["Miradouro da Graça — gratuit","Cathédrale Sé — 5€/pers"],"hotel":"Hotel do Chiado","budget":90}],"budget":{"flights_total":290,"accommodation_total":665,"activities_total":150,"food_total":280,"transport_local":40,"total":1425,"per_person":712,"note":"Prix relevés en juin 2026, variables selon dates exactes"},"tips":["Réserver vols 6-8 semaines à l'avance","Metro : 10 trajets = 9.10€","Éviter août — préférer mai/juin ou septembre","Lisboa Card 24h = 20€ : transports + musées gratuits","App MB Way pour payer sans frais"]}}`;
+{"type":"itinerary","recap":"...","itinerary":{"destination":"Lisbonne","country":"Portugal","flag":"🇵🇹","duration":"7 jours","travelers":"2 adultes","style":"culture","flights":{"outbound":{"from":"Paris CDG","to":"Lisbonne LIS","price":"145€","airline":"TAP Air Portugal","duration":"2h30","link":null},"return":{"from":"Lisbonne LIS","to":"Paris CDG","price":"145€","airline":"TAP Air Portugal","duration":"2h30","link":null}},"hotels":[{"name":"Hotel do Chiado","stars":4,"price":"95","location":"Chiado","highlight":"Vue sur les toits","booking_link":null,"category":"confort","minPrice":80,"maxPrice":120},{"name":"Yes! Lisbon Hostel","stars":3,"price":"40","location":"Mouraria","highlight":"Ambiance locale","booking_link":null,"category":"budget","minPrice":30,"maxPrice":60},{"name":"Bairro Alto Hotel","stars":5,"price":"290","location":"Bairro Alto","highlight":"Vue panoramique","booking_link":null,"category":"luxe","minPrice":200,"maxPrice":400}],"days":[{"num":1,"title":"Arrivée et Alfama","morning":"Arrivée LIS, metro vers le centre (1.65€)","afternoon":"Quartier Alfama, Miradouro da Graça — gratuit","evening":"Découverte du Bairro Alto animé","restaurant":{"name":"Solar dos Presuntos","price":"35€/2 pers","specialty":"Bacalhau traditionnel"},"activities":["Miradouro da Graça — gratuit","Cathédrale Sé — 5€/pers"],"hotel":"Hotel do Chiado","budget":90}],"budget":{"flights_total":290,"accommodation_total":665,"activities_total":150,"food_total":280,"transport_local":40,"total":1425,"per_person":712,"note":"Prix relevés en juin 2026, variables selon dates exactes"},"tips":["Réserver vols 6-8 semaines à l'avance","Metro : 10 trajets = 9.10€","Éviter août — préférer mai/juin ou septembre","Lisboa Card 24h = 20€ : transports + musées gratuits","App MB Way pour payer sans frais"]}}`;
 
       const tUser = `HISTORIQUE:\n${hist||'Début'}\n\nQuestions posées: ${qAsked}/5\n\nMESSAGE: ${message}`;
 
@@ -620,9 +647,25 @@ Feuille de route complète :
         const nights=parseInt((itin.duration||'').match(/\d+/)?.[0]||'5');
         for(const h of itin.hotels) {
           // Lien direct vers L'HÔTEL précis (pas juste la destination)
-          // Inclure nom + quartier + destination pour lien Booking le plus précis possible
-          const hotelSearch = h.name ? (h.name + ' ' + (h.location||'') + ' ' + (itin.destination||'')).trim() : (itin.destination||'');
-          html+=hotelCard(h, h.booking_link || buildBookingLink(hotelSearch, nights));
+          if (h.name && h.name.length > 3 && h.name !== 'null') {
+            // MODE PRÉCIS : hôtel nommé → lien direct sur cet hôtel
+            const hotelSearch = (h.name + ' ' + (h.location||'') + ' ' + (itin.destination||'')).trim();
+            html+=hotelCard(h, h.booking_link || buildBookingLink(hotelSearch, nights));
+          } else {
+            // MODE GÉNÉRIQUE : fourchette de prix → filtre Booking
+            const ranges = {budget:'30-80€/nuit', confort:'80-180€/nuit', luxe:'180€+/nuit'};
+            const descs  = {
+              budget : 'Hôtels et hostels bien notés, idéal pour voyager économique',
+              confort: 'Hôtels 3-4 étoiles confortables, bon rapport qualité-prix',
+              luxe   : 'Hôtels 4-5 étoiles premium avec services haut de gamme'
+            };
+            const catLabels = {budget:'💚 Budget', confort:'💙 Confort', luxe:'💎 Luxe'};
+            const label  = catLabels[h.category]||'🏨 Hôtel';
+            const range  = h.price ? h.price+'€/nuit' : ranges[h.category]||'Voir prix';
+            const desc   = h.highlight || descs[h.category]||'';
+            const bookUrl = buildBookingLink(itin.destination||'', nights, 2, h.minPrice||null, h.maxPrice||null);
+            html+=hotelRangeCard(h.category, label, range, desc, bookUrl);
+          }
         }
       }
 
