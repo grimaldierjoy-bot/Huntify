@@ -98,21 +98,17 @@ async function queryInternalDB(keywords, budget) {
 // Construit un contexte DB à injecter dans le prompt
 function buildDBContext(dbData) {
   if (!dbData.hasData) return '';
-  let ctx = 'DONNÉES INTERNES DISPONIBLES (utilise en priorité) :
-';
+  const parts = ['DONNEES INTERNES DISPONIBLES (utilise en priorite) :'];
   if (dbData.deals?.length) {
-    ctx += 'Deals actuels : ' + dbData.deals.map(d=>`${d.name} ${d.price||''} chez ${d.store||''}`).join(' | ') + '
-';
+    parts.push('Deals actuels : ' + dbData.deals.map(d=>`${d.name} ${d.price||''} chez ${d.store||''}`).join(' | '));
   }
   if (dbData.prices?.length) {
-    ctx += 'Historique prix : ' + dbData.prices.map(p=>`${p.product_name} ${p.price}€ (${p.store})`).join(' | ') + '
-';
+    parts.push('Historique prix : ' + dbData.prices.map(p=>`${p.product_name} ${p.price}EUR (${p.store})`).join(' | '));
   }
   if (dbData.promos?.length) {
-    ctx += 'Codes promos : ' + dbData.promos.map(p=>`${p.code} (${p.store} ${p.discount||''})`).join(' | ') + '
-';
+    parts.push('Codes promos : ' + dbData.promos.map(p=>`${p.code} (${p.store} ${p.discount||''})`).join(' | '));
   }
-  return ctx;
+  return parts.join('\n');
 }
 
 function buildBookingLink(destination, nights=5, adults=2) {
