@@ -491,7 +491,9 @@ JSON UNIQUEMENT :
       }
 
       // ── Phase 2 : Génération itinéraire (Claude + web search) ──
-      const recap2 = tP1.recap || mergedStr || message;
+      // recap2 = tout ce qu'on sait sur le voyage
+      const recap2 = tP1.recap || mergedStr ||
+        `${message} — infos collectées: ${mergedStr||'voir historique'}`;
       const tUser2 = `PROFIL VOYAGE: ${recap2}\n\nHISTORIQUE:\n${hist||''}\n\nMESSAGE: ${message}`;
 
       const tSys = `Tu es un expert agent de voyage pour Huntify. Tu crées des feuilles de route complètes et réalistes.
@@ -518,13 +520,14 @@ NE PROPOSE PAS de vols hors budget vols calculé.
 
 GÉNÈRE LA FEUILLE DE ROUTE COMPLÈTE :
 
-1. VOLS — Recherche web depuis la ville de départ du client :
-   - Vols pour les dates exactes demandées
-   - Compagnie, horaires départ/arrivée, durée, escales
-   - Prix RÉEL trouvé sur le web
-   - Lien Skyscanner direct
+1. UNE SEULE RECHERCHE WEB — Combine vols + hôtels en une requête :
+   "vol [ville_depart] [destination] [dates] + hotel [destination] [dates] prix"
+   
+   Depuis la recherche, extrais :
+   - Vol : compagnie, horaires, durée, prix réel → lien Skyscanner
+   - Hôtels : 2-3 options dans le budget → liens Booking directs
 
-2. HÔTELS — Recherche web sur Booking.com pour les dates exactes :
+2. HÔTELS (depuis la recherche web) :
    - Prix réels disponibles, dans le budget hébergement calculé
    - 3 hôtels (budget/confort/luxe), liens Booking directs
    - Lien filtre Booking pour explorer d'autres options
@@ -550,14 +553,27 @@ JSON UNIQUEMENT :
 
       // Web search : vols (prix dynamiques) + hôtels (dispo dynamique)
       // Restaurants et activités depuis connaissance Claude (prix stables)
-      const maxSearches = tStrategy === 'paid' ? 3 : 2;
+      // 1 seule web search : vols + hôtels en une recherche combinée
+      // Évite timeout Edge Function (30s) et réduit le coût input
+      const maxSearches = 1;
       const tools2 = [{type:"web_search_20250305",name:"web_search",max_uses:maxSearches}];
       const tRaw2  = await callClaude(tSys, tUser2, 1500, tools2);
       const tP     = parseJSON(tRaw2||'');
 
-      const itin = tP.itinerary;
+      let itin = tP.itinerary;
+
+      // Si Phase 2 a échoué (JSON trop long ou tronqué) → retry sans web search
+      if (!itin && recap2 && recap2.length > 10) {
+        try {
+          const retry = await callClaude(tSys, tUser2, 3000, []);
+          const retryP = parseJSON(retry||'');
+          itin = retryP.itinerary;
+        } catch(e) {}
+      }
+
       if (!itin) {
-        return new Response(JSON.stringify({reply:`<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">Dis-moi où tu veux aller et ton budget, je te prépare une feuille de route complète avec vols, hôtels et programme ! ✈️</div>`,sessionId:sid}),{headers:H});
+        // Dernier recours : retourner à la conversation
+        return new Response(JSON.stringify({reply:`<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">J'ai bien noté votre profil (${recap2}). Laissez-moi générer votre itinéraire... Un instant ! ✈️</div>`,sessionId:sid}),{headers:H});
       }
 
       // ── Rendu HTML de l'itinéraire ──────────────────────────
