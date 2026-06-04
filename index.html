@@ -438,7 +438,7 @@ async function send(txt){
     chatHistory.push({role:"user", content:stripHtml(q)});
     const res = await fetch('/api/chat',{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ message:stripHtml(q), history:chatHistory.slice(-4), sessionId,
+      body: JSON.stringify({ message:stripHtml(q), history:chatHistory.slice(-8), sessionId,
         userId:(cookieConsent==='yes'&&currentUser)?currentUser.id:null, trackingEnabled:cookieConsent==='yes' })
     });
     const data = await res.json();
