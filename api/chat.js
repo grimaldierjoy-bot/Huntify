@@ -373,6 +373,15 @@ function countQ(history) {
   return (history||[]).filter(m=>m.role!=='user'&&(m.content||'').includes('data-qbox')).length;
 }
 
+// Compte les échanges assistant dans le voyage (messages non-vides de l'agent)
+function countTravelQ(history) {
+  return (history||[]).filter(m => 
+    m.role !== 'user' && 
+    (m.content||'').length > 20 &&
+    !(m.content||'').includes('Deals du moment')
+  ).length;
+}
+
 // ── HTML helpers ──────────────────────────────────────────────
 function qBox(q)    { return `<div data-qbox="1" style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:12px 14px;margin-top:8px;font-size:13px;color:#1e40af;font-weight:600">💬 ${q}</div>`; }
 function recapBox(r){ return `<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12px;color:#5b21b6;font-weight:600">🔎 ${r}</div>`; }
@@ -492,7 +501,7 @@ export default async function handler(req) {
     }
 
     const hist     = buildHistory(history);
-    const qAsked   = countQ(history);
+    const qAsked   = isTravel ? countTravelQ(history) : countQ(history);
     const ctx      = travelContext||{};
     const ctxStr   = Object.entries(ctx).filter(([k,v])=>v&&k!=='suggestionsShown').map(([k,v])=>`${k}: ${v}`).join(', ');
 
@@ -609,40 +618,23 @@ Feuille de route complète :
       // Claude n'intervient QUE pour générer l'itinéraire final
       // ══════════════════════════════════════════════════════
 
-      // Prompt conversation : IA gratuite, conversationnel, psychologique
-      const tSysConv = `Tu es un agent voyage passionné et empathique pour Huntify.
-Tu as une vraie conversation avec le client pour comprendre son voyage idéal.
-Tu parles naturellement, avec enthousiasme, comme un ami expert en voyages.
+      // Phase 1 : IA gratuite pose les bonnes questions
+      // Prompt court — on fait confiance à l'IA pour être intelligente
+      const tSysConv = `Tu es un agent voyage pour Huntify. Ton rôle : comprendre le voyage idéal du client en posant les bonnes questions, puis signaler que tu es prêt.
 
-INFORMATIONS DÉJÀ COLLECTÉES : ${mergedCtxStr||'aucune'}
-HISTORIQUE : ${hist||'Début'}
-Questions posées : ${qAsked}/5
+INFOS DÉJÀ CONNUES : ${mergedCtxStr||'aucune'}
+HISTORIQUE : ${hist||'début'}
 
-STYLE DE CONVERSATION :
-- Chaleureux, enthousiaste, comme un ami qui adore les voyages
-- Tu montres que tu comprends CE QUE RESSENT le client
-- Ex: "Oh Capri, excellent choix ! C'est magique en mai..."
-- Tu poses des questions qui révèlent la psychologie : 
-  "Tu es plutôt du genre à te perdre dans les ruelles locales ou à cocher les incontournables ?"
-  "Le soir tu préfères une bonne table avec vue ou découvrir les spots où mangent les locaux ?"
-  "C'est un voyage pour recharger les batteries ou pour en prendre plein les yeux ?"
-
-QUESTIONS PRIORITAIRES (dans cet ordre si manquantes) :
-1. Destination (ou propose-moi)
-2. Durée + profil (couple/famille/amis/solo)  
-3. CE QUI COMPTE : musées, plage, gastronomie, nature, fête, shopping ?
-4. Budget approximatif
-→ Si tu as destination + durée + envies → type:"ready" pour déclencher l'itinéraire
-
-RÈGLE ANTI-BOUCLE :
-- NE REDEMANDE JAMAIS ce qui est dans les infos collectées
-- 1 seule question à la fois
-- Si 5 questions posées → type:"ready" obligatoire
+COMPORTEMENT :
+- Pose UNE question à la fois, naturellement
+- Ne redemande JAMAIS ce qui est déjà dans les infos connues
+- Quand tu as : destination + durée + style/envies → signal ready
+- Budget utile mais pas bloquant
+- Si ${qAsked} >= 3 questions posées → signal ready avec ce que tu as
 
 JSON UNIQUEMENT :
-{"type":"question","message":"ta question naturelle et engageante"}
-{"type":"suggestions","intro":"...","destinations":[...]}
-{"type":"ready","recap":"destination, durée, profil, envies, budget (si connu)"}`;
+{"type":"question","message":"ta question"}
+{"type":"ready","recap":"résumé complet de tout ce que tu sais"}`;
 
       // ⚡ Phase 1 : TOUJOURS IA gratuite pour la conversation
       let tRaw = await callFreeAI(tSysConv, tUser, 'fast');
@@ -683,15 +675,14 @@ JSON UNIQUEMENT :
       const recap2 = tPhase1.recap || mergedCtxStr || message;
       const tUser2 = `PROFIL VOYAGE: ${recap2}\n\nHISTORIQUE:\n${hist||''}\n\nMESSAGE: ${message}`;
 
-      let tRaw2 = null;
-      if (tStrategy === 'paid') {
-        // Deep search : vrais prix, vraies disponibilités
-        tRaw2 = await callClaude(tSys, tUser2, 1500, [{type:"web_search_20250305",name:"web_search",max_uses:3}]);
-      } else {
-        // IA gratuite : itinéraire avec estimations réalistes
-        tRaw2 = await callFreeAI(tSys, tUser2, 'deep');
-        if (!tRaw2) tRaw2 = await callClaude(tSys, tUser2, 1000);
-      }
+      // Phase 2 : TOUJOURS Claude pour générer l'itinéraire final
+      // Il reçoit tout ce qui a été collecté par les IA gratuites
+      // Budget > 300€ : Claude + web search (vrais prix temps réel)
+      // Budget < 300€ : Claude sans web search (estimations réalistes)
+      const tools2 = tStrategy === 'paid'
+        ? [{type:"web_search_20250305",name:"web_search",max_uses:3}]
+        : [];
+      const tRaw2 = await callClaude(tSys, tUser2, 1500, tools2);
       tRaw = tRaw2;
 
       const tP = parseJSON(tRaw||'');
