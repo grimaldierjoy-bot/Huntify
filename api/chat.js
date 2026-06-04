@@ -599,9 +599,9 @@ CAS 2 — INFOS SUFFISANTES (destination + durée + envies) :
 Génère la FEUILLE DE ROUTE COMPLÈTE SUR-MESURE :
 1. VOLS — Recherche les VRAIS vols depuis la ville de départ du client :
    - Cherche sur Google Flights / Skyscanner les vols pour les dates demandées
-   - Donne : compagnie, numéro de vol si possible, horaire départ/arrivée, durée, escales
-   - Prix RÉEL trouvé sur le web aujourd'hui (pas une estimation)
-   - Lien direct vers la recherche Skyscanner avec les bonnes dates
+   - Donne : compagnie, horaire départ/arrivée, durée, escales éventuelles
+   - Prix RÉEL trouvé sur le web aujourd'hui
+   - Lien direct Skyscanner avec les bonnes dates et ville de départ
 2. HÔTELS — Recherche les VRAIS prix sur Booking.com pour les dates exactes du client :
    - Web search obligatoire : vérifie disponibilités et prix réels du moment
    - Respecte STRICTEMENT le budget hébergement calculé dans le dispatch
@@ -610,13 +610,20 @@ Génère la FEUILLE DE ROUTE COMPLÈTE SUR-MESURE :
    → En bas : lien filtre Booking pour explorer d'autres options dans la même fourchette
    DEUX OPTIONS de prix avec filtres Booking
    → Par défaut : propose les deux (1 hôtel précis par catégorie + lien filtre)
-3. PROGRAMME JOUR PAR JOUR adapté aux ENVIES exprimées :
-   - Musées/culture → planifie les incontournables avec horaires et prix
-   - Gastronomie → marché le matin, restaurant local le midi, table réputée le soir
-   - Nature/randonnée → sentiers, durée, difficulté, équipement
-   - Plage/détente → plages selon ambiance, activités nautiques, spots secrets
-   - Matin/Après-midi/Soirée avec activités CONCRÈTES adaptées au profil
-4. RESTAURANTS — 1 par soirée, adapté au style (gastronomique/local/familial)
+3. ACTIVITÉS — Depuis ta connaissance (prix d'entrée stables) :
+   - Incontournables avec prix d'entrée approximatifs (fiables car stables)
+   - Expériences locales et spots secrets adaptés au style du voyage
+   - Excursions possibles avec durée et coût estimé
+
+4. RESTAURANTS — Depuis ta connaissance (fourchettes de prix fiables) :
+   - 1 restaurant recommandé par soirée : nom réel, spécialité locale, fourchette de prix
+   - Adapté au style : gastronomique / local authentique / vue mer / romantique
+   - Les fourchettes restaurants sont stables — une approximation est suffisante et honnête
+
+5. PROGRAMME JOUR PAR JOUR :
+   - Matin / Après-midi / Soirée avec les activités et restaurants ci-dessus
+   - Activités CONCRÈTES avec leurs prix approximatifs
+   - Adapté aux envies exprimées par le client
 5. BUDGET TOTAL détaillé
 6. CONSEILS PRATIQUES personnalisés selon le profil
 
@@ -709,7 +716,10 @@ JSON UNIQUEMENT :
       // Vols et hôtels changent quotidiennement → prix temps réel obligatoires
       // Budget > 300€ : 4 recherches (vols aller + retour + hôtels + activités)
       // Budget < 300€ : 2 recherches (vols + hôtels) — suffisant
-      const maxSearches = tStrategy === 'paid' ? 4 : 2;
+      // 2 web searches : vols (prix dynamiques) + hôtels (dispo dynamique)
+      // Restaurants et activités → connaissance Claude (prix stables, approximations fiables)
+      // Gros budgets : +1 recherche pour valider/comparer
+      const maxSearches = tStrategy === 'paid' ? 3 : 2;
       const tools2 = [{type:"web_search_20250305",name:"web_search",max_uses:maxSearches}];
       const tRaw2 = await callClaude(tSys, tUser2, 1500, tools2);
       tRaw = tRaw2;
@@ -1421,9 +1431,9 @@ CAS 2 — INFOS SUFFISANTES (destination + durée + envies) :
 Génère la FEUILLE DE ROUTE COMPLÈTE SUR-MESURE :
 1. VOLS — Recherche les VRAIS vols depuis la ville de départ du client :
    - Cherche sur Google Flights / Skyscanner les vols pour les dates demandées
-   - Donne : compagnie, numéro de vol si possible, horaire départ/arrivée, durée, escales
-   - Prix RÉEL trouvé sur le web aujourd'hui (pas une estimation)
-   - Lien direct vers la recherche Skyscanner avec les bonnes dates
+   - Donne : compagnie, horaire départ/arrivée, durée, escales éventuelles
+   - Prix RÉEL trouvé sur le web aujourd'hui
+   - Lien direct Skyscanner avec les bonnes dates et ville de départ
 2. HÔTELS — Recherche les VRAIS prix sur Booking.com pour les dates exactes du client :
    - Web search obligatoire : vérifie disponibilités et prix réels du moment
    - Respecte STRICTEMENT le budget hébergement calculé dans le dispatch
@@ -1432,13 +1442,20 @@ Génère la FEUILLE DE ROUTE COMPLÈTE SUR-MESURE :
    → En bas : lien filtre Booking pour explorer d'autres options dans la même fourchette
    DEUX OPTIONS de prix avec filtres Booking
    → Par défaut : propose les deux (1 hôtel précis par catégorie + lien filtre)
-3. PROGRAMME JOUR PAR JOUR adapté aux ENVIES exprimées :
-   - Musées/culture → planifie les incontournables avec horaires et prix
-   - Gastronomie → marché le matin, restaurant local le midi, table réputée le soir
-   - Nature/randonnée → sentiers, durée, difficulté, équipement
-   - Plage/détente → plages selon ambiance, activités nautiques, spots secrets
-   - Matin/Après-midi/Soirée avec activités CONCRÈTES adaptées au profil
-4. RESTAURANTS — 1 par soirée, adapté au style (gastronomique/local/familial)
+3. ACTIVITÉS — Depuis ta connaissance (prix d'entrée stables) :
+   - Incontournables avec prix d'entrée approximatifs (fiables car stables)
+   - Expériences locales et spots secrets adaptés au style du voyage
+   - Excursions possibles avec durée et coût estimé
+
+4. RESTAURANTS — Depuis ta connaissance (fourchettes de prix fiables) :
+   - 1 restaurant recommandé par soirée : nom réel, spécialité locale, fourchette de prix
+   - Adapté au style : gastronomique / local authentique / vue mer / romantique
+   - Les fourchettes restaurants sont stables — une approximation est suffisante et honnête
+
+5. PROGRAMME JOUR PAR JOUR :
+   - Matin / Après-midi / Soirée avec les activités et restaurants ci-dessus
+   - Activités CONCRÈTES avec leurs prix approximatifs
+   - Adapté aux envies exprimées par le client
 5. BUDGET TOTAL détaillé
 6. CONSEILS PRATIQUES personnalisés selon le profil
 
@@ -1531,7 +1548,10 @@ JSON UNIQUEMENT :
       // Vols et hôtels changent quotidiennement → prix temps réel obligatoires
       // Budget > 300€ : 4 recherches (vols aller + retour + hôtels + activités)
       // Budget < 300€ : 2 recherches (vols + hôtels) — suffisant
-      const maxSearches = tStrategy === 'paid' ? 4 : 2;
+      // 2 web searches : vols (prix dynamiques) + hôtels (dispo dynamique)
+      // Restaurants et activités → connaissance Claude (prix stables, approximations fiables)
+      // Gros budgets : +1 recherche pour valider/comparer
+      const maxSearches = tStrategy === 'paid' ? 3 : 2;
       const tools2 = [{type:"web_search_20250305",name:"web_search",max_uses:maxSearches}];
       const tRaw2 = await callClaude(tSys, tUser2, 1500, tools2);
       tRaw = tRaw2;
