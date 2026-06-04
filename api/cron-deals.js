@@ -27,12 +27,12 @@ async function sbFetch(path, method='GET', body=null) {
   try { const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, opts); return await r.json(); } catch(e) { return null; }
 }
 
-// âš¡ Images de placeholder par catÃ©gorie (remplace les URLs hallucinÃ©es par l'IA)
+// ⚡ Images de placeholder par catégorie (remplace les URLs hallucinées par l'IA)
 const CAT_IMAGES = {
   'Mode':          'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=300&q=70',
-  'Ã‰lectronique':  'https://images.unsplash.com/photo-1498049794561-7780e7231661?w=300&q=70',
+  'Électronique':  'https://images.unsplash.com/photo-1498049794561-7780e7231661?w=300&q=70',
   'Maison':        'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=300&q=70',
-  'SantÃ©':         'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=300&q=70',
+  'Santé':         'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=300&q=70',
   'Sport':         'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=300&q=70',
   'default':       'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=300&q=70',
 };
@@ -40,7 +40,7 @@ function getPlaceholderImg(cat) {
   return CAT_IMAGES[cat] || CAT_IMAGES['default'];
 }
 
-// âš¡ GÃ©nÃ¨re les deals pour un ensemble de boutiques donnÃ©
+// ⚡ Génère les deals pour un ensemble de boutiques donné
 async function generateDeals(advertisers, trends, storeInstructions, maxTokens=2000) {
   const agentResp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -51,18 +51,18 @@ async function generateDeals(advertisers, trends, storeInstructions, maxTokens=2
       tools: [{ type:"web_search_20250305", name:"web_search", max_uses:3 }],
       system: `Tu es l'agent deals de Huntify. Cherche les VRAIES promotions du jour.
 
-RÃ‰PARTITION OBLIGATOIRE â€” respecte exactement :
+RÉPARTITION OBLIGATOIRE — respecte exactement :
 ${storeInstructions}
 
-RÃˆGLES :
-- Prix RÃ‰ELS trouvÃ©s sur le web (pas inventÃ©s)
-- "img": null (on gÃ¨re les images cÃ´tÃ© serveur)
-- "keywords": terme de recherche court et prÃ©cis (ex: "casque sony bluetooth", pas de virgules)
-- CatÃ©gories autorisÃ©es : Mode, Ã‰lectronique, Maison, SantÃ©, Sport
+RÈGLES :
+- Prix RÉELS trouvés sur le web (pas inventés)
+- "img": null (on gère les images côté serveur)
+- "keywords": terme de recherche court et précis (ex: "casque sony bluetooth", pas de virgules)
+- Catégories autorisées : Mode, Électronique, Maison, Santé, Sport
 
 JSON UNIQUEMENT :
-{"deals":[{"id":"slug","name":"nom complet","cat":"CatÃ©gorie","price":"XXâ‚¬","was":"XXâ‚¬","pct":"-XX%","store":"slug_boutique","keywords":"mots clÃ©s"}]}`,
-      messages: [{role:'user',content:`Tendances du moment : ${trends?.map(t=>t.query).join(', ')||'mode santÃ© Ã©lectronique'}. GÃ©nÃ¨re les deals.`}]
+{"deals":[{"id":"slug","name":"nom complet","cat":"Catégorie","price":"XX€","was":"XX€","pct":"-XX%","store":"slug_boutique","keywords":"mots clés"}]}`,
+      messages: [{role:'user',content:`Tendances du moment : ${trends?.map(t=>t.query).join(', ')||'mode santé électronique'}. Génère les deals.`}]
     })
   });
   const data = await agentResp.json();
@@ -85,33 +85,33 @@ export default async function handler(req) {
 
     if (!advertisers.length) return new Response(JSON.stringify({message:'No advertisers'}), {status:200});
 
-    // âš¡ FIX RAKUTEN : rÃ©partition explicite par boutique
-    // Calcule combien de deals demander par store (rÃ©partition Ã©quilibrÃ©e)
+    // ⚡ FIX RAKUTEN : répartition explicite par boutique
+    // Calcule combien de deals demander par store (répartition équilibrée)
     const totalDeals = 10;
     const perStore = Math.floor(totalDeals / advertisers.length);
     const remainder = totalDeals % advertisers.length;
     const storeInstructions = advertisers.map((a, i) => {
       const count = perStore + (i < remainder ? 1 : 0);
-      return `- ${count} deals sur ${a.name} (store DOIT Ãªtre exactement "${a.slug}") â†’ cherche sur ${a.name}.fr`;
+      return `- ${count} deals sur ${a.name} (store DOIT être exactement "${a.slug}") → cherche sur ${a.name}.fr`;
     }).join('\n');
 
-    // Appel principal avec rÃ©partition
+    // Appel principal avec répartition
     let deals = await generateDeals(advertisers, trends, storeInstructions, 2000);
 
-    // âš¡ SÃ‰CURITÃ‰ : si Rakuten manque dans les rÃ©sultats, on relance un appel ciblÃ©
+    // ⚡ SÉCURITÉ : si Rakuten manque dans les résultats, on relance un appel ciblé
     const slugsPresents = new Set(deals.map(d=>d.store?.toLowerCase()));
     const manquants = advertisers.filter(a => !slugsPresents.has(a.slug));
     if (manquants.length > 0) {
-      constè£œå®ŒInstructions = manquants.map(a =>
-        `- 3 deals sur ${a.name} (store DOIT Ãªtre exactement "${a.slug}") â†’ cherche UNIQUEMENT sur ${a.name}.fr`
+      const補完Instructions = manquants.map(a =>
+        `- 3 deals sur ${a.name} (store DOIT être exactement "${a.slug}") → cherche UNIQUEMENT sur ${a.name}.fr`
       ).join('\n');
-      constè£œå®Œ = await generateDeals(advertisers, trends, è£œå®ŒInstructions, 1000);
-      deals = [...deals, ...è£œå®Œ];
+      const補完 = await generateDeals(advertisers, trends, 補完Instructions, 1000);
+      deals = [...deals, ...補完];
     }
 
     if (!deals.length) return new Response(JSON.stringify({message:'No deals'}), {status:200});
 
-    // Construction des deals finaux avec liens affiliÃ©s + images fiables
+    // Construction des deals finaux avec liens affiliés + images fiables
     const dealsWithLinks = deals.map(d => {
       const adv = advertisers.find(a => a.slug === d.store?.toLowerCase());
       if (!adv) return null;
@@ -120,17 +120,17 @@ export default async function handler(req) {
       return {
         ...d,
         url,
-        // âš¡ FIX IMAGES : placeholder fiable par catÃ©gorie (l'IA invente des URLs)
+        // ⚡ FIX IMAGES : placeholder fiable par catégorie (l'IA invente des URLs)
         img: getPlaceholderImg(d.cat),
         generated_at: new Date().toISOString()
       };
     }).filter(Boolean);
 
-    // Statistiques de rÃ©partition pour le log
+    // Statistiques de répartition pour le log
     const stats = {};
     dealsWithLinks.forEach(d => { stats[d.store] = (stats[d.store]||0)+1; });
 
-    // Supprime les anciens deals et insÃ¨re les nouveaux
+    // Supprime les anciens deals et insère les nouveaux
     await sbFetch('daily_deals?generated_at=not.is.null', 'DELETE');
     await sbFetch('daily_deals', 'POST', dealsWithLinks);
 
