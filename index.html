@@ -296,6 +296,15 @@ const CHIPS = ["Casque audio","Sneakers","Protéines","Airfryer","Montre connect
 
 let typing = false, chatHistory = [], currentUser = null;
 let huntifyMode = 'product'; // 'product' | 'travel'
+// Contexte voyage : mémorise ce qu'on sait déjà pour éviter les boucles
+let travelContext = {
+  destination: null,   // ex: "Lisbonne"
+  budget: null,        // ex: "1000€"
+  duration: null,      // ex: "7 jours"
+  travelers: null,     // ex: "2 adultes"
+  style: null,         // ex: "culture"
+  suggestionsShown: false  // true si on a déjà proposé des destinations
+};
 let cookieConsent = localStorage.getItem('hconsent');
 let sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
@@ -448,12 +457,45 @@ async function send(txt){
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ message:stripHtml(q), history:chatHistory.slice(-8), sessionId,
         userId:(cookieConsent==='yes'&&currentUser)?currentUser.id:null, trackingEnabled:cookieConsent==='yes',
-        mode: huntifyMode })
+        mode: huntifyMode, travelContext: huntifyMode==='travel' ? travelContext : null })
     });
     const data = await res.json();
     if (data.sessionId) sessionId = data.sessionId;
     const reply = data.reply || "Désolé, réessayez.";
     chatHistory.push({role:"assistant", content:stripHtml(reply)});
+
+    // Mise à jour du contexte voyage depuis le message utilisateur
+    if (huntifyMode === 'travel') {
+      const msgLow = q.toLowerCase();
+      // Détection budget
+      const budgetM = q.match(/(\d+)\s*(?:€|euros?)/i);
+      if (budgetM) travelContext.budget = budgetM[0];
+      // Détection durée
+      const durM = q.match(/(\d+)\s*(?:jours?|nuits?|semaines?)/i);
+      if (durM) travelContext.duration = durM[0];
+      // Détection voyageurs
+      const travM = q.match(/(\d+)\s*(?:personnes?|adultes?|enfants?)/i);
+      if (travM) travelContext.travelers = travM[0];
+      // Détection style
+      if (/chill|plage|repos|détente/.test(msgLow)) travelContext.style = 'chill';
+      if (/culture|musée|histoire|monument/.test(msgLow)) travelContext.style = 'culture';
+      if (/aventure|randonnée|sport|nature/.test(msgLow)) travelContext.style = 'aventure';
+      if (/famille|enfant|kids/.test(msgLow)) travelContext.style = 'famille';
+      if (/romantique|amoureux|couple/.test(msgLow)) travelContext.style = 'romantique';
+      // Détection destination (si la réponse contient un itinéraire → on a une destination)
+      if (reply.includes('Jour 1') || reply.includes('Programme jour')) {
+        // L'itinéraire a été généré, la destination est dans le contexte
+        travelContext.suggestionsShown = true;
+      }
+      // Si le message ressemble à une destination choisie après suggestions
+      if (travelContext.suggestionsShown || reply.includes('destinations')) {
+        travelContext.suggestionsShown = true;
+        // Mémorise comme destination si c'est une réponse courte après suggestions
+        if (q.trim().split(' ').length <= 5 && !budgetM && !durM) {
+          travelContext.destination = q.trim();
+        }
+      }
+    }
     typing = false;
     msgs.push({from:"bot", text:reply});
     if (!currentUser && msgs.filter(m=>m.from==='user').length === 2) {
@@ -481,6 +523,7 @@ function switchMode(mode) {
     btnP.style.background='transparent'; btnP.style.color='rgba(255,255,255,.7)';
     msgs = [{from:"bot",text:"Bonjour ! Je suis ton agent voyage IA ✈️<br><br>Je vais créer ton itinéraire personnalisé jour par jour selon tes envies et ton budget.<br><br><small style='color:#94a3b8'>🏨 Hébergements <b>Booking.com</b> · Budget détaillé · Programme sur-mesure</small>"}];
     chatHistory = [];
+    travelContext = { destination:null, budget:null, duration:null, travelers:null, style:null, suggestionsShown:false };
     renderChat();
     document.getElementById('chipRow').innerHTML = ['Paris 3 jours','Rome en amoureux','Barcelone famille','Weekend montagne','Séjour plage 1 semaine'].map(c=>`<button class="chip" onclick="send('${c}')">${c}</button>`).join('');
     document.getElementById('chatInput').placeholder = 'Ex : Paris 5 jours budget 1000€ culture...';
