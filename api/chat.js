@@ -179,6 +179,92 @@ async function callFreeAI(sys, user, depth='fast') {
   return await callGroq(sys,user,model,tok) || await callGemini(sys,user,tok) || await callMistral(sys,user,tok);
 }
 
+// ⚡ AI CHAINING : fait bosser plusieurs IA ensemble
+// Groq comprend/interprete → Gemini enrichit/valide → resultat combine
+// Utilise pour : interpreter les reponses ambigues, enrichir les recaps
+async function chainAI(task, context) {
+  // Etape 1 : Groq interprete (rapide, gratuit)
+  const interpretation = await callGroq(
+    'Tu es un interpreteur de langage naturel. Reponds en JSON court.',
+    task + '\nContexte: ' + context,
+    'llama-3.1-8b-instant', 150
+  );
+  if (!interpretation) {
+    // Fallback Gemini direct
+    return await callGemini(
+      'Tu es un interpreteur de langage naturel. Reponds en JSON court.',
+      task + '\nContexte: ' + context, 150
+    );
+  }
+  // Etape 2 : Gemini enrichit si disponible (sinon on garde Groq)
+  const enriched = await callGemini(
+    'Enrichis et valide cette interpretation. Corrige si incorrect. Reponds en JSON court.',
+    'Interpretation initiale: ' + interpretation + '\nContexte original: ' + context,
+    200
+  );
+  return enriched || interpretation;
+}
+
+// ⚡ estimateROIAndAdjustDepth() — scoring ROI intelligent
+// Analyse budget + urgence + famille + historique DB
+function estimateROI(budget, message, hist) {
+  let score = 0;
+  const msg = (message + ' ' + (hist||'')).toLowerCase();
+
+  // Budget scoring
+  if (budget === null) score += 2; // inconnu = potentiellement eleve
+  else if (budget < 30) score += 0;
+  else if (budget < 80) score += 1;
+  else if (budget < 200) score += 3;
+  else if (budget < 500) score += 5;
+  else score += 8;
+
+  // Urgence (plus urgent = plus de chance de conversion)
+  if (/urgent|maintenant|aujourd'hui|vite|rapide|demain|ce soir/i.test(msg)) score += 2;
+
+  // Famille/groupe (panier plus gros)
+  if (/famille|couple|enfants?|pour \d|groupe|amis/i.test(msg)) score += 2;
+
+  // Cadeau (conversion haute, prix moyen-haut)
+  if (/cadeau|offrir|anniversaire|noel|mariage|relation/i.test(msg)) score += 2;
+
+  // Premium signals
+  if (/premium|luxe|meilleur|haut de gamme|qualite|pas de budget/i.test(msg)) score += 3;
+
+  // Determine la profondeur
+  if (score >= 6) return { depth: 'deep', score, useWebSearch: true };
+  if (score >= 3) return { depth: 'medium', score, useWebSearch: false };
+  return { depth: 'light', score, useWebSearch: false };
+}
+
+// ⚡ Cross-suggestions : produits complementaires
+function getCrossSuggestions(recap) {
+  const r = (recap||'').toLowerCase();
+  const suggestions = {
+    'fond de teint': ['éponge maquillage beautyblender', 'primer teint', 'spray fixateur maquillage'],
+    'casque': ['housse transport casque', 'coussinets rechange', 'cable audio jack'],
+    'telephone': ['coque protection', 'verre trempe ecran', 'chargeur rapide USB-C'],
+    'laptop': ['housse laptop', 'souris sans fil', 'support laptop ergonomique'],
+    'sneakers': ['semelles confort', 'spray impermeabilisant', 'lacets originaux'],
+    'montre': ['bracelet rechange', 'boite rangement montres', 'outil changement bracelet'],
+    'parfum': ['coffret miniatures', 'atomiseur voyage', 'creme corps assortie'],
+    'robe': ['sac de soiree', 'bijoux fantaisie', 'chaussures assorties'],
+    'voyage': ['adaptateur prise universel', 'oreiller voyage', 'trousse toilette'],
+  };
+  for (const [key, sugs] of Object.entries(suggestions)) {
+    if (r.includes(key)) return sugs.slice(0, 2);
+  }
+  return [];
+}
+
+// ⚡ Auto-coupons depuis la DB
+async function getAutoCoupons(store) {
+  try {
+    const promos = await sbFetch('promo_codes?valid=eq.true&store=eq.' + encodeURIComponent(store) + '&order=found_at.desc&limit=2');
+    return (promos||[]).filter(p=>p.code);
+  } catch(e) { return []; }
+}
+
 // Vérifie si au moins une IA gratuite est configurée
 function hasFreeAI() {
   return !!(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.MISTRAL_API_KEY);
@@ -558,9 +644,23 @@ JSON UNIQUEMENT (mais le champ message doit etre naturel et conversationnel) :
 
       const p1user = `HISTORIQUE:\n${hist||'Début'}\n\nQuestions posées: ${qAsked}/${MAX_Q}\n\nMESSAGE: ${message}`;
 
-      // ⚡ CIBLAGE : uniquement IA gratuites (Groq → Gemini → Mistral)
-      // Pas de fallback Claude ici — si tout échoue, on lance la recherche directement
-      let t1 = await callFreeAI(p1sys, p1user, 'fast');
+      // ⚡ CIBLAGE : AI Chaining — Groq interprete, Gemini enrichit si besoin
+      // Si le message est ambigu (court, vague), on chaine les IA pour comprendre
+      let t1 = null;
+      const isAmbiguous = message.trim().split(/\s+/).length <= 3 && !/(\d+)\s*€/.test(message);
+      if (isAmbiguous && (history||[]).length > 0) {
+        // Chaining : interprete la reponse dans le contexte de la conversation
+        const interp = await chainAI(
+          'Le client a dit: "' + message + '". Dans le contexte shopping, que veut-il dire ? Reponds en JSON: {"meaning":"ce que ca veut dire en clair","searchTerms":"mots-cles produit si on peut deja chercher"}',
+          hist
+        );
+        if (interp) {
+          // Injecte l'interpretation dans le prompt de ciblage
+          const enrichedUser = p1user + '\n\nINTERPRETATION IA: ' + interp;
+          t1 = await callFreeAI(p1sys, enrichedUser, 'fast');
+        }
+      }
+      if (!t1) t1 = await callFreeAI(p1sys, p1user, 'fast');
 
       if (t1) {
         const d=parseJSON(t1);
@@ -582,7 +682,9 @@ JSON UNIQUEMENT (mais le champ message doit etre naturel et conversationnel) :
 
     const recap    = decision.recap||`Je cherche : ${message}`;
     const budget   = detectBudget(recap)||detectBudget(hist)||detectBudget(message);
-    const strategy = routingStrategy(budget);
+    const roi      = estimateROI(budget, message, hist);
+    // ROI scoring -> strategy mapping
+    const strategy = roi.useWebSearch ? 'paid_deep' : (roi.depth==='medium' ? 'free_deep' : 'free_fast');
 
     let products=[], promoCodes=[], summary='';
 
@@ -698,12 +800,36 @@ JSON UNIQUEMENT :
       ?`<button onclick="addToWishlist(${JSON.stringify({name:first.name,price:first.price,store:first.store,url:buildLink(adv0,first.keywords||first.name,first.url||null)}).replace(/"/g,'&quot;')})" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">♡ Ajouter à ma wishlist</button>`
       :'';
 
+    // Auto-coupons depuis la DB (gratuit)
+    let dbPromos = '';
+    for (const adv of advertisers) {
+      const autoCpns = await getAutoCoupons(adv.slug);
+      for (const c of autoCpns) {
+        if (!(promoCodes||[]).find(p=>p.code===c.code)) {
+          dbPromos += promoBox(c.code, c.store||adv.name, c.discount||'Reduction', false);
+        }
+      }
+    }
+
+    // Cross-suggestions (produits complementaires)
+    const crossSugs = getCrossSuggestions(recap);
+    let crossHtml = '';
+    if (crossSugs.length) {
+      crossHtml = `<div style="margin-top:12px;padding-top:10px;border-top:1px solid #f0f4ff">
+        <div style="font-size:11px;font-weight:700;color:#7c89a8;margin-bottom:6px">Tu pourrais aussi aimer :</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${crossSugs.map(s=>
+          `<button onclick="send('${s.replace(/'/g,"\\'")}')" style="background:#f5f7ff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:100px;padding:6px 14px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">${s}</button>`
+        ).join('')}</div>
+      </div>`;
+    }
+
     const reply=
-      `<div style="font-size:13px;color:#374151;margin-bottom:6px;font-weight:500">${summary}</div>`+
-      recapBox(recap)+
+      `<div style="font-size:13.5px;color:#1e293b;margin-bottom:8px;font-weight:500;line-height:1.5">${decision.message||summary}</div>`+
       priceHistHtml+buttons+
       (promos?`<div style="margin-top:4px">${promos}</div>`:'')+
-      wishBtn;
+      (dbPromos?`<div style="margin-top:4px">${dbPromos}</div>`:'')+
+      wishBtn+
+      crossHtml;
 
     return new Response(JSON.stringify({reply,sessionId:sid}),{headers:H});
 
