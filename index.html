@@ -108,7 +108,12 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
       <div><div style="font-family:var(--display);font-weight:700;font-size:15px;color:#fff">Intelligence Artificielle Huntify</div><div style="font-size:11.5px;color:rgba(255,255,255,.72)">Recherche temps réel · Amazon · Rakuten</div></div>
       <div style="margin-left:auto;background:rgba(255,255,255,.16);border-radius:100px;padding:4px 11px"><span style="font-size:10.5px;color:#fff;font-weight:700">EN LIGNE</span></div>
     </div>
-    <div id="chatBox" style="height:290px;overflow-y:auto;padding:18px 16px 8px;display:flex;flex-direction:column;gap:13px;background:linear-gradient(180deg,#fbfcff,#f5f8ff)"></div>
+    <!-- Toggle Comparateur / Voyage -->
+  <div style="display:flex;background:rgba(255,255,255,.1);border-radius:100px;padding:4px;margin:0 14px 8px;gap:4px" id="modeToggle">
+    <button id="btnProduct" onclick="switchMode('product')" style="flex:1;border:none;border-radius:100px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:#fff;color:#2f54ff;transition:.2s">🛍️ Comparateur</button>
+    <button id="btnTravel" onclick="switchMode('travel')" style="flex:1;border:none;border-radius:100px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:transparent;color:rgba(255,255,255,.7);transition:.2s">✈️ Voyage</button>
+  </div>
+  <div id="chatBox" style="height:290px;overflow-y:auto;padding:18px 16px 8px;display:flex;flex-direction:column;gap:13px;background:linear-gradient(180deg,#fbfcff,#f5f8ff)"></div>
     <div style="padding:11px 14px 8px;display:flex;gap:8px;overflow-x:auto;background:#fff;border-top:1px solid var(--line)" id="chipRow"></div>
     <div style="padding:12px 14px 15px;display:flex;gap:10px;background:#fff;border-top:1px solid var(--line)">
       <input class="inp" id="chatInput" placeholder="Ex : casque, veste, vitamines..." autocomplete="off">
@@ -288,6 +293,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 const CHIPS = ["Casque audio","Sneakers","Protéines","Airfryer","Montre connectée","Legging sport"];
 
 let typing = false, chatHistory = [], currentUser = null;
+let huntifyMode = 'product'; // 'product' | 'travel'
 let cookieConsent = localStorage.getItem('hconsent');
 let sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
@@ -439,7 +445,8 @@ async function send(txt){
     const res = await fetch('/api/chat',{
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ message:stripHtml(q), history:chatHistory.slice(-8), sessionId,
-        userId:(cookieConsent==='yes'&&currentUser)?currentUser.id:null, trackingEnabled:cookieConsent==='yes' })
+        userId:(cookieConsent==='yes'&&currentUser)?currentUser.id:null, trackingEnabled:cookieConsent==='yes',
+        mode: huntifyMode })
     });
     const data = await res.json();
     if (data.sessionId) sessionId = data.sessionId;
@@ -452,6 +459,30 @@ async function send(txt){
     }
   } catch(e){ typing=false; msgs.push({from:"bot",text:"Désolé, problème technique. Réessayez."}); }
   renderChat();
+}
+
+// ── MODE TOGGLE ──────────────────────────────────────────────
+function switchMode(mode) {
+  huntifyMode = mode;
+  const btnP = document.getElementById('btnProduct');
+  const btnT = document.getElementById('btnTravel');
+  if (mode === 'product') {
+    btnP.style.background='#fff'; btnP.style.color='#2f54ff';
+    btnT.style.background='transparent'; btnT.style.color='rgba(255,255,255,.7)';
+    msgs = [{from:"bot",text:"Bonjour ! Je suis l'IA Huntify. 🛍️<br><br>Je recherche en temps réel sur Amazon, Rakuten et plus — dis-moi ce que tu cherches !<br><br><small style='color:#94a3b8'>💡 <b>Crée un compte</b> pour sauvegarder ton historique et recevoir des alertes prix.</small>"}];
+    chatHistory = [];
+    renderChat();
+    renderChips();
+    document.getElementById('chatInput').placeholder = 'Ex : casque, veste, vitamines...';
+  } else {
+    btnT.style.background='#fff'; btnT.style.color='#2f54ff';
+    btnP.style.background='transparent'; btnP.style.color='rgba(255,255,255,.7)';
+    msgs = [{from:"bot",text:"Bonjour ! Je suis ton agent voyage IA ✈️<br><br>Je vais créer ton itinéraire personnalisé jour par jour selon tes envies et ton budget.<br><br><small style='color:#94a3b8'>🏨 Hébergements <b>Booking.com</b> · Budget détaillé · Programme sur-mesure</small>"}];
+    chatHistory = [];
+    renderChat();
+    document.getElementById('chipRow').innerHTML = ['Paris 3 jours','Rome en amoureux','Barcelone famille','Weekend montagne','Séjour plage 1 semaine'].map(c=>`<button class="chip" onclick="send('${c}')">${c}</button>`).join('');
+    document.getElementById('chatInput').placeholder = 'Ex : Paris 5 jours budget 1000€ culture...';
+  }
 }
 
 function renderChips(){
