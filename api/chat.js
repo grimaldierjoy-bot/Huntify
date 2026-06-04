@@ -280,7 +280,7 @@ export default async function handler(req) {
   const HEADERS = {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'};
 
   try {
-    const { message, history, sessionId, userId, trackingEnabled, mode } = await req.json();
+    const { message, history, sessionId, userId, trackingEnabled, mode, travelContext } = await req.json();
     const sid = sessionId || `anon_${Date.now()}`;
     const isTravel = mode === 'travel'; // toggle Comparateur/Voyage
 
@@ -318,8 +318,22 @@ export default async function handler(req) {
       const travelBudget = detectBudget(histSummary) || detectBudget(message);
       const travelStrategy = (travelBudget && travelBudget >= TRAVEL_ROI_THRESHOLD) ? 'paid' : 'free';
 
+      // travelContext : résumé structuré transmis depuis le front (évite la boucle)
+      // Le front maintient un objet {destination, budget, duration, travelers, style, suggestionsShown}
+      // et le transmet explicitement — plus fiable que de parser du HTML dégradé
+      const ctx = travelContext || {};
+      const ctxSummary = Object.entries(ctx)
+        .filter(([k,v]) => v && k !== 'suggestionsShown')
+        .map(([k,v]) => `${k}: ${v}`)
+        .join(', ');
+
       // Prompt système voyage complet
       const travelSys = `Tu es l'agent voyage IA de Huntify. Tu crées des voyages sur-mesure.
+
+CONTEXTE DÉJÀ COLLECTÉ (NE PAS REDEMANDER) :
+${ctxSummary ? ctxSummary : 'Aucun — début de conversation'}
+
+Tu es l'agent voyage IA de Huntify. Tu crées des voyages sur-mesure.
 
 HISTORIQUE : ${histSummary || 'Début de conversation'}
 Questions déjà posées : ${travelQAsked}/5
