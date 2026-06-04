@@ -403,14 +403,28 @@ async function loadWishlist() {
   const { data } = await sb.from('wishlist').select('*').eq('user_id',currentUser.id).order('created_at',{ascending:false}).limit(20);
   const el = document.getElementById('wishlistItems');
   if (!data || !data.length) { el.innerHTML='<div style="text-align:center;padding:20px 0"><div style="font-size:32px;margin-bottom:8px">♡</div><div style="color:#7c89a8;font-size:13px">Ta wishlist est vide.<br>Utilise le chat pour trouver des produits !</div></div>'; return; }
-  el.innerHTML = data.map(item=>`
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f0f4ff;gap:12px">
-      <div style="flex:1"><div style="font-size:13px;font-weight:700;color:#0e1430">${item.product_name}</div><div style="font-size:12px;color:#7c89a8;margin-top:2px">${item.product_store} · ${item.product_price||'Prix non dispo'}</div></div>
-      <div style="display:flex;gap:6px;flex-shrink:0">
-        <a href="${item.product_url}" target="_blank" style="background:linear-gradient(135deg,#2f54ff,#4a6bff);color:#fff;text-decoration:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700">Voir</a>
-        <button onclick="removeFromWishlist(${item.id})" style="background:#fff;border:1.5px solid #fee2e2;color:#ef4444;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit">✕</button>
+  el.innerHTML = data.map(item=>{
+    const isTravel = item.product_store === 'booking' || (item.product_name||'').startsWith('Voyage');
+    const icon = isTravel ? '✈️' : '🛍️';
+    const gradient = isTravel
+      ? 'linear-gradient(135deg,#1f2da0,#2f54ff)'
+      : 'linear-gradient(135deg,#2f54ff,#4a6bff)';
+    return `<div style="background:#fff;border:1px solid #e6ebf7;border-radius:14px;padding:12px 14px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+          <div style="width:36px;height:36px;border-radius:10px;background:${gradient};display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">${icon}</div>
+          <div style="min-width:0">
+            <div style="font-size:13px;font-weight:700;color:#0e1430;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.product_name}</div>
+            <div style="font-size:11px;color:#7c89a8;margin-top:2px">${item.product_store} · ${item.product_price||'Prix non dispo'}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <a href="${item.product_url}" target="_blank" style="background:${gradient};color:#fff;text-decoration:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700">${isTravel?'Réserver':'Voir'}</a>
+          <button onclick="removeFromWishlist(${item.id})" style="background:#fff;border:1.5px solid #fee2e2;color:#ef4444;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit">✕</button>
+        </div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 async function removeFromWishlist(id) { await sb.from('wishlist').delete().eq('id',id); loadWishlist(); }
 
