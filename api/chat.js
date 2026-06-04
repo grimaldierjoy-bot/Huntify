@@ -3,7 +3,7 @@ export const config = { runtime: 'edge' };
 const SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
 
-// âš¡ OPTIM : modÃ¨le centralisÃ© + plafond questions de ciblage
+// ⚡ OPTIM : modèle centralisé + plafond questions de ciblage
 const MODEL = 'claude-haiku-4-5';
 const MAX_TARGETING_QUESTIONS = 5;
 
@@ -16,13 +16,13 @@ async function getAdvertisers() {
   } catch(e) { return []; }
 }
 
-// âš¡ FIX RAKUTEN : nettoie les keywords pour une recherche e-commerce valide.
-// L'agent renvoie parfois "satin, longue, trapÃ¨ze, style classique" (liste
-// d'adjectifs) -> page de rÃ©sultats vide. On retire virgules et mots vides,
-// et on limite Ã  4-5 termes utiles.
+// ⚡ FIX RAKUTEN : nettoie les keywords pour une recherche e-commerce valide.
+// L'agent renvoie parfois "satin, longue, trapèze, style classique" (liste
+// d'adjectifs) -> page de résultats vide. On retire virgules et mots vides,
+// et on limite à 4-5 termes utiles.
 function cleanKeywords(kw) {
   if (!kw) return '';
-  const stop = new Set(['style','classique','de','la','le','les','un','une','des','pour','avec','et','en','du','au','aux','trÃ¨s','plus','moins']);
+  const stop = new Set(['style','classique','de','la','le','les','un','une','des','pour','avec','et','en','du','au','aux','très','plus','moins']);
   return kw
     .replace(/,/g, ' ')                 // virgules -> espaces
     .replace(/\s+/g, ' ')               // espaces multiples
@@ -35,13 +35,13 @@ function cleanKeywords(kw) {
 
 function buildAffiliateLink(adv, keywords, directUrl=null) {
   if (!adv?.active) return null;
-  const kw = cleanKeywords(keywords); // âš¡ FIX : keywords nettoyÃ©s
+  const kw = cleanKeywords(keywords); // ⚡ FIX : keywords nettoyés
   if (adv.slug === 'amazon') {
     const base = directUrl && directUrl.includes('amazon.fr') ? directUrl : `https://www.amazon.fr/s?k=${encodeURIComponent(kw)}`;
     return `${base}${base.includes('?')?'&':'?'}tag=${adv.amazon_tag}`;
   }
   if (adv.awin_mid) {
-    // âš¡ FIX 404 : on n'utilise JAMAIS l'URL directe Rakuten (hallucinations IA -> 404).
+    // ⚡ FIX 404 : on n'utilise JAMAIS l'URL directe Rakuten (hallucinations IA -> 404).
     // On construit toujours le lien de recherche depuis search_url.
     const dest = adv.search_url.replace('{keywords}', encodeURIComponent(kw));
     return `https://www.awin1.com/cread.php?awinmid=${adv.awin_mid}&awinaffid=${adv.awin_aff}&ued=${encodeURIComponent(dest)}`;
@@ -59,32 +59,32 @@ async function sbFetch(path, method='GET', body=null) {
   try { const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, opts); return await r.json(); } catch(e) { return null; }
 }
 
-// âš¡ GARDE-FOU anti-double-clic (Edge-safe via Supabase).
-// Hash lÃ©ger du message (pas de crypto async en Edge â†’ simple djb2).
+// ⚡ GARDE-FOU anti-double-clic (Edge-safe via Supabase).
+// Hash léger du message (pas de crypto async en Edge → simple djb2).
 function hashMsg(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
 }
-// Tente de poser un verrou. Retourne true si OK (1Ã¨re fois), false si doublon (<10s).
+// Tente de poser un verrou. Retourne true si OK (1ère fois), false si doublon (<10s).
 async function acquireLock(sessionId, message) {
   const key = `${sessionId}:${hashMsg((message||'').trim().toLowerCase())}`;
-  const cutoff = new Date(Date.now() - 10_000).toISOString(); // fenÃªtre 10s
+  const cutoff = new Date(Date.now() - 10_000).toISOString(); // fenêtre 10s
   try {
-    // 1) un verrou rÃ©cent existe dÃ©jÃ  ? â†’ doublon
+    // 1) un verrou récent existe déjà ? → doublon
     const existing = await fetch(
       `${SUPABASE_URL}/rest/v1/request_locks?lock_key=eq.${encodeURIComponent(key)}&created_at=gt.${encodeURIComponent(cutoff)}&select=lock_key`,
       { headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`} }
     ).then(r => r.json()).catch(() => []);
     if (Array.isArray(existing) && existing.length > 0) return false;
 
-    // 2) tente d'insÃ©rer (PK unique). Conflit 409 = doublon simultanÃ©.
+    // 2) tente d'insérer (PK unique). Conflit 409 = doublon simultané.
     const ins = await fetch(`${SUPABASE_URL}/rest/v1/request_locks`, {
       method: 'POST',
       headers: {'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`,'Prefer':'resolution=ignore-duplicates'},
       body: JSON.stringify({ lock_key: key, created_at: new Date().toISOString() })
     });
-    // 409 = la clÃ© existait dÃ©jÃ  (double-clic exact simultanÃ©)
+    // 409 = la clé existait déjà (double-clic exact simultané)
     if (ins.status === 409) return false;
     return true;
   } catch(e) {
@@ -111,37 +111,37 @@ function promoBox(code, store, desc, best) {
   const bg = best ? '#dcfce7' : '#f0fdf4';
   return `<div style="background:${bg};border:${border};border-radius:12px;padding:10px 14px;margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:8px">
     <div>
-      <span style="font-size:11px;color:#16a34a;font-weight:700">${best?'â­ MEILLEUR â€” ':''}ðŸ·ï¸ ${store}</span>
+      <span style="font-size:11px;color:#16a34a;font-weight:700">${best?'⭐ MEILLEUR — ':''}🏷️ ${store}</span>
       <div style="font-size:12px;color:#166534;font-weight:600">${desc}</div>
     </div>
-    <div onclick="navigator.clipboard.writeText('${code}');this.innerHTML='âœ“';setTimeout(()=>this.innerHTML='${code}',2000)" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0">${code}</div>
+    <div onclick="navigator.clipboard.writeText('${code}');this.innerHTML='✓';setTimeout(()=>this.innerHTML='${code}',2000)" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0">${code}</div>
   </div>`;
 }
 
 function priceHistoryBox(old, trend) {
-  const icon = trend==='down'?'ðŸ“‰':trend==='up'?'ðŸ“ˆ':'âž¡ï¸';
+  const icon = trend==='down'?'📉':trend==='up'?'📈':'➡️';
   const color = trend==='down'?'#dcfce7':trend==='up'?'#fee2e2':'#f1f5f9';
   const border = trend==='down'?'#86efac':trend==='up'?'#fca5a5':'#e2e8f0';
-  const msg = trend==='down'?`Prix en baisse ! Ã‰tait Ã  ${old} âœ…`:trend==='up'?`âš ï¸ Prix gonflÃ© ! Ã‰tait Ã  ${old}`:`Prix stable`;
+  const msg = trend==='down'?`Prix en baisse ! Était à ${old} ✅`:trend==='up'?`⚠️ Prix gonflé ! Était à ${old}`:`Prix stable`;
   return `<div style="background:${color};border:1.5px solid ${border};border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12px;font-weight:600;color:#374151">${icon} ${msg}</div>`;
 }
 
 function questionBox(question) {
-  // âš¡ OPTIM : data-qbox sert au comptage serveur des questions dÃ©jÃ  posÃ©es
-  return `<div data-qbox="1" style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:12px 14px;margin-top:8px;font-size:13px;color:#1e40af;font-weight:600">ðŸ’¬ ${question}</div>`;
+  // ⚡ OPTIM : data-qbox sert au comptage serveur des questions déjà posées
+  return `<div data-qbox="1" style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:12px 14px;margin-top:8px;font-size:13px;color:#1e40af;font-weight:600">💬 ${question}</div>`;
 }
 
-// âš¡ OPTIM : rÃ©cap de ce que l'agent a compris, juste avant la recherche
+// ⚡ OPTIM : récap de ce que l'agent a compris, juste avant la recherche
 function recapBox(recap) {
-  return `<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12px;color:#5b21b6;font-weight:600">ðŸ”Ž ${recap}</div>`;
+  return `<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12px;color:#5b21b6;font-weight:600">🔎 ${recap}</div>`;
 }
 
-// âš¡ OPTIM : compte les questions de ciblage dÃ©jÃ  posÃ©es dans l'historique
+// ⚡ OPTIM : compte les questions de ciblage déjà posées dans l'historique
 function countQuestionsAsked(history) {
   return (history||[]).filter(m => m.role !== 'user' && (m.content||'').includes('data-qbox')).length;
 }
 
-// âš¡ OPTIM : extrait le bloc JSON de la rÃ©ponse de faÃ§on robuste
+// ⚡ OPTIM : extrait le bloc JSON de la réponse de façon robuste
 function parseAgentJSON(rawText) {
   try {
     const match = rawText.match(/\{[\s\S]*\}/);
@@ -158,13 +158,13 @@ export default async function handler(req) {
     const { message, history, sessionId, userId, trackingEnabled } = await req.json();
     const sid = sessionId || `anon_${Date.now()}`;
 
-    // âš¡ GARDE-FOU : rejette les doublons (double-clic / renvoi) avant tout appel payant.
-    // Fail-open : si le verrou Ã©choue techniquement, on laisse passer.
+    // ⚡ GARDE-FOU : rejette les doublons (double-clic / renvoi) avant tout appel payant.
+    // Fail-open : si le verrou échoue techniquement, on laisse passer.
     const ok = await acquireLock(sid, message);
     if (!ok) {
       return new Response(JSON.stringify({
         reply: '', duplicate: true, sessionId: sid
-      }), { headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'} });
+      }), { headers:{'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'} });
     }
 
     const [advertisers, trends] = await Promise.all([
@@ -181,15 +181,15 @@ export default async function handler(req) {
 
     const activeNames = advertisers.map(a=>a.name).join(', ');
 
-    // âš¡ FIX HISTORIQUE : on reconstruit un dialogue propre depuis tout l'historique.
-    // On ne tronque plus Ã  150/300 chars â€” une rÃ©ponse coupÃ©e = question reposÃ©e.
-    // On garde tous les tours (l'historique entier est envoyÃ© depuis le front).
+    // ⚡ FIX HISTORIQUE : on reconstruit un dialogue propre depuis tout l'historique.
+    // On ne tronque plus à 150/300 chars — une réponse coupée = question reposée.
+    // On garde tous les tours (l'historique entier est envoyé depuis le front).
     const histSummary = (history||[]).map(m => {
       const role = m.role==='user' ? 'Client' : 'Agent';
       // Nettoyer le HTML (questionBox, productCard, etc.) pour garder juste le texte
       const text = (m.content||'')
         .replace(/<[^>]*>/g,' ')   // balises -> espaces
-        .replace(/&[^;]+;/g,' ')   // entitÃ©s HTML (&quot; etc.)
+        .replace(/&[^;]+;/g,' ')   // entités HTML (&quot; etc.)
         .replace(/\s+/g,' ')
         .trim()
         .slice(0,400);               // 400 chars par message, suffisant sans couper
@@ -197,22 +197,22 @@ export default async function handler(req) {
       return `${role}: ${text}`;
     }).filter(Boolean).join('\n').slice(0,2000);
 
-    // âš¡ OPTIM : combien de questions de ciblage dÃ©jÃ  posÃ©es ?
+    // ⚡ OPTIM : combien de questions de ciblage déjà posées ?
     const questionsAsked = countQuestionsAsked(history);
-    // âš¡ OPTIM : bypass phase 1 si la demande est DÃ‰JÃ€ prÃ©cise.
-    // Ã‰vite le surcoÃ»t (~5%) d'un appel de ciblage inutile sur une requÃªte one-shot
-    // type "iPhone 15 128Go noir" ou "casque Sony WH-1000XM5 moins de 300â‚¬".
-    // Heuristique lÃ©gÃ¨re et gratuite (aucun token) : longueur + signaux de prÃ©cision.
+    // ⚡ OPTIM : bypass phase 1 si la demande est DÉJÀ précise.
+    // Évite le surcoût (~5%) d'un appel de ciblage inutile sur une requête one-shot
+    // type "iPhone 15 128Go noir" ou "casque Sony WH-1000XM5 moins de 300€".
+    // Heuristique légère et gratuite (aucun token) : longueur + signaux de précision.
     const msgLower = (message||'').toLowerCase();
-    const precisionSignals = /\b(\d{2,})\s?(â‚¬|euro|eur|go|gb|to|cm|mm|"|pouces?|w|watts?)\b|moins de|budget|taille|modÃ¨le|rÃ©f|noir|blanc|bleu|rouge|vert|\b(s|m|l|xl|xxl)\b/i;
+    const precisionSignals = /\b(\d{2,})\s?(€|euro|eur|go|gb|to|cm|mm|"|pouces?|w|watts?)\b|moins de|budget|taille|modèle|réf|noir|blanc|bleu|rouge|vert|\b(s|m|l|xl|xxl)\b/i;
     const looksPrecise = (message||'').trim().split(/\s+/).length >= 4 && precisionSignals.test(message||'');
     const hasHistory = (history||[]).length > 0;
-    // On cherche direct si : plafond atteint, OU 1er message dÃ©jÃ  prÃ©cis (pas d'historique).
+    // On cherche direct si : plafond atteint, OU 1er message déjà précis (pas d'historique).
     const mustSearchNow = questionsAsked >= MAX_TARGETING_QUESTIONS || (!hasHistory && looksPrecise);
 
     // ===================================================================
-    // âš¡ PHASE 1 â€” CIBLAGE (sans web search, appel lÃ©ger & peu coÃ»teux)
-    // On ne paie le web search QUE quand on est prÃªt Ã  chercher.
+    // ⚡ PHASE 1 — CIBLAGE (sans web search, appel léger & peu coûteux)
+    // On ne paie le web search QUE quand on est prêt à chercher.
     // ===================================================================
     let decision = { ready: mustSearchNow, question: null, recap: null };
 
@@ -222,28 +222,28 @@ export default async function handler(req) {
         headers: {'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
         body: JSON.stringify({
           model: MODEL,
-          max_tokens: 250, // âš¡ OPTIM : dÃ©cision courte, pas de produits ici
+          max_tokens: 250, // ⚡ OPTIM : décision courte, pas de produits ici
           system: [{
             type: 'text',
-            // âš¡ OPTIM : partie stable du prompt â†’ mise en cache (payÃ©e 1x puis 10%)
-            text: `Tu es l'agent shopping IA de Huntify. Ta SEULE tÃ¢che : dÃ©cider si tu as assez d'infos pour chercher, ou poser UNE question.
+            // ⚡ OPTIM : partie stable du prompt → mise en cache (payée 1x puis 10%)
+            text: `Tu es l'agent shopping IA de Huntify. Ta SEULE tâche : décider si tu as assez d'infos pour chercher, ou poser UNE question.
 
-RÃˆGLES ABSOLUES :
-1. LIS L'HISTORIQUE COMPLET avant tout. Si une info y est dÃ©jÃ  (budget, usage, taille, marque...), NE LA REDEMANDE PAS.
-2. Identifie ce qui manque encore parmi : catÃ©gorie prÃ©cise, budget, usage/critÃ¨res.
-3. Si tout est clair OU si tu as dÃ©jÃ  posÃ© ${MAX_TARGETING_QUESTIONS} questions â†’ rÃ©ponds ready:true.
-4. Sinon â†’ pose UNE seule question sur CE QUI MANQUE VRAIMENT (pas ce qui est dÃ©jÃ  rÃ©pondu).
+RÈGLES ABSOLUES :
+1. LIS L'HISTORIQUE COMPLET avant tout. Si une info y est déjà (budget, usage, taille, marque...), NE LA REDEMANDE PAS.
+2. Identifie ce qui manque encore parmi : catégorie précise, budget, usage/critères.
+3. Si tout est clair OU si tu as déjà posé ${MAX_TARGETING_QUESTIONS} questions → réponds ready:true.
+4. Sinon → pose UNE seule question sur CE QUI MANQUE VRAIMENT (pas ce qui est déjà répondu).
 
-ERREUR INTERDITE : reposer une question dont la rÃ©ponse est dÃ©jÃ  dans l'historique.
+ERREUR INTERDITE : reposer une question dont la réponse est déjà dans l'historique.
 
-RÃ©ponds en JSON UNIQUEMENT :
-- Question nÃ©cessaire : {"ready":false,"question":"ta question sur ce qui manque"}
-- PrÃªt Ã  chercher : {"ready":true,"recap":"Je cherche X, budget Y, critÃ¨res Z (rÃ©sume TOUT ce que tu sais)"}`,
+Réponds en JSON UNIQUEMENT :
+- Question nécessaire : {"ready":false,"question":"ta question sur ce qui manque"}
+- Prêt à chercher : {"ready":true,"recap":"Je cherche X, budget Y, critères Z (résume TOUT ce que tu sais)"}`,
             cache_control: { type: 'ephemeral' }
           }],
           messages: [{
             role: 'user',
-            content: `HISTORIQUE RÃ‰CENT:\n${histSummary || 'DÃ©but de conversation'}\n\nQuestions dÃ©jÃ  posÃ©es: ${questionsAsked}/${MAX_TARGETING_QUESTIONS}\n\nNOUVEAU MESSAGE CLIENT: ${message}`
+            content: `HISTORIQUE RÉCENT:\n${histSummary || 'Début de conversation'}\n\nQuestions déjà posées: ${questionsAsked}/${MAX_TARGETING_QUESTIONS}\n\nNOUVEAU MESSAGE CLIENT: ${message}`
           }]
         })
       });
@@ -257,21 +257,21 @@ RÃ©ponds en JSON UNIQUEMENT :
         decision.question = d.question || null;
         decision.recap = d.recap || null;
       } else {
-        // En cas d'Ã©chec phase 1, on bascule en recherche pour ne pas bloquer
+        // En cas d'échec phase 1, on bascule en recherche pour ne pas bloquer
         decision.ready = true;
       }
     }
 
-    // L'agent veut une info de plus â†’ on s'arrÃªte lÃ  (aucun web search facturÃ©)
+    // L'agent veut une info de plus → on s'arrête là (aucun web search facturé)
     if (!decision.ready && decision.question) {
       return new Response(JSON.stringify({
         reply: questionBox(decision.question),
         sessionId: sid
-      }), { headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'} });
+      }), { headers:{'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'} });
     }
 
     // ===================================================================
-    // âš¡ PHASE 2 â€” RECHERCHE (web search dÃ©clenchÃ© UNE seule fois)
+    // ⚡ PHASE 2 — RECHERCHE (web search déclenché UNE seule fois)
     // ===================================================================
     const recapText = decision.recap || `Je cherche : ${message}`;
 
@@ -280,35 +280,37 @@ RÃ©ponds en JSON UNIQUEMENT :
       headers: {'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 600, // âš¡ OPTIM : 800 â†’ 600, le JSON tient largement
-        // âš¡ OPTIM : max_uses:1 â€” une seule recherche ~14,6k tokens, reste loin
-        // sous le plafond 50k/min du tier 1. La phase 1 ayant dÃ©jÃ  ciblÃ© le besoin,
-        // une recherche prÃ©cise suffit (passer Ã  2 risque de frÃ´ler la limite).
-        tools: [{ type:"web_search_20250305", name:"web_search", max_uses: 1 }],
+        max_tokens: 600, // ⚡ OPTIM : 800 → 600, le JSON tient largement
+        // ⚡ OPTIM : max_uses:1 — une seule recherche ~14,6k tokens, reste loin
+        // sous le plafond 50k/min du tier 1. La phase 1 ayant déjà ciblé le besoin,
+        // une recherche précise suffit (passer à 2 risque de frôler la limite).
+        // ⚡ max_uses:2 pour Amazon (1 recherche) + Rakuten (1 recherche) séparément
+        tools: [{ type:"web_search_20250305", name:"web_search", max_uses: 2 }],
         system: [{
           type: 'text',
-          // âš¡ OPTIM : system stable â†’ cachÃ©. Seul le message user change.
+          // ⚡ OPTIM : system stable → caché. Seul le message user change.
           text: `Tu es l'agent shopping IA de Huntify. Boutiques : ${activeNames}.
 
-TA TÃ‚CHE :
-1. CHERCHER EN LIVE â€” fais 1-2 recherches web sur Amazon.fr ET Rakuten pour trouver des produits RÃ‰ELS avec prix EXACTS et URLs DIRECTES.
-2. CODES PROMOS â€” cherche sur dealabs.com, note le meilleur avec â­.
-3. CONTEXTE â€” utilise l'historique pour affiner (si "moins cher" â†’ cherche moins cher que proposÃ© avant).
+TA TÂCHE :
+1. CHERCHER SUR AMAZON — 1 recherche web sur amazon.fr, trouve 2 produits avec prix réels.
+2. CHERCHER SUR RAKUTEN — 1 recherche web sur fr.shopping.rakuten.com, trouve 1 produit avec prix réel. OBLIGATOIRE.
+3. CODES PROMOS — cherche sur dealabs.com si il reste une recherche disponible.
+4. CONTEXTE — utilise l'historique pour affiner (si "moins cher" → cherche moins cher que proposé avant).
 
-RÃˆGLES :
-- Max 2 produits Amazon + 1 Rakuten
+RÈGLES :
+- EXACTEMENT 2 produits Amazon + 1 produit Rakuten (les deux sont OBLIGATOIRES)
 - Max 2 codes promos
 - Prix exacts, URLs directes quand possible
-- "keywords" = terme de recherche e-commerce SIMPLE qui retourne des rÃ©sultats. TOUJOURS commencer par le TYPE de produit (ex: "robe satin longue", "casque sans fil bluetooth"). JAMAIS une liste d'adjectifs sÃ©parÃ©s par des virgules (ex INTERDIT: "satin, longue, trapÃ¨ze, classique"). Max 4-5 mots.
+- "keywords" = terme de recherche e-commerce SIMPLE qui retourne des résultats. TOUJOURS commencer par le TYPE de produit (ex: "robe satin longue", "casque sans fil bluetooth"). JAMAIS une liste d'adjectifs séparés par des virgules (ex INTERDIT: "satin, longue, trapèze, classique"). Max 4-5 mots.
 - "url" : ne mets une URL QUE si tu es certain qu'elle existe vraiment. Sinon laisse null (le lien de recherche sera construit automatiquement).
 
 JSON UNIQUEMENT :
-{"summary":"1 phrase","products":[{"name":"nom","price":"XXâ‚¬","store":"amazon","keywords":"mots","url":"url ou null","img":null,"badge":null},{"name":"nom","price":"DÃ¨s XXâ‚¬","store":"rakuten","keywords":"mots","url":"url ou null","img":null,"badge":null}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}`,
+{"summary":"1 phrase","products":[{"name":"nom","price":"XX€","store":"amazon","keywords":"mots","url":"url ou null","img":null,"badge":null},{"name":"nom","price":"Dès XX€","store":"rakuten","keywords":"mots","url":"url ou null","img":null,"badge":null}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}`,
           cache_control: { type: 'ephemeral' }
         }],
         messages: [{
           role: 'user',
-          content: `HISTORIQUE:\n${histSummary || 'DÃ©but'}\n\nBESOIN CIBLÃ‰: ${recapText}\n\nMESSAGE: ${message}`
+          content: `HISTORIQUE:\n${histSummary || 'Début'}\n\nBESOIN CIBLÉ: ${recapText}\n\nMESSAGE: ${message}`
         }]
       })
     });
@@ -326,7 +328,7 @@ JSON UNIQUEMENT :
 
     if (!products.length) {
       products = advertisers.slice(0,2).map(a=>({name:message,price:'Voir prix',store:a.slug,keywords:message,url:null,img:null,badge:null}));
-      summary = `RÃ©sultats pour "${message}" :`;
+      summary = `Résultats pour "${message}" :`;
     }
 
     // Historique prix
@@ -339,7 +341,7 @@ JSON UNIQUEMENT :
       if (hist.length > 1 && !isNaN(cur)) {
         const old = hist[hist.length-1].price;
         const trend = cur < old*0.97 ? 'down' : cur > old*1.03 ? 'up' : 'stable';
-        priceHistoryHtml = priceHistoryBox(`${old}â‚¬`, trend);
+        priceHistoryHtml = priceHistoryBox(`${old}€`, trend);
       }
       if (!isNaN(cur)) sbFetch('price_history','POST',{product_id:slug,product_name:mainProduct.name,price:cur,store:'amazon',url:mainProduct.url||null});
     }
@@ -347,7 +349,7 @@ JSON UNIQUEMENT :
     // AUTO-ALIMENTATION : sauvegarde prix Rakuten + codes promos
     for (const pr of products) {
       if (!pr.price || pr.price==='Voir prix' || pr.store==='amazon') continue;
-      const priceNum = parseFloat(pr.price.replace('DÃ¨s ','').replace(/[^0-9.,]/g,'').replace(',','.'));
+      const priceNum = parseFloat(pr.price.replace('Dès ','').replace(/[^0-9.,]/g,'').replace(',','.'));
       if (!isNaN(priceNum)) {
         const pSlug = pr.name.toLowerCase().replace(/\s+/g,'-').slice(0,50);
         sbFetch('price_history','POST',{product_id:pSlug,product_name:pr.name,price:priceNum,store:pr.store,url:pr.url||null});
@@ -368,31 +370,31 @@ JSON UNIQUEMENT :
       buttons += productCard(pr.name, pr.price||'Voir prix', url, adv.color, adv.emoji, pr.img||null, pr.badge||null);
     }
 
-    // Codes promos â€” meilleur en premier
+    // Codes promos — meilleur en premier
     let promos = '';
     const sorted = (promoCodes||[]).filter(c=>c.code).sort((a,b)=>b.best-a.best).slice(0,2);
     for (const c of sorted) {
-      promos += promoBox(c.code, c.store||'boutique', c.discount||'RÃ©duction', c.best||false);
+      promos += promoBox(c.code, c.store||'boutique', c.discount||'Réduction', c.best||false);
     }
 
     // Wishlist
     const first = products[0];
     const adv0 = first ? findAdvertiser(advertisers, first.store) : null;
     const wishlistBtn = first && adv0
-      ? `<button onclick="addToWishlist(${JSON.stringify({name:first.name,price:first.price,store:first.store,url:buildAffiliateLink(adv0,first.keywords||first.name,first.url||null)}).replace(/"/g,'&quot;')})" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">â™¡ Ajouter Ã  ma wishlist</button>`
+      ? `<button onclick="addToWishlist(${JSON.stringify({name:first.name,price:first.price,store:first.store,url:buildAffiliateLink(adv0,first.keywords||first.name,first.url||null)}).replace(/"/g,'&quot;')})" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">♡ Ajouter à ma wishlist</button>`
       : '';
 
-    // âš¡ OPTIM : on affiche le rÃ©cap juste avant les rÃ©sultats
+    // ⚡ OPTIM : on affiche le récap juste avant les résultats
     const reply = `<div style="font-size:13px;color:#374151;margin-bottom:6px;font-weight:500">${summary}</div>` + recapBox(recapText) + priceHistoryHtml + buttons + (promos ? `<div style="margin-top:4px">${promos}</div>` : '') + wishlistBtn;
 
     return new Response(JSON.stringify({reply, sessionId:sid}), {
-      headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}
+      headers:{'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'}
     });
 
   } catch(error) {
     console.error('Error:', error.message);
-    return new Response(JSON.stringify({reply:"DÃ©solÃ©, problÃ¨me technique. RÃ©essayez."}), {
-      status:200, headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}
+    return new Response(JSON.stringify({reply:"Désolé, problème technique. Réessayez."}), {
+      status:200, headers:{'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'}
     });
   }
 }
