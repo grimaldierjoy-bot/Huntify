@@ -14,7 +14,7 @@ export const config = { runtime: 'edge' };
 const SUPABASE_URL  = "https://enocxbrqyybendertytl.supabase.co";
 const SUPABASE_KEY  = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
 const MODEL         = 'claude-haiku-4-5';
-const MAX_Q         = 2;
+const MAX_Q         = 3;
 const TRAVEL_THRESHOLD = 300; // EUR — au-dessus : Claude + web search
 
 // ── Supabase ─────────────────────────────────────────────────
@@ -400,8 +400,10 @@ Feuille de route complète :
       const tP = parseJSON(tRaw||'');
 
       // Question de ciblage
-      if (tP.type==='question'||(tP.needsInfo&&tP.question)) {
-        return new Response(JSON.stringify({reply:qBox(tP.question||tP.needsInfo),sessionId:sid}),{headers:H});
+      if (tP.type==='question'||(tP.needsInfo&&(tP.question||tP.message))) {
+        const tMsg = tP.message || tP.question || tP.needsInfo;
+        const tMsgHtml = `<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">${tMsg}</div>`;
+        return new Response(JSON.stringify({reply:tMsgHtml,sessionId:sid}),{headers:H});
       }
 
       // Suggestions de destinations
@@ -425,7 +427,7 @@ Feuille de route complète :
 
       // Feuille de route complète
       const itin = tP.itinerary||(tP.type==='itinerary'?tP.itinerary:null);
-      if(!itin) return new Response(JSON.stringify({reply:qBox("Dis-moi ta destination et ton budget, je génère ta feuille de route complète avec vols et hôtels !"),sessionId:sid}),{headers:H});
+      if(!itin) return new Response(JSON.stringify({reply:`<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">Dis-moi où tu veux aller et ton budget, je te prépare une feuille de route complète avec vols, hôtels et programme jour par jour ! ✈️</div>`,sessionId:sid}),{headers:H});
 
       let html='';
 
@@ -508,36 +510,34 @@ Feuille de route complète :
     let decision = {ready:mustSearch, question:null, recap:null};
 
     if (!mustSearch) {
-      // Phase 1 : MAX 2 questions, puis on cherche avec ce qu'on a
-      const p1sys = `Agent shopping Huntify. Tu poses MAX 2 questions COURTES puis tu cherches.
+      const p1sys = `Tu es un assistant shopping sympathique et intelligent. Tu parles naturellement, comme un ami qui s'y connait en produits.
 
-REGLE 1 : SI L'UTILISATEUR DIT "je ne sais pas" ou "je sais pas" ou "aucune idée" a une question → IGNORE ce critère et passe a ready:true avec ce que tu as. Ne repose JAMAIS la meme question autrement.
+TON STYLE :
+- Conversationnel et chaleureux, pas robotique
+- Tu comprends le contexte implicite (cadeau = occasion speciale, fond de teint = beaute/confiance)
+- Tu reformules intelligemment ce que tu as compris avant de poser ta question
+- Tu ne poses qu'UNE question a la fois, et elle regroupe plusieurs infos
 
-REGLE 2 : MAX 2 questions AU TOTAL sur toute la conversation. Tu en as pose ${qAsked}. Si ${qAsked} >= 2 → ready:true OBLIGATOIRE.
+EXEMPLES DE BONNES REPONSES :
+- "fond de teint" → {"ready":false,"message":"Super choix ! Tu cherches plutot quelque chose de couvrant ou leger et naturel ? Et tu as un budget en tete ?"}
+- "fond de teint" + "couvrant, j'ai des rougeurs" → {"ready":true,"recap":"fond de teint couvrant longue tenue anti-rougeurs teinte claire medium","message":"Parfait, je te trouve les meilleurs fonds de teint couvrants anti-rougeurs !"}
+- "cadeau 2 ans de relation" → {"ready":false,"message":"Oh 2 ans, bel anniversaire ! Tu pensais plutot a un objet symbolique (bijou, accessoire) ou une experience a partager (weekend, diner, activite) ? Et quel budget tu te donnes ?"}
+- "casque" → {"ready":false,"message":"Pour quel usage tu le veux ? Musique au quotidien, gaming, sport, ou pour bosser au calme ? Ca m'aide a trouver le bon !"}
+- "un truc a 50 euros pour ma copine sportive" → {"ready":true,"recap":"cadeau femme sportive 50 euros","message":"Je cherche les meilleurs cadeaux sport pour elle a 50 euros !"}
 
-REGLE 3 : Pose UNE SEULE question qui regroupe le MAXIMUM d'infos utiles.
-Exemples de bonnes questions uniques :
-- "fond de teint" → "Quel est ton budget, et tu cherches plutot couvrant ou leger ?"
-- "casque" → "Pour quel usage (musique/gaming/sport) et quel budget ?"
-- "cadeau" → "C'est pour qui et quel budget ?"
+REGLES :
+1. "je ne sais pas" ou "aucune idee" = IGNORE ce critere et cherche avec ce que tu as. Ne repose JAMAIS la meme question.
+2. MAX ${MAX_Q} questions au total (tu en as pose ${qAsked}). Apres = ready:true obligatoire.
+3. Recap = MOTS-CLES PRODUIT pour Amazon/Rakuten, pas les reponses brutes du client.
+4. Ne demande JAMAIS la marque, la teinte exacte, ou des details techniques.
+5. Si tu as compris l'essentiel (produit + usage OU budget) → ready:true.
 
-REGLE 4 : Ne pose JAMAIS de question sur :
-- La marque
-- La teinte exacte (si la personne ne sait pas, cherche "toutes teintes" ou "universel")
-- Des details techniques que l'utilisateur moyen ne connait pas
-- Le sport ou des sujets hors contexte
+HISTORIQUE :
+${hist || 'Debut de conversation'}
 
-REGLE 5 : Recap = MOTS-CLES PRODUIT pour Amazon/Rakuten.
-- fond de teint + rougeurs + couvrant + hydratant → "fond de teint couvrant hydratant anti-rougeurs teinte claire"
-- casque + sport → "casque sport bluetooth sans fil"
-NE COPIE JAMAIS les reponses brutes.
-
-HISTORIQUE : ${hist || 'Debut'}
-Questions posees : ${qAsked}/${MAX_Q}
-
-JSON UNIQUEMENT :
-{"ready":false,"question":"UNE question courte qui regroupe budget + usage"}
-{"ready":true,"recap":"mots-cles produit precis"}`;
+JSON UNIQUEMENT (mais le champ message doit etre naturel et conversationnel) :
+{"ready":false,"message":"ta reponse naturelle avec question integree"}
+{"ready":true,"recap":"mots-cles produit","message":"phrase courte avant les resultats"}`;
 
       const p1user = `HISTORIQUE:\n${hist||'Début'}\n\nQuestions posées: ${qAsked}/${MAX_Q}\n\nMESSAGE: ${message}`;
 
@@ -548,15 +548,19 @@ JSON UNIQUEMENT :
       if (t1) {
         const d=parseJSON(t1);
         decision.ready    = d.ready===true;
-        decision.question = d.question||null;
+        decision.question = d.question||d.message||null;
         decision.recap    = d.recap||null;
+        decision.message  = d.message||d.question||null;
       } else {
         decision.ready=true;
       }
     }
 
-    if (!decision.ready && decision.question) {
-      return new Response(JSON.stringify({reply:qBox(decision.question),sessionId:sid}),{headers:H});
+    if (!decision.ready && (decision.message||decision.question)) {
+      // Réponse conversationnelle naturelle au lieu d'une questionBox rigide
+      const chatMsg = decision.message || decision.question;
+      const msgHtml = `<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">${chatMsg}</div>`;
+      return new Response(JSON.stringify({reply:msgHtml,sessionId:sid}),{headers:H});
     }
 
     const recap    = decision.recap||`Je cherche : ${message}`;
