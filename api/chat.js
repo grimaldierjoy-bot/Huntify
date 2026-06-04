@@ -319,31 +319,45 @@ export default async function handler(req) {
       const travelStrategy = (travelBudget && travelBudget >= TRAVEL_ROI_THRESHOLD) ? 'paid' : 'free';
 
       // Prompt système voyage complet
-      const travelSys = `Tu es l'agent voyage IA de Huntify. Tu génères des itinéraires personnalisés.
+      const travelSys = `Tu es l'agent voyage IA de Huntify. Tu crées des voyages sur-mesure.
 
-INFOS À RÉUNIR (UNE question à la fois, dans cet ordre) :
-1. Destination (ville/pays/région)
-2. Dates ou durée du séjour
-3. Nombre de voyageurs (adultes/enfants)
-4. Budget total en euros
-5. Style : chill (plage/repos) | culture (musées/histoire) | aventure | famille | romantique | mix
+HISTORIQUE : ${histSummary || 'Début de conversation'}
+Questions déjà posées : ${travelQAsked}/5
 
-MAX 5 questions — tu en as posé ${travelQAsked}.
-Si toutes les infos sont réunies OU 5 questions posées -> génère l'itinéraire complet.
+RÈGLE ABSOLUE : ne repose JAMAIS une question dont la réponse est déjà dans l'historique.
 
-RÈGLE ABSOLUE : ne repose JAMAIS une question déjà répondue dans l'historique.
+CAS 1 — L'UTILISATEUR N'A PAS DE DESTINATION PRÉCISE
+Si le client dit "je sais pas", "propose-moi", "surprends-moi", "peu importe" ou donne seulement un style/budget/durée sans destination → PROPOSE 3 destinations adaptées.
+Pour cela, tu dois d'abord connaître : budget, durée, style, nombre de voyageurs.
+Si ces 4 infos sont disponibles → propose les destinations.
+Sinon → pose UNE question pour collecter ce qui manque parmi ces 4.
 
-QUAND TU GÉNÈRES :
-- Programme jour par jour (matin/après-midi/soirée) adapté au style ET budget
-- 2-3 hébergements réalistes avec fourchette de prix
-- Budget détaillé (hébergement/activités/repas/transport)  
+CAS 2 — L'UTILISATEUR A UNE DESTINATION PRÉCISE
+Collecte : dates/durée, nombre de voyageurs, budget, style.
+Quand tout est réuni OU 5 questions posées → génère l'itinéraire complet.
+
+QUAND TU PROPOSES DES DESTINATIONS (CAS 1) :
+- 3 destinations variées et adaptées au profil (budget, style, durée)
+- Pour chaque : nom, pays, pourquoi c'est parfait pour lui, fourchette de prix indicative
+- Demande ensuite laquelle lui plaît
+
+QUAND TU GÉNÈRES L'ITINÉRAIRE :
+- Programme jour par jour (matin/après-midi/soirée)
+- Adapté au style ET au budget
+- 2-3 hébergements Booking.com avec prix réalistes
+- Budget détaillé (hébergement/activités/repas/transport)
 - 3-5 conseils pratiques
 
-HISTORIQUE : ${histSummary || 'Début'}
+JSON UNIQUEMENT — 3 formats possibles :
 
-JSON UNIQUEMENT :
-Si info manquante : {"needsInfo":true,"question":"ta question"}
-Si prêt : {"needsInfo":false,"recap":"Destination X, Y nuits, Z pers, budget W€, style S","itinerary":{"destination":"X","duration":"Y jours","style":"S","days":[{"num":1,"title":"Titre","morning":"...","afternoon":"...","evening":"...","hotel":"Nom hôtel","budget":150}],"hotels":[{"name":"Nom","stars":3,"price":"90€","location":"Quartier","highlight":"Point fort"}],"budget":{"total":1200,"hebergement":450,"activites":200,"repas":300,"transport":150,"note":"Estimations"},"tips":["Conseil 1","Conseil 2","Conseil 3"]}}`;
+1. Question de ciblage :
+{"type":"question","question":"ta question"}
+
+2. Suggestions de destinations :
+{"type":"suggestions","intro":"Selon tes critères, voici 3 destinations parfaites :","destinations":[{"name":"Lisbonne, Portugal","emoji":"🇵🇹","why":"Idéale pour la culture, abordable, soleil garanti","price":"Dès 600€/semaine pour 2","tags":["culture","soleil","gastronomie"]},{"name":"Marrakech, Maroc","emoji":"🇲🇦","why":"Dépaysement total, budget serré, authenticité","price":"Dès 500€/semaine pour 2","tags":["dépaysement","culture","aventure"]},{"name":"Budapest, Hongrie","emoji":"🇭🇺","why":"Romantique, architecture splendide, très abordable","price":"Dès 550€/semaine pour 2","tags":["romantique","culture","fêtes"]}],"question":"Laquelle te tente le plus ? Je génère ton itinéraire complet !"}
+
+3. Itinéraire complet :
+{"type":"itinerary","recap":"Destination X, Y nuits, Z pers, budget W€, style S","itinerary":{"destination":"X","duration":"Y jours","style":"S","days":[{"num":1,"title":"Titre","morning":"...","afternoon":"...","evening":"...","hotel":"Nom hôtel","budget":150}],"hotels":[{"name":"Nom","stars":3,"price":"90€","location":"Quartier","highlight":"Point fort"}],"budget":{"total":1200,"hebergement":450,"activites":200,"repas":300,"transport":150,"note":"Estimations"},"tips":["Conseil 1","Conseil 2","Conseil 3"]}}`;
 
       const travelUser = `HISTORIQUE:
 ${histSummary||'Début'}
@@ -379,15 +393,40 @@ MESSAGE: ${message}`;
 
       const tP = parseAgentJSON(travelRaw||'');
 
-      // Encore des infos à collecter
-      if (tP.needsInfo && tP.question) {
-        return new Response(JSON.stringify({ reply: questionBox(tP.question), sessionId:sid }), { headers:HEADERS });
+      // CAS 1 : question de ciblage
+      if (tP.type === 'question' || (tP.needsInfo && tP.question)) {
+        const q = tP.question || tP.needsInfo;
+        return new Response(JSON.stringify({ reply: questionBox(q), sessionId:sid }), { headers:HEADERS });
       }
 
-      // Itinéraire généré
-      const itin = tP.itinerary;
+      // CAS 2 : suggestions de destinations
+      if (tP.type === 'suggestions' && tP.destinations?.length) {
+        let sugHtml = `<div style="font-size:13px;color:#374151;font-weight:600;margin-bottom:8px">${tP.intro||'Voici 3 destinations parfaites pour toi :'}</div>`;
+        for (const d of tP.destinations) {
+          sugHtml += `<div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:16px;padding:14px;margin-top:8px;cursor:pointer" onclick="send('${d.name.replace(/'/g,"\'")}')">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <span style="font-size:24px">${d.emoji||'🌍'}</span>
+              <div>
+                <div style="font-size:14px;font-weight:800;color:#0e1430">${d.name}</div>
+                <div style="font-size:11px;color:#2f54ff;font-weight:700">${d.price||''}</div>
+              </div>
+            </div>
+            <div style="font-size:12px;color:#374151;margin-bottom:8px">${d.why||''}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:5px">
+              ${(d.tags||[]).map(t=>`<span style="background:#eff6ff;color:#2f54ff;border-radius:100px;padding:3px 10px;font-size:11px;font-weight:600">${t}</span>`).join('')}
+            </div>
+          </div>`;
+        }
+        if (tP.question) {
+          sugHtml += questionBox(tP.question);
+        }
+        return new Response(JSON.stringify({ reply: sugHtml, sessionId:sid }), { headers:HEADERS });
+      }
+
+      // CAS 3 : itinéraire complet
+      const itin = tP.itinerary || (tP.type === 'itinerary' ? tP.itinerary : null);
       if (!itin) {
-        return new Response(JSON.stringify({ reply: questionBox("Dis-moi ta destination et ton budget pour que je génère ton itinéraire !"), sessionId:sid }), { headers:HEADERS });
+        return new Response(JSON.stringify({ reply: questionBox("Dis-moi ton budget, la durée et le style de voyage souhaité !"), sessionId:sid }), { headers:HEADERS });
       }
 
       // Construction de la réponse voyage
