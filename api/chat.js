@@ -42,8 +42,9 @@ function buildAffiliateLink(adv, keywords, directUrl=null) {
   }
   if (adv.awin_mid) {
     // ⚡ FIX 404 : on n'utilise JAMAIS l'URL directe Rakuten (hallucinations IA -> 404).
-    // On construit toujours le lien de recherche depuis search_url.
-    const dest = adv.search_url.replace('{keywords}', encodeURIComponent(kw));
+    // Rakuten France utilise le format /s/mot+clé (+ au lieu de %20).
+    const rakutenKw = kw.replace(/%20/g, '+');
+    const dest = adv.search_url.replace('{keywords}', encodeURIComponent(kw).replace(/%20/g, '+'));
     return `https://www.awin1.com/cread.php?awinmid=${adv.awin_mid}&awinaffid=${adv.awin_aff}&ued=${encodeURIComponent(dest)}`;
   }
   return null;
