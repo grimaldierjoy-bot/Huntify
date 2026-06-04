@@ -181,12 +181,21 @@ export default async function handler(req) {
 
     const activeNames = advertisers.map(a=>a.name).join(', ');
 
-    // âš¡ FIX HISTORIQUE : 4 derniers tours, 300 chars/message (Ã©vite questions rÃ©pÃ©tÃ©es)
-    const histSummary = (history||[]).slice(-4).map(m => {
+    // âš¡ FIX HISTORIQUE : on reconstruit un dialogue propre depuis tout l'historique.
+    // On ne tronque plus Ã  150/300 chars â€” une rÃ©ponse coupÃ©e = question reposÃ©e.
+    // On garde tous les tours (l'historique entier est envoyÃ© depuis le front).
+    const histSummary = (history||[]).map(m => {
       const role = m.role==='user' ? 'Client' : 'Agent';
-      const text = (m.content||'').replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim().slice(0,300);
+      // Nettoyer le HTML (questionBox, productCard, etc.) pour garder juste le texte
+      const text = (m.content||'')
+        .replace(/<[^>]*>/g,' ')   // balises -> espaces
+        .replace(/&[^;]+;/g,' ')   // entitÃ©s HTML (&quot; etc.)
+        .replace(/\s+/g,' ')
+        .trim()
+        .slice(0,400);               // 400 chars par message, suffisant sans couper
+      if (!text) return null;
       return `${role}: ${text}`;
-    }).join('\n').slice(0,1200);
+    }).filter(Boolean).join('\n').slice(0,2000);
 
     // âš¡ OPTIM : combien de questions de ciblage dÃ©jÃ  posÃ©es ?
     const questionsAsked = countQuestionsAsked(history);
@@ -217,15 +226,19 @@ export default async function handler(req) {
           system: [{
             type: 'text',
             // âš¡ OPTIM : partie stable du prompt â†’ mise en cache (payÃ©e 1x puis 10%)
-            text: `Tu es l'agent shopping IA de Huntify. Ta SEULE tÃ¢che ici : dÃ©cider si tu as assez d'infos pour lancer une recherche produit, ou s'il faut poser UNE question de ciblage de plus.
+            text: `Tu es l'agent shopping IA de Huntify. Ta SEULE tÃ¢che : dÃ©cider si tu as assez d'infos pour chercher, ou poser UNE question.
 
-Infos clÃ©s Ã  rÃ©unir avant de chercher : catÃ©gorie prÃ©cise, budget, usage/critÃ¨res (taille, marque, couleur, etc.).
-Tu peux poser au MAXIMUM ${MAX_TARGETING_QUESTIONS} questions au total sur la conversation.
-Pose UNE seule question Ã  la fois, courte et utile. Si la demande initiale est dÃ©jÃ  prÃ©cise, ne pose AUCUNE question.
+RÃˆGLES ABSOLUES :
+1. LIS L'HISTORIQUE COMPLET avant tout. Si une info y est dÃ©jÃ  (budget, usage, taille, marque...), NE LA REDEMANDE PAS.
+2. Identifie ce qui manque encore parmi : catÃ©gorie prÃ©cise, budget, usage/critÃ¨res.
+3. Si tout est clair OU si tu as dÃ©jÃ  posÃ© ${MAX_TARGETING_QUESTIONS} questions â†’ rÃ©ponds ready:true.
+4. Sinon â†’ pose UNE seule question sur CE QUI MANQUE VRAIMENT (pas ce qui est dÃ©jÃ  rÃ©pondu).
 
-RÃ©ponds en JSON UNIQUEMENT, rien d'autre :
-- Si besoin d'une question : {"ready":false,"question":"ta question"}
-- Si prÃªt Ã  chercher : {"ready":true,"recap":"Je cherche X, budget Y, critÃ¨res Z"}`,
+ERREUR INTERDITE : reposer une question dont la rÃ©ponse est dÃ©jÃ  dans l'historique.
+
+RÃ©ponds en JSON UNIQUEMENT :
+- Question nÃ©cessaire : {"ready":false,"question":"ta question sur ce qui manque"}
+- PrÃªt Ã  chercher : {"ready":true,"recap":"Je cherche X, budget Y, critÃ¨res Z (rÃ©sume TOUT ce que tu sais)"}`,
             cache_control: { type: 'ephemeral' }
           }],
           messages: [{
