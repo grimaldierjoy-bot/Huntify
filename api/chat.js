@@ -64,6 +64,57 @@ function findAdv(advertisers, slug) {
   return advertisers.find(a=>a.slug===slug?.toLowerCase())||null;
 }
 
+// ── Consultation DB interne (source 1, gratuite) ──────────────
+// Cherche dans Supabase si on a déjà des données utiles sur ce produit
+async function queryInternalDB(keywords, budget) {
+  const kw = (keywords||'').toLowerCase().trim();
+  const results = { deals:[], prices:[], promos:[], hasData:false };
+  
+  try {
+    // 1. Daily deals actifs qui correspondent
+    const deals = await sbFetch(`daily_deals?name=ilike.*${encodeURIComponent(kw.split(' ')[0])}*&limit=3`);
+    if (deals?.length) {
+      results.deals = deals;
+      results.hasData = true;
+    }
+    
+    // 2. Historique des prix récents sur ce type de produit
+    const prices = await sbFetch(`price_history?product_name=ilike.*${encodeURIComponent(kw.split(' ')[0])}*&order=checked_at.desc&limit=5`);
+    if (prices?.length) {
+      results.prices = prices;
+      results.hasData = true;
+    }
+    
+    // 3. Codes promos existants dans notre base
+    const promos = await sbFetch(`promo_codes?valid=eq.true&order=found_at.desc&limit=3`);
+    if (promos?.length) {
+      results.promos = promos;
+    }
+  } catch(e) { /* DB indisponible -> on continue sans */ }
+  
+  return results;
+}
+
+// Construit un contexte DB à injecter dans le prompt
+function buildDBContext(dbData) {
+  if (!dbData.hasData) return '';
+  let ctx = 'DONNÉES INTERNES DISPONIBLES (utilise en priorité) :
+';
+  if (dbData.deals?.length) {
+    ctx += 'Deals actuels : ' + dbData.deals.map(d=>`${d.name} ${d.price||''} chez ${d.store||''}`).join(' | ') + '
+';
+  }
+  if (dbData.prices?.length) {
+    ctx += 'Historique prix : ' + dbData.prices.map(p=>`${p.product_name} ${p.price}€ (${p.store})`).join(' | ') + '
+';
+  }
+  if (dbData.promos?.length) {
+    ctx += 'Codes promos : ' + dbData.promos.map(p=>`${p.code} (${p.store} ${p.discount||''})`).join(' | ') + '
+';
+  }
+  return ctx;
+}
+
 function buildBookingLink(destination, nights=5, adults=2) {
   const pubId = process.env.CJ_PUBLISHER_ID||null;
   const advId = process.env.CJ_BOOKING_ADVERTISER_ID||null;
@@ -453,42 +504,52 @@ Feuille de route complète :
     // ══════════════════════════════════════════════════════════
     // MODE PRODUIT
     // ══════════════════════════════════════════════════════════
-    const mustSearch = qAsked>=MAX_Q || (message.trim().split(/\s+/).length>=4 && !history?.length && /\d|€|budget/i.test(message));
+    // On ne saute le ciblage QUE si budget ET produit précis ET déjà des échanges
+    // Sinon on passe TOUJOURS par la phase de questions (IA gratuite)
+    const hasExplicitBudget = /\d+\s*€|\d+\s*euros?/i.test(message);
+    const hasExplicitProduct = message.trim().split(/\s+/).length >= 3;
+    const mustSearch = qAsked >= MAX_Q || (hasExplicitBudget && hasExplicitProduct && (history||[]).length > 0);
     let decision = {ready:mustSearch, question:null, recap:null};
 
     if (!mustSearch) {
-      const p1sys = `Tu es l'agent shopping de Huntify. Tu analyses le besoin et construis un terme de recherche produit.
+      // Phase 1 : ciblage par IA GRATUITE (Groq → Gemini → Mistral)
+      // But : poser les bonnes questions AVANT de chercher
+      // L'IA doit identifier ce qui manque pour une recherche précise
+      const p1sys = `Tu es l'assistant shopping de Huntify. Tu dois comprendre précisément le besoin avant de chercher.
 
-PRINCIPE : cherche directement pour les demandes simples. Ne pose une question QUE si la reponse change vraiment les resultats.
+RÈGLE PRINCIPALE : pose des questions UTILES pour cibler le produit idéal.
+Une bonne question évite 10 mauvais résultats.
 
-QUAND CHERCHER DIRECTEMENT sans question :
-- Produit simple : fond de teint, casque, robe, parfum, creme -> ready:true immediatement
-- Produit avec budget deja donne -> ready:true immediatement
-- Si tu as deja l'essentiel -> ready:true
+QUAND POSER DES QUESTIONS (la plupart du temps) :
+- Produit cosmétique (fond de teint, crème, parfum) : type de peau ? teinte ? usage (jour/nuit/sport) ?
+- Vêtement : taille ? style ? occasion (casual/pro/sport) ?
+- Électronique : usage précis ? budget ? autonomie importante ?
+- Cadeau : pour qui ? quel âge ? budget ? objet ou expérience ?
+- Chaussures : usage (running/ville/randonnée) ? pointure standard ?
+- Alimentation/sport : objectif ? régime particulier ?
 
-QUAND POSER UNE QUESTION :
-- Budget absent ET gamme tres large (telephone, TV, ordinateur) -> demande juste le budget
-- Cadeau sans aucun contexte -> demande occasion et budget en une seule question
-- JAMAIS de question sur la marque si non mentionnee
-- JAMAIS de question sur couleur ou taille sauf si indispensable
-- MAX ${MAX_Q} questions -> ready:true obligatoire apres
+QUAND CHERCHER DIRECTEMENT (rare) :
+- Produit + budget + critères déjà donnés dans l'historique
+- Après MAX ${MAX_Q} questions posées
+- Demande hyper-précise avec toutes les infos (ex: "Nike Air Max 270 taille 42 blanc")
 
-CONSTRUCTION DU RECAP - REGLE CRITIQUE :
-Traduis les reponses en MOTS-CLES PRODUIT concrets pour Amazon/Rakuten.
-Ne copie JAMAIS les reponses brutes de l'utilisateur.
-Exemples de traduction :
-- fond de teint + entre clair et moyen = recap: fond de teint teinte medium naturel
-- casque + pour courir = recap: casque running sport sans fil
-- cadeau couple + objet 50 euros = recap: cadeau romantique couple bijou 50 euros
-- creme visage + peau seche = recap: creme visage peau seche hydratante
+RÈGLE ABSOLUE : NE POSE JAMAIS :
+- Une question sur la marque si l'utilisateur n'en a pas exprimé
+- Plusieurs questions à la fois
+- Une question déjà répondue dans l'historique
 
-HISTORIQUE : ${hist||'Debut'}
-Questions posees : ${qAsked}/${MAX_Q}
-
-JSON UNIQUEMENT :
-{"ready":false,"question":"question courte"}
+FORMAT JSON UNIQUEMENT :
+{"ready":false,"question":"ta question courte et précise"}
 ou
-{"ready":true,"recap":"mots-cles produit concrets pour la recherche"}`;
+{"ready":true,"recap":"termes de recherche produit précis pour Amazon/Rakuten"}
+
+RECAP CRITIQUE : traduis les réponses en mots-clés produit.
+Ex: fond de teint + entre clair et moyen → "fond de teint teinte medium naturel"
+Ex: casque + courir + sans fil → "casque running sport bluetooth"
+NE JAMAIS copier les réponses brutes dans le recap.
+
+HISTORIQUE : ${hist||'Début de conversation'}
+Questions déjà posées : ${qAsked}/${MAX_Q}`;
 
       const p1user = `HISTORIQUE:\n${hist||'Début'}\n\nQuestions posées: ${qAsked}/${MAX_Q}\n\nMESSAGE: ${message}`;
 
@@ -516,22 +577,33 @@ ou
 
     let products=[], promoCodes=[], summary='';
 
-    // ── Stratégie FREE : IA gratuites ────────────────────────
-    // Si aucune clé gratuite configurée ET petit budget → upgrade vers paid
-    // pour éviter de tomber sur Claude sans résultat
+    // ── Consultation DB interne AVANT les IA (source 0, gratuite) ───
+    const dbData = await queryInternalDB(recap, budget);
+    const dbContext = buildDBContext(dbData);
+
+    // ── Routing : si pas d'IA gratuite configurée → paid direct ──────
     const effectiveStrategy = (!hasFreeAI() && strategy !== 'paid_deep') ? 'paid_deep' : strategy;
 
     if (effectiveStrategy==='free_fast'||effectiveStrategy==='free_deep') {
       const depth = effectiveStrategy==='free_deep'?'deep':'fast';
       const stores = effectiveStrategy==='free_deep'?'Amazon.fr ET Rakuten':'Amazon.fr';
       const p2sys = `Tu es l'agent shopping de Huntify. Boutiques: ${activeNames}.
-BESOIN : ${recap}
-Cherche sur ${stores} des produits adaptés au contexte (occasion, pour qui, usage).
-Adapte les produits : cadeau romantique → bijoux/expériences ; cadeau enfant → jouets adaptés à l'âge.
-Badge utile : "Idéal en cadeau", "Bestseller", "Livraison rapide".
-Prix réalistes. url:null (évite les 404).
+BESOIN PRÉCIS : ${recap}
+
+${dbContext}
+
+Cherche sur ${stores} des produits qui correspondent EXACTEMENT au recap ci-dessus.
+RÈGLES CRITIQUES :
+- Le champ "keywords" doit être un terme de recherche PRÉCIS qui mène au bon produit sur Amazon/Rakuten
+  Bon : "fond de teint teinte medium L'Oreal" | Mauvais : "fond de teint entre clair et moyen"
+  Bon : "casque Sony WH-1000XM5 bluetooth" | Mauvais : "casque bluetooth"
+- Propose des produits avec des prix RÉALISTES pour la catégorie
+- Ne propose JAMAIS de produit à moins de 5€ si le besoin est clairement premium
+- Badge : "Idéal en cadeau" / "Bestseller" / "Top qualité" selon le contexte
+- url: null toujours (évite les 404)
+
 JSON UNIQUEMENT :
-{"summary":"1 phrase","products":[{"name":"nom","price":"XX€","store":"amazon","keywords":"mots clés","url":null,"img":null,"badge":"Idéal en cadeau"}],"promoCodes":[]}`;
+{"summary":"1 phrase","products":[{"name":"nom produit précis","price":"XX€","store":"amazon","keywords":"termes recherche précis","url":null,"img":null,"badge":"badge"}],"promoCodes":[]}`;
       const p2user=`HISTORIQUE:\n${hist||'Début'}\n\nBESOIN: ${recap}\n\nMESSAGE: ${message}`;
 
       // ⚡ RECHERCHE GRATUITE : Groq → Gemini → Mistral
@@ -544,21 +616,27 @@ JSON UNIQUEMENT :
     // ── Stratégie PAID : Claude + web search ─────────────────
     else {
       const p2sys = `Tu es l'agent shopping de Huntify. Boutiques: ${activeNames}.
-BESOIN : ${recap}
+BESOIN PRÉCIS : ${recap}
 
-1. CHERCHE SUR AMAZON — 1 recherche sur amazon.fr, 2 produits avec prix réels
+${dbContext}
+
+1. CHERCHE SUR AMAZON — 1 recherche sur amazon.fr, 2 produits avec VRAIS prix et liens directs produit
 2. CHERCHE SUR RAKUTEN — 1 recherche sur fr.shopping.rakuten.com, 1 produit. OBLIGATOIRE.
-3. CODES PROMOS — dealabs.com si possible
+3. CODES PROMOS — dealabs.com si disponible
 
-INTELLIGENCE CONTEXTUELLE :
-- Adapte les produits au contexte émotionnel et à l'occasion
-- Badge : "Idéal en cadeau", "Coup de cœur", "Bestseller", "Livraison rapide"
-- keywords simples sans virgules
-- url: null si pas certain
+RÈGLES CRITIQUES POUR LES LIENS :
+- "keywords" = termes PRÉCIS pour trouver CE produit exact (pas une catégorie générale)
+  BON : "Nike Air Max 270 blanc homme taille 42"
+  MAUVAIS : "chaussures sport blanc"
+- "url" = lien direct vers LA PAGE PRODUIT si trouvé (pas la page de recherche)
+  Format Amazon : https://www.amazon.fr/dp/ASIN (mettre null si pas certain)
+  Format Rakuten : null (on utilise search_url)
+- Prix réels trouvés sur le web MAINTENANT
 - 2 Amazon + 1 Rakuten OBLIGATOIRES
+- Ne propose jamais de produit hors sujet ou hors budget
 
 JSON UNIQUEMENT :
-{"summary":"1 phrase","products":[{"name":"nom","price":"XX€","store":"amazon","keywords":"mots","url":null,"img":null,"badge":"Idéal en cadeau"}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}`;
+{"summary":"1 phrase","products":[{"name":"nom produit précis","price":"XX€","store":"amazon","keywords":"termes précis","url":"https://amazon.fr/dp/ASIN_ou_null","img":null,"badge":"badge"}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}`;
 
       const raw=await callClaude(p2sys,`HISTORIQUE:\n${hist||'Début'}\n\nBESOIN: ${recap}\n\nMESSAGE: ${message}`,700,[{type:"web_search_20250305",name:"web_search",max_uses:2}]);
       const p=parseJSON(raw);
