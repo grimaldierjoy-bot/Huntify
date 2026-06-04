@@ -1,4 +1,3 @@
-
 export const config = { runtime: 'edge' };
 
 // ============================================================
@@ -497,6 +496,38 @@ export default async function handler(req) {
     const ctx      = travelContext||{};
     const ctxStr   = Object.entries(ctx).filter(([k,v])=>v&&k!=='suggestionsShown').map(([k,v])=>`${k}: ${v}`).join(', ');
 
+    // ⚡ Extraction intelligente des infos voyage depuis l'historique complet
+    // Plus fiable que travelContext (qui dépend du front)
+    function extractTravelInfo(hist, message) {
+      const text = (hist + ' ' + message).toLowerCase();
+      const info = {};
+      // Destination
+      const destM = text.match(/(?:aller?|partir?|voyager?|destination|visiter?)\s+(?:a|à|en|au|aux|pour)?\s+([a-zA-ZÀ-ÿ\s]{2,25})(?:\.|,|!|\?|$)/i)
+                 || text.match(/(?:je veux|on veut|j'aimerais)\s+(?:aller|partir)\s+(?:a|à|en|au)?\s*([a-zA-ZÀ-ÿ\s]{2,20})/i);
+      if (destM) info.destination = destM[1].trim();
+      // Budget
+      const budM = text.match(/(\d+)\s*(?:€|euros?)/i);
+      if (budM) info.budget = budM[1] + '€';
+      // Durée
+      const durM = text.match(/(\d+)\s*(?:jours?|nuits?|semaines?)/i);
+      if (durM) info.duree = durM[0];
+      // Voyageurs
+      const travM = text.match(/(\d+)\s*(?:personnes?|adultes?|voyageurs?)|(?:seul|couple|famille|en duo|entre amis)/i);
+      if (travM) info.voyageurs = travM[0];
+      // Style
+      if (/chill|plage|repos|détente|relaxation/.test(text)) info.style = 'chill';
+      else if (/culture|musée|histoire|monument|patrimoine/.test(text)) info.style = 'culture';
+      else if (/aventure|randonnée|sport|nature|trekking/.test(text)) info.style = 'aventure';
+      else if (/famille|enfants|kids/.test(text)) info.style = 'famille';
+      else if (/romantique|amoureux|couple/.test(text)) info.style = 'romantique';
+      return info;
+    }
+
+    const extractedInfo = extractTravelInfo(hist, message);
+    // Fusionner contexte front + extraction historique
+    const mergedCtx = {...extractedInfo, ...Object.fromEntries(Object.entries(ctx).filter(([k,v])=>v&&k!=='suggestionsShown'))};
+    const mergedCtxStr = Object.entries(mergedCtx).filter(([k,v])=>v).map(([k,v])=>`${k}: ${v}`).join(', ');
+
     // ══════════════════════════════════════════════════════════
     // MODE VOYAGE
     // ══════════════════════════════════════════════════════════
@@ -506,39 +537,58 @@ export default async function handler(req) {
 
       const tSys = `Tu es l'agent voyage IA de Huntify. Tu crées des feuilles de route complètes comme un vrai agent de voyage.
 
-CONTEXTE DÉJÀ COLLECTÉ — NE PAS REDEMANDER :
-${ctxStr||'Aucun — début de conversation'}
+INFORMATIONS DÉJÀ COLLECTÉES — NE PAS REDEMANDER CES ÉLÉMENTS :
+${mergedCtxStr||'Aucune info encore — pose la première question'}
 
-HISTORIQUE : ${hist||'Début'}
+HISTORIQUE COMPLET :
+${hist||'Début de conversation'}
+
 Questions posées : ${qAsked}/5
 
-RÈGLE ANTI-BOUCLE ABSOLUE :
-- Ne redemande JAMAIS ce qui est déjà dans le contexte ou l'historique
-- Si destination déjà choisie → génère l'itinéraire directement, ne pose plus de question dessus
-- Si tu as destination + budget ou durée → génère sans attendre plus
+RÈGLE ANTI-BOUCLE — CRITIQUE :
+1. LIS les infos collectées ci-dessus. Si destination présente → NE PAS redemander la destination.
+2. Si budget présent → NE PAS redemander le budget.
+3. Si durée présente → NE PAS redemander la durée.
+4. Si tu as destination + (budget OU durée) → GÉNÈRE L'ITINÉRAIRE directement.
+5. Si 5 questions déjà posées → GÉNÈRE L'ITINÉRAIRE avec ce que tu as.
+6. Ne repose JAMAIS la même question sous une autre forme.
 
-INFOS À COLLECTER (une à la fois si manquante) :
-1. Destination — ou style/envie si l'utilisateur ne sait pas
+INFOS À COLLECTER (une question à la fois, dans cet ordre) :
+1. Destination — ou "propose-moi" si l'utilisateur ne sait pas
 2. Durée ou dates
-3. Budget total
-4. Nombre de voyageurs
-5. Style : chill | culture | aventure | famille | romantique | mix
+3. Nombre de voyageurs et profil (couple, famille, amis, solo)
+4. Budget total approximatif
+5. CE QUI COMPTE VRAIMENT : que veut voir/faire l'utilisateur ?
+   → Pose cette question de façon engageante :
+   "Pour créer ton circuit parfait, dis-moi ce qui compte pour toi :
+   tu préfères les musées et sites historiques, la plage et la détente,
+   la gastronomie et les marchés locaux, les balades et la nature,
+   ou un mix de tout ça ?"
+   → Cette question est LA PLUS IMPORTANTE — elle définit tout le programme
+
+NE GÉNÈRE PAS l'itinéraire avant d'avoir AU MOINS : destination + durée + envies.
+Le budget et le nombre de voyageurs peuvent être demandés après si manquants.
 
 CAS 1 — PAS DE DESTINATION :
-Propose 3 destinations adaptées au profil avec prix indicatifs vols + hôtels.
+Propose 3 destinations adaptées au profil ET aux envies exprimées.
 Ne re-propose pas si déjà fait — génère l'itinéraire de celle choisie.
 
-CAS 2 — DESTINATION CONNUE :
-Génère la FEUILLE DE ROUTE COMPLÈTE :
-1. VOLS — Recherche aller/retour depuis Paris : prix réaliste, compagnie, durée
-2. HÔTELS BOOKING — CHOIX DU MODE selon ce que tu peux trouver :
-   MODE PRÉCIS (si deep search disponible) : 3 hôtels nommés (budget/confort/luxe) avec vrais prix
-   MODE GÉNÉRIQUE (si pas de web search) : 3 fourchettes de prix avec description du type d'hébergement
-   Dans les deux cas, les champs minPrice/maxPrice permettent de filtrer sur Booking
-3. PROGRAMME JOUR PAR JOUR — Matin/Après-midi/Soirée avec activités concrètes et prix
-4. RESTAURANTS — 1 restaurant recommandé par soirée avec spécialité et fourchette de prix
-5. BUDGET TOTAL — vols + hébergement + activités + restaurants + transport local + marge 10%
-6. CONSEILS PRATIQUES — transport aéroport, carte SIM, période idéale, bons plans
+CAS 2 — INFOS SUFFISANTES (destination + durée + envies) :
+Génère la FEUILLE DE ROUTE COMPLÈTE SUR-MESURE :
+1. VOLS — aller/retour depuis Paris, prix réaliste, compagnie, durée
+2. HÔTELS — DEUX OPTIONS selon la demande :
+   → Si l'utilisateur veut qu'on choisisse : 3 hôtels nommés (budget/confort/luxe) avec vrais prix et liens directs
+   → Si l'utilisateur veut comparer : 3 fourchettes de prix avec filtres Booking
+   → Par défaut : propose les deux (1 hôtel précis par catégorie + lien filtre)
+3. PROGRAMME JOUR PAR JOUR adapté aux ENVIES exprimées :
+   - Musées/culture → planifie les incontournables avec horaires et prix
+   - Gastronomie → marché le matin, restaurant local le midi, table réputée le soir
+   - Nature/randonnée → sentiers, durée, difficulté, équipement
+   - Plage/détente → plages selon ambiance, activités nautiques, spots secrets
+   - Matin/Après-midi/Soirée avec activités CONCRÈTES adaptées au profil
+4. RESTAURANTS — 1 par soirée, adapté au style (gastronomique/local/familial)
+5. BUDGET TOTAL détaillé
+6. CONSEILS PRATIQUES personnalisés selon le profil
 
 JSON UNIQUEMENT — 3 formats :
 
@@ -550,16 +600,99 @@ Suggestions destinations :
 Feuille de route complète :
 {"type":"itinerary","recap":"...","itinerary":{"destination":"Lisbonne","country":"Portugal","flag":"🇵🇹","duration":"7 jours","travelers":"2 adultes","style":"culture","flights":{"outbound":{"from":"Paris CDG","to":"Lisbonne LIS","price":"145€","airline":"TAP Air Portugal","duration":"2h30","link":null},"return":{"from":"Lisbonne LIS","to":"Paris CDG","price":"145€","airline":"TAP Air Portugal","duration":"2h30","link":null}},"hotels":[{"name":"Hotel do Chiado","stars":4,"price":"95","location":"Chiado","highlight":"Vue sur les toits","booking_link":null,"category":"confort","minPrice":80,"maxPrice":120},{"name":"Yes! Lisbon Hostel","stars":3,"price":"40","location":"Mouraria","highlight":"Ambiance locale","booking_link":null,"category":"budget","minPrice":30,"maxPrice":60},{"name":"Bairro Alto Hotel","stars":5,"price":"290","location":"Bairro Alto","highlight":"Vue panoramique","booking_link":null,"category":"luxe","minPrice":200,"maxPrice":400}],"days":[{"num":1,"title":"Arrivée et Alfama","morning":"Arrivée LIS, metro vers le centre (1.65€)","afternoon":"Quartier Alfama, Miradouro da Graça — gratuit","evening":"Découverte du Bairro Alto animé","restaurant":{"name":"Solar dos Presuntos","price":"35€/2 pers","specialty":"Bacalhau traditionnel"},"activities":["Miradouro da Graça — gratuit","Cathédrale Sé — 5€/pers"],"hotel":"Hotel do Chiado","budget":90}],"budget":{"flights_total":290,"accommodation_total":665,"activities_total":150,"food_total":280,"transport_local":40,"total":1425,"per_person":712,"note":"Prix relevés en juin 2026, variables selon dates exactes"},"tips":["Réserver vols 6-8 semaines à l'avance","Metro : 10 trajets = 9.10€","Éviter août — préférer mai/juin ou septembre","Lisboa Card 24h = 20€ : transports + musées gratuits","App MB Way pour payer sans frais"]}}`;
 
-      const tUser = `HISTORIQUE:\n${hist||'Début'}\n\nQuestions posées: ${qAsked}/5\n\nMESSAGE: ${message}`;
+      const tUser = `INFORMATIONS COLLECTÉES: ${mergedCtxStr||'aucune'}\n\nHISTORIQUE:\n${hist||'Début'}\n\nQuestions posées: ${qAsked}/5\n\nMESSAGE CLIENT: ${message}`;
 
-      // DeepSearch : Claude + web search pour gros budgets voyage
-      let tRaw = null;
-      if (tStrategy === 'paid') {
-        tRaw = await callClaude(tSys, tUser, 1500, [{type:"web_search_20250305",name:"web_search",max_uses:3}]);
-      } else {
-        // ⚡ VOYAGE GRATUIT : Groq → Gemini → Mistral uniquement
-        tRaw = await callFreeAI(tSys, tUser, 'deep');
+      // ══════════════════════════════════════════════════════
+      // PHASE 1 — CONVERSATION (TOUJOURS IA GRATUITE)
+      // Groq/Gemini/Mistral gèrent toute la conversation :
+      // questions, psychologie client, compréhension des envies
+      // Claude n'intervient QUE pour générer l'itinéraire final
+      // ══════════════════════════════════════════════════════
+
+      // Prompt conversation : IA gratuite, conversationnel, psychologique
+      const tSysConv = `Tu es un agent voyage passionné et empathique pour Huntify.
+Tu as une vraie conversation avec le client pour comprendre son voyage idéal.
+Tu parles naturellement, avec enthousiasme, comme un ami expert en voyages.
+
+INFORMATIONS DÉJÀ COLLECTÉES : ${mergedCtxStr||'aucune'}
+HISTORIQUE : ${hist||'Début'}
+Questions posées : ${qAsked}/5
+
+STYLE DE CONVERSATION :
+- Chaleureux, enthousiaste, comme un ami qui adore les voyages
+- Tu montres que tu comprends CE QUE RESSENT le client
+- Ex: "Oh Capri, excellent choix ! C'est magique en mai..."
+- Tu poses des questions qui révèlent la psychologie : 
+  "Tu es plutôt du genre à te perdre dans les ruelles locales ou à cocher les incontournables ?"
+  "Le soir tu préfères une bonne table avec vue ou découvrir les spots où mangent les locaux ?"
+  "C'est un voyage pour recharger les batteries ou pour en prendre plein les yeux ?"
+
+QUESTIONS PRIORITAIRES (dans cet ordre si manquantes) :
+1. Destination (ou propose-moi)
+2. Durée + profil (couple/famille/amis/solo)  
+3. CE QUI COMPTE : musées, plage, gastronomie, nature, fête, shopping ?
+4. Budget approximatif
+→ Si tu as destination + durée + envies → type:"ready" pour déclencher l'itinéraire
+
+RÈGLE ANTI-BOUCLE :
+- NE REDEMANDE JAMAIS ce qui est dans les infos collectées
+- 1 seule question à la fois
+- Si 5 questions posées → type:"ready" obligatoire
+
+JSON UNIQUEMENT :
+{"type":"question","message":"ta question naturelle et engageante"}
+{"type":"suggestions","intro":"...","destinations":[...]}
+{"type":"ready","recap":"destination, durée, profil, envies, budget (si connu)"}`;
+
+      // ⚡ Phase 1 : TOUJOURS IA gratuite pour la conversation
+      let tRaw = await callFreeAI(tSysConv, tUser, 'fast');
+      // Fallback : si toutes les IA gratuites échouent → Claude léger (sans web search)
+      if (!tRaw) tRaw = await callClaude(tSysConv, tUser, 400);
+
+      const tPhase1 = parseJSON(tRaw||'');
+
+      // Question ou suggestions → retour immédiat (IA gratuite, $0)
+      if (tPhase1.type === 'question' || tPhase1.type === 'suggestions') {
+        if (tPhase1.type === 'suggestions' && tPhase1.destinations?.length) {
+          let html = `<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0 8px">${tPhase1.intro||'Voici mes suggestions :'}</div>`;
+          for(const d of tPhase1.destinations) {
+            html += `<div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:16px;padding:14px;margin-top:8px;cursor:pointer" onclick="send('${(d.name||'').replace(/'/g,"\'")}')">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+                <span style="font-size:24px">${d.emoji||'🌍'}</span>
+                <div><div style="font-size:14px;font-weight:800;color:#0e1430">${d.name}</div>
+                <div style="font-size:11px;color:#7c89a8">${d.flight||''} · hôtel ${d.hotel||''}</div></div>
+                <div style="margin-left:auto;font-size:13px;font-weight:800;color:#2f54ff">${d.price||''}</div>
+              </div>
+              <div style="font-size:12px;color:#374151;margin-bottom:7px">${d.why||''}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px">${(d.tags||[]).map(t=>`<span style="background:#eff6ff;color:#2f54ff;border-radius:100px;padding:2px 9px;font-size:11px;font-weight:600">${t}</span>`).join('')}</div>
+            </div>`;
+          }
+          if (tPhase1.question) html += `<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:8px 0 0">${tPhase1.question}</div>`;
+          return new Response(JSON.stringify({reply:html,sessionId:sid}),{headers:H});
+        }
+        const msg = tPhase1.message || tPhase1.question || '';
+        return new Response(JSON.stringify({reply:`<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">${msg}</div>`,sessionId:sid}),{headers:H});
       }
+
+      // ══════════════════════════════════════════════════════
+      // PHASE 2 — GÉNÉRATION ITINÉRAIRE
+      // Type "ready" → on a assez d'infos → génère le circuit
+      // Budget > 300€ : Claude + web search (vrais prix temps réel)
+      // Budget < 300€ : IA gratuite (estimations réalistes)
+      // ══════════════════════════════════════════════════════
+      const recap2 = tPhase1.recap || mergedCtxStr || message;
+      const tUser2 = `PROFIL VOYAGE: ${recap2}\n\nHISTORIQUE:\n${hist||''}\n\nMESSAGE: ${message}`;
+
+      let tRaw2 = null;
+      if (tStrategy === 'paid') {
+        // Deep search : vrais prix, vraies disponibilités
+        tRaw2 = await callClaude(tSys, tUser2, 1500, [{type:"web_search_20250305",name:"web_search",max_uses:3}]);
+      } else {
+        // IA gratuite : itinéraire avec estimations réalistes
+        tRaw2 = await callFreeAI(tSys, tUser2, 'deep');
+        if (!tRaw2) tRaw2 = await callClaude(tSys, tUser2, 1000);
+      }
+      tRaw = tRaw2;
 
       const tP = parseJSON(tRaw||'');
 
