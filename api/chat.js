@@ -35,16 +35,37 @@ async function getAdvertisers() {
 // ── Keywords & liens affiliés ─────────────────────────────────
 function cleanKw(kw) {
   if (!kw) return '';
-  const stop = new Set(['de','la','le','les','un','une','des','pour','avec','et','en','du','au','aux','style','classique']);
-  return kw.replace(/,/g,' ').replace(/\s+/g,' ').trim()
-    .split(' ').filter(w=>w.length>1&&!stop.has(w.toLowerCase())).slice(0,5).join(' ');
+  // Expressions a PRESERVER intactes (ne pas couper les mots "de", "la" etc.)
+  const preserve = [
+    'fond de teint','eau de toilette','eau de parfum','creme de jour',
+    'creme de nuit','huile de coco','beurre de karite','sac a main',
+    'sac a dos','machine a laver','fer a repasser','tapis de sol',
+    'tapis de course','table de chevet','lampe de chevet','boite a bijoux'
+  ];
+  let cleaned = kw.replace(/,/g,' ').replace(/\s+/g,' ').trim();
+  // Verifie si une expression preservee est dans les keywords
+  const lower = cleaned.toLowerCase();
+  for (const expr of preserve) {
+    if (lower.includes(expr)) {
+      // Garde l'expression intacte, nettoie le reste
+      const rest = lower.replace(expr, '').trim();
+      const restWords = rest.split(' ').filter(w=>w.length>1).slice(0,3).join(' ');
+      return (expr + ' ' + restWords).trim().slice(0,60);
+    }
+  }
+  // Pas d'expression speciale : nettoyage normal mais SANS supprimer "de"
+  // On supprime seulement les vrais mots vides courts
+  const stop = new Set(['la','le','les','un','une','des','avec','et','en','du','au','aux','style','classique']);
+  return cleaned.split(' ').filter(w=>w.length>1&&!stop.has(w.toLowerCase())).slice(0,6).join(' ');
 }
 
 function buildLink(adv, keywords, directUrl=null) {
   if (!adv?.active) return null;
   const kw = cleanKw(keywords);
   if (adv.slug === 'amazon') {
-    const base = directUrl?.includes('amazon.fr') ? directUrl : `https://www.amazon.fr/s?k=${encodeURIComponent(kw)}`;
+    // JAMAIS utiliser directUrl si null, "null", vide, ou ne contient pas amazon.fr
+    const isValidUrl = directUrl && directUrl !== 'null' && directUrl.length > 10 && directUrl.includes('amazon.fr') && !directUrl.includes('/dp/null');
+    const base = isValidUrl ? directUrl : `https://www.amazon.fr/s?k=${encodeURIComponent(kw)}`;
     return `${base}${base.includes('?')?'&':'?'}tag=${adv.amazon_tag}`;
   }
   if (adv.awin_mid) {
@@ -755,6 +776,26 @@ JSON UNIQUEMENT :
       products=p.products||[]; promoCodes=p.promoCodes||[]; summary=p.summary||'';
     }
 
+    // Validation des résultats
+    // Si tous les produits ont "Voir prix" ou prix absurdes, les résultats sont mauvais
+    const hasRealPrices = products.some(p => p.price && !p.price.includes('Voir') && !p.price.includes('null'));
+    const hasRealNames = products.some(p => p.name && p.name.length > 5 && p.name !== message);
+
+    // Si résultats insuffisants ET Claude pas encore utilisé → appeler Claude pour corriger
+    if ((!hasRealPrices || !hasRealNames) && effectiveStrategy !== 'paid_deep' && hasFreeAI()) {
+      // Dernier recours : Claude recentre avec une vraie recherche web
+      try {
+        const fixSys = `Recherche EXACTEMENT ces produits sur amazon.fr et rakuten. Besoin: ${recap}. Trouve des VRAIS produits avec VRAIS prix. JSON: {"summary":"...","products":[{"name":"nom PRECIS du produit","price":"XX€","store":"amazon","keywords":"termes precis","url":null,"img":null,"badge":"..."}],"promoCodes":[]}`;
+        const fixRaw = await callClaude(fixSys, 'Trouve 2 produits Amazon + 1 Rakuten pour: ' + recap, 500, [{type:"web_search_20250305",name:"web_search",max_uses:1}]);
+        const fixP = parseJSON(fixRaw);
+        if (fixP.products?.length && fixP.products.some(p=>p.price && !p.price.includes('Voir'))) {
+          products = fixP.products;
+          promoCodes = fixP.promoCodes || promoCodes;
+          summary = fixP.summary || summary;
+        }
+      } catch(e) { /* Claude aussi a echoue, on garde ce qu'on a */ }
+    }
+
     if(!products.length) {
       products=advertisers.slice(0,2).map(a=>({name:message,price:'Voir prix',store:a.slug,keywords:message,url:null,img:null,badge:null}));
       summary=`Résultats pour "${message}" :`;
@@ -781,7 +822,9 @@ JSON UNIQUEMENT :
       if(!pr.name) continue;
       const adv=findAdv(advertisers,pr.store);
       if(!adv) continue;
-      const url=buildLink(adv,pr.keywords||pr.name,pr.url||null);
+      // Nettoyer l'URL : jamais de /dp/null ou d'URL invalide
+      const rawUrl = (pr.url && pr.url !== 'null' && !pr.url.includes('/dp/null')) ? pr.url : null;
+      const url = buildLink(adv, pr.keywords||pr.name, rawUrl);
       if(!url) continue;
       buttons+=productCard(pr.name,pr.price||'Voir prix',url,adv,pr.img||null,pr.badge||null);
     }
