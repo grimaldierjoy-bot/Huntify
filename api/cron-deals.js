@@ -1,6 +1,10 @@
 export const config = { runtime: 'edge' };
+
 const SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
+
+// ⚡ Seuil de "grosse baisse" : -15% vs dernier prix connu déclenche aussi l'alerte
+const BIG_DROP_PCT = 0.15;
 
 async function getAdvertisers() {
   try {
@@ -11,11 +15,14 @@ async function getAdvertisers() {
   } catch(e) { return []; }
 }
 
-function buildAffiliateLink(adv, keywords) {
+function buildAffiliateLink(adv, keywords, directUrl=null) {
   if (!adv?.active) return null;
-  if (adv.slug === 'amazon') return `https://www.amazon.fr/s?k=${encodeURIComponent(keywords)}&tag=${adv.amazon_tag}`;
+  if (adv.slug === 'amazon') {
+    const base = directUrl || `https://www.amazon.fr/s?k=${encodeURIComponent(keywords)}`;
+    return `${base}${base.includes('?')?'&':'?'}tag=${adv.amazon_tag}`;
+  }
   if (adv.awin_mid) {
-    const dest = adv.search_url.replace('{keywords}', encodeURIComponent(keywords));
+    const dest = directUrl || adv.search_url.replace('{keywords}', encodeURIComponent(keywords));
     return `https://www.awin1.com/cread.php?awinmid=${adv.awin_mid}&awinaffid=${adv.awin_aff}&ued=${encodeURIComponent(dest)}`;
   }
   return null;
@@ -27,117 +34,100 @@ async function sbFetch(path, method='GET', body=null) {
   try { const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, opts); return await r.json(); } catch(e) { return null; }
 }
 
-// ⚡ Images de placeholder par catégorie (remplace les URLs hallucinées par l'IA)
-const CAT_IMAGES = {
-  'Mode':          'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=300&q=70',
-  'Électronique':  'https://images.unsplash.com/photo-1498049794561-7780e7231661?w=300&q=70',
-  'Maison':        'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=300&q=70',
-  'Santé':         'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=300&q=70',
-  'Sport':         'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=300&q=70',
-  'default':       'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=300&q=70',
-};
-function getPlaceholderImg(cat) {
-  return CAT_IMAGES[cat] || CAT_IMAGES['default'];
-}
-
-// ⚡ Génère les deals pour un ensemble de boutiques donné
-async function generateDeals(advertisers, trends, storeInstructions, maxTokens=2000) {
-  const agentResp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5',
-      max_tokens: maxTokens,
-      tools: [{ type:"web_search_20250305", name:"web_search", max_uses:3 }],
-      system: `Tu es l'agent deals de Huntify. Cherche les VRAIES promotions du jour.
-
-RÉPARTITION OBLIGATOIRE — respecte exactement :
-${storeInstructions}
-
-RÈGLES :
-- Prix RÉELS trouvés sur le web (pas inventés)
-- "img": null (on gère les images côté serveur)
-- "keywords": terme de recherche court et précis (ex: "casque sony bluetooth", pas de virgules)
-- Catégories autorisées : Mode, Électronique, Maison, Santé, Sport
-
-JSON UNIQUEMENT :
-{"deals":[{"id":"slug","name":"nom complet","cat":"Catégorie","price":"XX€","was":"XX€","pct":"-XX%","store":"slug_boutique","keywords":"mots clés"}]}`,
-      messages: [{role:'user',content:`Tendances du moment : ${trends?.map(t=>t.query).join(', ')||'mode santé électronique'}. Génère les deals.`}]
-    })
-  });
-  const data = await agentResp.json();
-  let rawText = '';
-  for (const b of data.content) { if (b.type==='text') rawText += b.text; }
-  try {
-    const match = rawText.match(/\{[\s\S]*"deals"[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]).deals || [];
-  } catch(e) {}
-  return [];
+// ⚡ Récupère le dernier prix connu d'un produit (avant aujourd'hui) pour calculer la baisse
+async function getLastKnownPrice(slug) {
+  const hist = await sbFetch(`price_history?product_id=eq.${slug}&order=checked_at.desc&limit=1`) || [];
+  return (hist.length && !isNaN(hist[0].price)) ? Number(hist[0].price) : null;
 }
 
 export default async function handler(req) {
   if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) return new Response('Unauthorized', {status:401});
+
   try {
-    const [advertisers, trends] = await Promise.all([
+    const [advertisers, alerts] = await Promise.all([
       getAdvertisers(),
-      sbFetch('trends?order=count.desc&limit=10')
+      sbFetch('alerts?active=eq.true')
     ]);
 
-    if (!advertisers.length) return new Response(JSON.stringify({message:'No advertisers'}), {status:200});
+    if (!alerts?.length) return new Response(JSON.stringify({message:'No active alerts'}), {status:200});
 
-    // ⚡ FIX RAKUTEN : répartition explicite par boutique
-    // Calcule combien de deals demander par store (répartition équilibrée)
-    const totalDeals = 10;
-    const perStore = Math.floor(totalDeals / advertisers.length);
-    const remainder = totalDeals % advertisers.length;
-    const storeInstructions = advertisers.map((a, i) => {
-      const count = perStore + (i < remainder ? 1 : 0);
-      return `- ${count} deals sur ${a.name} (store DOIT être exactement "${a.slug}") → cherche sur ${a.name}.fr`;
-    }).join('\n');
+    const activeNames = advertisers.map(a=>a.name).join(', ');
+    const triggered = [];
+    const BATCH_SIZE = 20;
 
-    // Appel principal avec répartition
-    let deals = await generateDeals(advertisers, trends, storeInstructions, 2000);
+    for (let i = 0; i < alerts.length; i += BATCH_SIZE) {
+      const batch = alerts.slice(i, i + BATCH_SIZE);
+      const productList = batch.map((a,idx)=>`${idx+1}. "${a.product}" (seuil: ${a.price_max}€)`).join('\n');
 
-    // ⚡ SÉCURITÉ : si Rakuten manque dans les résultats, on relance un appel ciblé
-    const slugsPresents = new Set(deals.map(d=>d.store?.toLowerCase()));
-    const manquants = advertisers.filter(a => !slugsPresents.has(a.slug));
-    if (manquants.length > 0) {
-      const補完Instructions = manquants.map(a =>
-        `- 3 deals sur ${a.name} (store DOIT être exactement "${a.slug}") → cherche UNIQUEMENT sur ${a.name}.fr`
-      ).join('\n');
-      const補完 = await generateDeals(advertisers, trends, 補完Instructions, 1000);
-      deals = [...deals, ...補完];
+      const searchResp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5',
+          max_tokens: 2000,
+          tools: [{ type:"web_search_20250305", name:"web_search" }],
+          system: `Cherche les prix actuels sur ${activeNames}. MAX 3 recherches web pour tous les produits.
+Retourne UNIQUEMENT ce JSON :
+{"prices":[{"index":1,"price":99.99,"store":"amazon","url":"url ou null"}]}
+Si non trouvé : {"index":N,"price":null,"store":null,"url":null}`,
+          messages: [{role:'user',content:`Prix actuels sur Amazon.fr pour ces ${batch.length} produits :\n${productList}`}]
+        })
+      });
+
+      const sData = await searchResp.json();
+      let priceResults = [];
+      for (const b of sData.content) {
+        if (b.type==='text') { try { const m=b.text.match(/\{[\s\S]*"prices"[\s\S]*\}/); if(m) priceResults=JSON.parse(m[0]).prices||[]; } catch(e){} }
+      }
+
+      for (const result of priceResults) {
+        if (!result.price) continue;
+        const alert = batch[result.index - 1];
+        if (!alert) continue;
+
+        const slug = alert.product.toLowerCase().replace(/\s+/g,'-').slice(0,50);
+
+        // ⚡ On récupère le dernier prix connu AVANT d'écrire le nouveau, pour la baisse %
+        const lastPrice = await getLastKnownPrice(slug);
+
+        // Enregistre le prix du jour dans l'historique
+        sbFetch('price_history','POST',{product_id:slug,product_name:alert.product,price:result.price,store:result.store||'amazon',url:result.url||null});
+
+        // ⚡ DÉCLENCHEMENT : seuil utilisateur OU grosse baisse (-15% vs dernier prix)
+        const underThreshold = result.price <= alert.price_max;
+        const bigDrop = lastPrice != null && result.price <= lastPrice * (1 - BIG_DROP_PCT);
+
+        if (underThreshold || bigDrop) {
+          const adv = advertisers.find(a=>a.slug===(result.store||'amazon'));
+          const url = adv ? buildAffiliateLink(adv, alert.product, result.url) : null;
+
+          triggered.push({
+            email:alert.email, product:alert.product,
+            currentPrice:result.price, maxPrice:alert.price_max,
+            oldPrice:lastPrice, store:result.store, alertId:alert.id,
+            reason: underThreshold ? 'seuil' : 'baisse',
+            url
+          });
+
+          // ⚡ ALERTE IN-APP : on écrit le déclenchement dans la table alerts
+          // (remplace l'ancien TODO email). active=false => "une seule fois".
+          sbFetch(`alerts?id=eq.${alert.id}`, 'PATCH', {
+            active: false,
+            triggered: true,
+            triggered_at: new Date().toISOString(),
+            seen: false,
+            old_price: lastPrice,
+            new_price: result.price
+          });
+        }
+      }
     }
 
-    if (!deals.length) return new Response(JSON.stringify({message:'No deals'}), {status:200});
-
-    // Construction des deals finaux avec liens affiliés + images fiables
-    const dealsWithLinks = deals.map(d => {
-      const adv = advertisers.find(a => a.slug === d.store?.toLowerCase());
-      if (!adv) return null;
-      const url = buildAffiliateLink(adv, d.keywords || d.name);
-      if (!url) return null;
-      return {
-        ...d,
-        url,
-        // ⚡ FIX IMAGES : placeholder fiable par catégorie (l'IA invente des URLs)
-        img: getPlaceholderImg(d.cat),
-        generated_at: new Date().toISOString()
-      };
-    }).filter(Boolean);
-
-    // Statistiques de répartition pour le log
-    const stats = {};
-    dealsWithLinks.forEach(d => { stats[d.store] = (stats[d.store]||0)+1; });
-
-    // Supprime les anciens deals et insère les nouveaux
-    await sbFetch('daily_deals?generated_at=not.is.null', 'DELETE');
-    await sbFetch('daily_deals', 'POST', dealsWithLinks);
-
     return new Response(JSON.stringify({
-      success: true,
-      count: dealsWithLinks.length,
-      repartition: stats,  // ex: {"amazon":5,"rakuten":4}
+      success:true,
+      checked:alerts.length,
+      calls:Math.ceil(alerts.length/BATCH_SIZE),
+      triggered:triggered.length
     }), {status:200});
 
   } catch(e) {
