@@ -14,7 +14,7 @@ export const config = { runtime: 'edge' };
 const SUPABASE_URL  = "https://enocxbrqyybendertytl.supabase.co";
 const SUPABASE_KEY  = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
 const MODEL         = 'claude-haiku-4-5';
-const MAX_Q         = 5;
+const MAX_Q         = 2;
 const TRAVEL_THRESHOLD = 300; // EUR — au-dessus : Claude + web search
 
 // ── Supabase ─────────────────────────────────────────────────
@@ -508,44 +508,36 @@ Feuille de route complète :
     let decision = {ready:mustSearch, question:null, recap:null};
 
     if (!mustSearch) {
-      // Phase 1 : ciblage par IA GRATUITE (Groq → Gemini → Mistral)
-      // But : poser les bonnes questions AVANT de chercher
-      // L'IA doit identifier ce qui manque pour une recherche précise
-      const p1sys = `Tu es l'assistant shopping de Huntify. Tu dois comprendre précisément le besoin avant de chercher.
+      // Phase 1 : MAX 2 questions, puis on cherche avec ce qu'on a
+      const p1sys = `Agent shopping Huntify. Tu poses MAX 2 questions COURTES puis tu cherches.
 
-RÈGLE PRINCIPALE : pose des questions UTILES pour cibler le produit idéal.
-Une bonne question évite 10 mauvais résultats.
+REGLE 1 : SI L'UTILISATEUR DIT "je ne sais pas" ou "je sais pas" ou "aucune idée" a une question → IGNORE ce critère et passe a ready:true avec ce que tu as. Ne repose JAMAIS la meme question autrement.
 
-QUAND POSER DES QUESTIONS (la plupart du temps) :
-- Produit cosmétique (fond de teint, crème, parfum) : type de peau ? teinte ? usage (jour/nuit/sport) ?
-- Vêtement : taille ? style ? occasion (casual/pro/sport) ?
-- Électronique : usage précis ? budget ? autonomie importante ?
-- Cadeau : pour qui ? quel âge ? budget ? objet ou expérience ?
-- Chaussures : usage (running/ville/randonnée) ? pointure standard ?
-- Alimentation/sport : objectif ? régime particulier ?
+REGLE 2 : MAX 2 questions AU TOTAL sur toute la conversation. Tu en as pose ${qAsked}. Si ${qAsked} >= 2 → ready:true OBLIGATOIRE.
 
-QUAND CHERCHER DIRECTEMENT (rare) :
-- Produit + budget + critères déjà donnés dans l'historique
-- Après MAX ${MAX_Q} questions posées
-- Demande hyper-précise avec toutes les infos (ex: "Nike Air Max 270 taille 42 blanc")
+REGLE 3 : Pose UNE SEULE question qui regroupe le MAXIMUM d'infos utiles.
+Exemples de bonnes questions uniques :
+- "fond de teint" → "Quel est ton budget, et tu cherches plutot couvrant ou leger ?"
+- "casque" → "Pour quel usage (musique/gaming/sport) et quel budget ?"
+- "cadeau" → "C'est pour qui et quel budget ?"
 
-RÈGLE ABSOLUE : NE POSE JAMAIS :
-- Une question sur la marque si l'utilisateur n'en a pas exprimé
-- Plusieurs questions à la fois
-- Une question déjà répondue dans l'historique
+REGLE 4 : Ne pose JAMAIS de question sur :
+- La marque
+- La teinte exacte (si la personne ne sait pas, cherche "toutes teintes" ou "universel")
+- Des details techniques que l'utilisateur moyen ne connait pas
+- Le sport ou des sujets hors contexte
 
-FORMAT JSON UNIQUEMENT :
-{"ready":false,"question":"ta question courte et précise"}
-ou
-{"ready":true,"recap":"termes de recherche produit précis pour Amazon/Rakuten"}
+REGLE 5 : Recap = MOTS-CLES PRODUIT pour Amazon/Rakuten.
+- fond de teint + rougeurs + couvrant + hydratant → "fond de teint couvrant hydratant anti-rougeurs teinte claire"
+- casque + sport → "casque sport bluetooth sans fil"
+NE COPIE JAMAIS les reponses brutes.
 
-RECAP CRITIQUE : traduis les réponses en mots-clés produit.
-Ex: fond de teint + entre clair et moyen → "fond de teint teinte medium naturel"
-Ex: casque + courir + sans fil → "casque running sport bluetooth"
-NE JAMAIS copier les réponses brutes dans le recap.
+HISTORIQUE : ${hist || 'Debut'}
+Questions posees : ${qAsked}/${MAX_Q}
 
-HISTORIQUE : ${hist||'Début de conversation'}
-Questions déjà posées : ${qAsked}/${MAX_Q}`;
+JSON UNIQUEMENT :
+{"ready":false,"question":"UNE question courte qui regroupe budget + usage"}
+{"ready":true,"recap":"mots-cles produit precis"}`;
 
       const p1user = `HISTORIQUE:\n${hist||'Début'}\n\nQuestions posées: ${qAsked}/${MAX_Q}\n\nMESSAGE: ${message}`;
 
