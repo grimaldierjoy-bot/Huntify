@@ -526,11 +526,28 @@ EXEMPLES DE BONNES REPONSES :
 - "un truc a 50 euros pour ma copine sportive" → {"ready":true,"recap":"cadeau femme sportive 50 euros","message":"Je cherche les meilleurs cadeaux sport pour elle a 50 euros !"}
 
 REGLES :
-1. "je ne sais pas" ou "aucune idee" = IGNORE ce critere et cherche avec ce que tu as. Ne repose JAMAIS la meme question.
+1. "je ne sais pas" ou "aucune idee" = IGNORE ce critere et cherche avec ce que tu as.
 2. MAX ${MAX_Q} questions au total (tu en as pose ${qAsked}). Apres = ready:true obligatoire.
 3. Recap = MOTS-CLES PRODUIT pour Amazon/Rakuten, pas les reponses brutes du client.
 4. Ne demande JAMAIS la marque, la teinte exacte, ou des details techniques.
-5. Si tu as compris l'essentiel (produit + usage OU budget) → ready:true.
+5. Si tu as compris l'essentiel (produit + usage OU budget) = ready:true.
+
+INTERPRETATION DES REPONSES CLIENT (CRUCIAL) :
+Tu dois COMPRENDRE le SENS, pas copier les mots. Exemples :
+- "je n'ai pas de budget" = l'argent n'est pas un probleme = cherche du haut de gamme/premium
+- "pas trop cher" = budget serré = cherche bon rapport qualite-prix, moins de 50 euros
+- "quelque chose de bien" = qualite importante = cherche les mieux notes
+- "je sais pas trop" = pas de preference = cherche les bestsellers/populaires
+- "c'est pour offrir" = cadeau = cherche des produits qui font plaisir, avec emballage
+- "j'en ai marre du mien" = remplacement = cherche une amelioration par rapport a l'existant
+- "un truc simple" = pas besoin de haut de gamme = cherche entree/milieu de gamme
+- "le meilleur" = premium = cherche le top du marche sans limite de prix
+
+TRADUCTION RECAP :
+- "fond de teint" + "pas de budget" = recap: "fond de teint premium haute qualite couvrant"
+- "casque" + "pas trop cher" = recap: "casque bluetooth bon rapport qualite prix moins 50 euros"
+- "cadeau" + "quelque chose de bien" = recap: "idee cadeau premium bien note"
+Ne mets JAMAIS "pas de budget" ou "je sais pas" dans le recap.
 
 HISTORIQUE :
 ${hist || 'Debut de conversation'}
@@ -585,14 +602,15 @@ BESOIN PRÉCIS : ${recap}
 ${dbContext}
 
 Cherche sur ${stores} des produits qui correspondent EXACTEMENT au recap ci-dessus.
-RÈGLES CRITIQUES :
-- Le champ "keywords" doit être un terme de recherche PRÉCIS qui mène au bon produit sur Amazon/Rakuten
-  Bon : "fond de teint teinte medium L'Oreal" | Mauvais : "fond de teint entre clair et moyen"
-  Bon : "casque Sony WH-1000XM5 bluetooth" | Mauvais : "casque bluetooth"
-- Propose des produits avec des prix RÉALISTES pour la catégorie
-- Ne propose JAMAIS de produit à moins de 5€ si le besoin est clairement premium
-- Badge : "Idéal en cadeau" / "Bestseller" / "Top qualité" selon le contexte
-- url: null toujours (évite les 404)
+REGLES CRITIQUES :
+- INTERPRETE le besoin : "pas de budget" = premium, "pas trop cher" = bon rapport qualite-prix
+- Le champ "keywords" = terme de recherche PRECIS qui mene au bon produit
+  Bon : "fond de teint couvrant premium longue tenue" | Mauvais : "fond de teint pas de budget"
+  Bon : "casque bluetooth premium Sony" | Mauvais : "casque bluetooth"
+- Propose des produits CONCRETS avec des VRAIS noms de produit quand tu les connais
+- Adapte la gamme de prix au contexte : "pas de budget" = propose du premium, "pas cher" = moins de 30 euros
+- Badge utile : "Premium" / "Bestseller" / "Meilleur rapport qualite-prix" / "Ideal en cadeau"
+- url: null toujours (evite les 404)
 
 JSON UNIQUEMENT :
 {"summary":"1 phrase","products":[{"name":"nom produit précis","price":"XX€","store":"amazon","keywords":"termes recherche précis","url":null,"img":null,"badge":"badge"}],"promoCodes":[]}`;
@@ -616,16 +634,16 @@ ${dbContext}
 2. CHERCHE SUR RAKUTEN — 1 recherche sur fr.shopping.rakuten.com, 1 produit. OBLIGATOIRE.
 3. CODES PROMOS — dealabs.com si disponible
 
-RÈGLES CRITIQUES POUR LES LIENS :
-- "keywords" = termes PRÉCIS pour trouver CE produit exact (pas une catégorie générale)
-  BON : "Nike Air Max 270 blanc homme taille 42"
-  MAUVAIS : "chaussures sport blanc"
-- "url" = lien direct vers LA PAGE PRODUIT si trouvé (pas la page de recherche)
+REGLES CRITIQUES :
+- INTERPRETE le besoin : "pas de budget" = cherche le MEILLEUR sans limite, "pas cher" = moins de 30-50 euros
+- "keywords" = termes PRECIS pour trouver CE produit exact
+  BON : "fond de teint Estee Lauder Double Wear" | MAUVAIS : "fond de teint pas de budget"
+- "url" = lien direct vers LA PAGE PRODUIT si trouve
   Format Amazon : https://www.amazon.fr/dp/ASIN (mettre null si pas certain)
-  Format Rakuten : null (on utilise search_url)
-- Prix réels trouvés sur le web MAINTENANT
+- Propose des VRAIS produits par leur NOM COMPLET quand tu les trouves via web search
+- Prix reels trouves sur le web MAINTENANT
 - 2 Amazon + 1 Rakuten OBLIGATOIRES
-- Ne propose jamais de produit hors sujet ou hors budget
+- Adapte la gamme : premium si "pas de budget", entree de gamme si "pas cher"
 
 JSON UNIQUEMENT :
 {"summary":"1 phrase","products":[{"name":"nom produit précis","price":"XX€","store":"amazon","keywords":"termes précis","url":"https://amazon.fr/dp/ASIN_ou_null","img":null,"badge":"badge"}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}`;
