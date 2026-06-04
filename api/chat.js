@@ -308,6 +308,36 @@ function parseJSON(raw) {
   return {};
 }
 
+// ── Logique de conversation intelligente ──────────────────────
+// Détecte la catégorie d'un message pour repérer les changements de sujet
+function detectCategory(text) {
+  if (!text) return 'general';
+  const t = text.toLowerCase();
+  if (/fond de teint|mascara|rouge a levres|parfum|creme|serum|maquillage|soin|cosmetique|beaute/.test(t)) return 'beaute';
+  if (/casque|ecouteur|telephone|smartphone|laptop|ordinateur|tablette|tv|console|gaming|electronic/.test(t)) return 'electronique';
+  if (/robe|veste|pantalon|chaussure|sneaker|jean|manteau|vetement|mode|tenue/.test(t)) return 'mode';
+  if (/cadeau|anniversaire|noel|mariage|naissance|fete|offrir|relation/.test(t)) return 'cadeau';
+  if (/sport|running|velo|yoga|fitness|musculation|randonnee|natation/.test(t)) return 'sport';
+  if (/maison|cuisine|meuble|deco|jardin|bricolage|electromenager/.test(t)) return 'maison';
+  if (/voyage|hotel|vol|vacances|destination|city trip|weekend/.test(t)) return 'voyage';
+  return 'general';
+}
+
+// Analyse la conversation pour détecter un changement de sujet
+function analyzeConversation(history, currentMessage) {
+  const currentCat = detectCategory(currentMessage);
+  const exchanges = (history||[]).length;
+
+  // Extraire la catégorie dominante de l'historique
+  const histText = (history||[]).map(m => m.content||'').join(' ');
+  const histCat = detectCategory(histText);
+
+  const topicChanged = histCat !== 'general' && currentCat !== 'general' && histCat !== currentCat;
+  const deepConversation = exchanges >= 6; // 3+ échanges = sujet bien établi
+
+  return { currentCat, histCat, topicChanged, deepConversation, exchanges };
+}
+
 // ── Historique propre ─────────────────────────────────────────
 function buildHistory(history) {
   return (history||[]).map(m=>{
@@ -571,7 +601,16 @@ Feuille de route complète :
             <div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">${f.return.price||'Voir prix'}</div><div style="font-size:10px;color:#7c89a8">/ pers.</div></div>
           </div></div>`;
         html+=`</div>`;
-        const flightLink=f.outbound?.link||`https://www.skyscanner.fr/transport/vols/par/${encodeURIComponent((itin.destination||'').slice(0,3).toLowerCase())}/`;
+        // Extraire les codes IATA depuis "Paris CDG" → "CDG", "Lisbonne LIS" → "LIS"
+        function extractIATA(str) {
+          if (!str) return '';
+          const m = (str||'').match(/\b([A-Z]{3})\b/);
+          return m ? m[1].toLowerCase() : encodeURIComponent((str||'').slice(0,3).toLowerCase());
+        }
+        const fromIATA = f.outbound?.from ? extractIATA(f.outbound.from) : 'par';
+        const toIATA   = f.outbound?.to   ? extractIATA(f.outbound.to)   : encodeURIComponent((itin.destination||'').slice(0,3).toLowerCase());
+        const flightLink = f.outbound?.link
+          || `https://www.skyscanner.fr/transport/vols/${fromIATA}/${toIATA}/`;
         html+=`<a href="${flightLink}" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:11px;font-size:13px;font-weight:700;margin-top:6px">🔍 Comparer tous les vols sur Skyscanner →</a>`;
       }
 
@@ -581,7 +620,8 @@ Feuille de route complète :
         const nights=parseInt((itin.duration||'').match(/\d+/)?.[0]||'5');
         for(const h of itin.hotels) {
           // Lien direct vers L'HÔTEL précis (pas juste la destination)
-          const hotelSearch = h.name ? (h.name + ' ' + (itin.destination||'')) : (itin.destination||'');
+          // Inclure nom + quartier + destination pour lien Booking le plus précis possible
+          const hotelSearch = h.name ? (h.name + ' ' + (h.location||'') + ' ' + (itin.destination||'')).trim() : (itin.destination||'');
           html+=hotelCard(h, h.booking_link || buildBookingLink(hotelSearch, nights));
         }
       }
@@ -613,8 +653,26 @@ Feuille de route complète :
     // ══════════════════════════════════════════════════════════
     // MODE PRODUIT
     // ══════════════════════════════════════════════════════════
-    // On ne saute le ciblage QUE si budget ET produit précis ET déjà des échanges
-    // Sinon on passe TOUJOURS par la phase de questions (IA gratuite)
+    // ── Analyse intelligente de la conversation ─────────────────
+    const conv = analyzeConversation(history, message);
+
+    // CHANGEMENT DE SUJET DÉTECTÉ → on repart de zéro avec des questions
+    // Ex : "fond de teint" → 3 échanges → "cadeau anniversaire" = nouvelle conversation
+    if (conv.topicChanged && conv.exchanges >= 4) {
+      // Reset : on force le ciblage même si on avait déjà des échanges
+      const resetMsg = `<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">Nouveau sujet, je recommence ! 😊 ${
+        conv.currentCat === 'cadeau' ? "Pour un cadeau, dis-moi pour qui c'est et quel budget tu as en tête ?" :
+        conv.currentCat === 'beaute' ? "Pour ce produit beauté, tu cherches quelque chose de précis ou je t'aide à trouver le meilleur ?" :
+        conv.currentCat === 'electronique' ? "Pour cet appareil, tu as un usage précis en tête et un budget ?" :
+        "Tu cherches quoi exactement ? Un budget en tête ?"
+      }</div>`;
+      return new Response(JSON.stringify({reply:resetMsg, sessionId:sid, resetContext:true}), {headers:H});
+    }
+
+    // DEEP SEARCH dans la même conversation après 4+ échanges sur le même sujet
+    // L'IA a bien cerné le besoin → on peut déclencher Claude + web search
+    const deepSearchUnlocked = conv.deepConversation && !conv.topicChanged;
+
     const hasExplicitBudget = /\d+\s*€|\d+\s*euros?/i.test(message);
     const hasExplicitProduct = message.trim().split(/\s+/).length >= 3;
     const mustSearch = qAsked >= MAX_Q || (hasExplicitBudget && hasExplicitProduct && (history||[]).length > 0);
@@ -716,7 +774,12 @@ JSON UNIQUEMENT (mais le champ message doit etre naturel et conversationnel) :
     // Un message avec "€" dedans = des résultats produits ont déjà été envoyés
     const hasProductResults = (history||[]).some(m => m.role !== 'user' && /\d+€/.test(m.content||''));
     const isFirstSearch = !hasProductResults;
-    const strategy = isFirstSearch ? 'paid_deep' : (roi.depth==='medium' ? 'free_deep' : 'free_fast');
+    // Routing final :
+    // - Deep search si ROI score >= 3 sur premier envoi (cadeau, budget élevé...)
+    // - OU si conversation avancée (4+ échanges même sujet) → deep search auto
+    // - Sinon IA gratuite
+    const strategy = ((isFirstSearch && roi.score >= 3) || deepSearchUnlocked) ? 'paid_deep'
+                   : (roi.depth==='medium' ? 'free_deep' : 'free_fast');
 
     let products=[], promoCodes=[], summary='';
 
