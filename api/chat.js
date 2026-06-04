@@ -131,6 +131,11 @@ async function callFreeAI(sys, user, depth='fast') {
   const tok   = depth==='deep' ? 800 : 280;
   return await callGroq(sys,user,model,tok) || await callGemini(sys,user,tok) || await callMistral(sys,user,tok);
 }
+
+// Vérifie si au moins une IA gratuite est configurée
+function hasFreeAI() {
+  return !!(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.MISTRAL_API_KEY);
+}
 async function callClaude(sys, user, maxTok=600, tools=[]) {
   const r=await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
@@ -341,8 +346,8 @@ Feuille de route complète :
       if (tStrategy === 'paid') {
         tRaw = await callClaude(tSys, tUser, 1500, [{type:"web_search_20250305",name:"web_search",max_uses:3}]);
       } else {
+        // ⚡ VOYAGE GRATUIT : Groq → Gemini → Mistral uniquement
         tRaw = await callFreeAI(tSys, tUser, 'deep');
-        if (!tRaw) tRaw = await callClaude(tSys, tUser, 1000);
       }
 
       const tP = parseJSON(tRaw||'');
@@ -471,8 +476,9 @@ JSON UNIQUEMENT :
 
       const p1user = `HISTORIQUE:\n${hist||'Début'}\n\nQuestions posées: ${qAsked}/${MAX_Q}\n\nMESSAGE: ${message}`;
 
+      // ⚡ CIBLAGE : uniquement IA gratuites (Groq → Gemini → Mistral)
+      // Pas de fallback Claude ici — si tout échoue, on lance la recherche directement
       let t1 = await callFreeAI(p1sys, p1user, 'fast');
-      if (!t1) t1 = await callClaude(p1sys, p1user, 280);
 
       if (t1) {
         const d=parseJSON(t1);
@@ -495,9 +501,13 @@ JSON UNIQUEMENT :
     let products=[], promoCodes=[], summary='';
 
     // ── Stratégie FREE : IA gratuites ────────────────────────
-    if (strategy==='free_fast'||strategy==='free_deep') {
-      const depth = strategy==='free_deep'?'deep':'fast';
-      const stores = strategy==='free_deep'?'Amazon.fr ET Rakuten':'Amazon.fr';
+    // Si aucune clé gratuite configurée ET petit budget → upgrade vers paid
+    // pour éviter de tomber sur Claude sans résultat
+    const effectiveStrategy = (!hasFreeAI() && strategy !== 'paid_deep') ? 'paid_deep' : strategy;
+
+    if (effectiveStrategy==='free_fast'||effectiveStrategy==='free_deep') {
+      const depth = effectiveStrategy==='free_deep'?'deep':'fast';
+      const stores = effectiveStrategy==='free_deep'?'Amazon.fr ET Rakuten':'Amazon.fr';
       const p2sys = `Tu es l'agent shopping de Huntify. Boutiques: ${activeNames}.
 BESOIN : ${recap}
 Cherche sur ${stores} des produits adaptés au contexte (occasion, pour qui, usage).
@@ -508,9 +518,10 @@ JSON UNIQUEMENT :
 {"summary":"1 phrase","products":[{"name":"nom","price":"XX€","store":"amazon","keywords":"mots clés","url":null,"img":null,"badge":"Idéal en cadeau"}],"promoCodes":[]}`;
       const p2user=`HISTORIQUE:\n${hist||'Début'}\n\nBESOIN: ${recap}\n\nMESSAGE: ${message}`;
 
+      // ⚡ RECHERCHE GRATUITE : Groq → Gemini → Mistral
+      // Pas de fallback Claude — si tout échoue, réponse générique sans coût
       let raw = await callFreeAI(p2sys, p2user, depth);
-      if (!raw) raw = await callClaude(p2sys, p2user, 500);
-      const p=parseJSON(raw);
+      const p=parseJSON(raw||'');
       products=p.products||[]; promoCodes=p.promoCodes||[]; summary=p.summary||'';
     }
 
