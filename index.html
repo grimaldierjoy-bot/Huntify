@@ -103,16 +103,18 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
 <!-- CHAT -->
 <section style="margin:-26px 14px 20px;position:relative;z-index:2">
   <div style="background:#fff;border-radius:24px;border:1px solid var(--line);overflow:hidden;box-shadow:0 20px 50px -22px rgba(31,42,138,.45)">
-    <div style="background:linear-gradient(120deg,#1f2da0,#2f54ff);padding:15px 18px;display:flex;align-items:center;gap:12px">
-      <div style="width:42px;height:42px;border-radius:13px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:21px;animation:floaty 4s ease-in-out infinite">✨</div>
-      <div><div style="font-family:var(--display);font-weight:700;font-size:15px;color:#fff">Intelligence Artificielle Huntify</div><div style="font-size:11.5px;color:rgba(255,255,255,.72)">Recherche temps réel · Amazon · Rakuten</div></div>
-      <div style="margin-left:auto;background:rgba(255,255,255,.16);border-radius:100px;padding:4px 11px"><span style="font-size:10.5px;color:#fff;font-weight:700">EN LIGNE</span></div>
+    <div style="background:linear-gradient(120deg,#1f2da0,#2f54ff);padding:15px 18px 12px;display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:42px;height:42px;border-radius:13px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:21px;animation:floaty 4s ease-in-out infinite">✨</div>
+        <div><div style="font-family:var(--display);font-weight:700;font-size:15px;color:#fff">Intelligence Artificielle Huntify</div><div style="font-size:11.5px;color:rgba(255,255,255,.72)">Recherche temps réel · Amazon · Rakuten</div></div>
+        <div style="margin-left:auto;background:rgba(255,255,255,.16);border-radius:100px;padding:4px 11px"><span style="font-size:10.5px;color:#fff;font-weight:700">EN LIGNE</span></div>
+      </div>
+      <!-- Toggle Comparateur / Voyage — dans le header bleu, bien visible -->
+      <div id="modeToggle" style="display:flex;background:rgba(255,255,255,.15);border-radius:100px;padding:4px;gap:4px">
+        <button id="btnProduct" onclick="switchMode('product')" style="flex:1;border:none;border-radius:100px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:#fff;color:#2f54ff;transition:.2s">🛍️ Comparateur</button>
+        <button id="btnTravel" onclick="switchMode('travel')" style="flex:1;border:none;border-radius:100px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:transparent;color:rgba(255,255,255,.8);transition:.2s">✈️ Voyage</button>
+      </div>
     </div>
-    <!-- Toggle Comparateur / Voyage -->
-  <div style="display:flex;background:rgba(255,255,255,.1);border-radius:100px;padding:4px;margin:0 14px 8px;gap:4px" id="modeToggle">
-    <button id="btnProduct" onclick="switchMode('product')" style="flex:1;border:none;border-radius:100px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:#fff;color:#2f54ff;transition:.2s">🛍️ Comparateur</button>
-    <button id="btnTravel" onclick="switchMode('travel')" style="flex:1;border:none;border-radius:100px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:transparent;color:rgba(255,255,255,.7);transition:.2s">✈️ Voyage</button>
-  </div>
   <div id="chatBox" style="height:290px;overflow-y:auto;padding:18px 16px 8px;display:flex;flex-direction:column;gap:13px;background:linear-gradient(180deg,#fbfcff,#f5f8ff)"></div>
     <div style="padding:11px 14px 8px;display:flex;gap:8px;overflow-x:auto;background:#fff;border-top:1px solid var(--line)" id="chipRow"></div>
     <div style="padding:12px 14px 15px;display:flex;gap:10px;background:#fff;border-top:1px solid var(--line)">
