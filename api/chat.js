@@ -736,7 +736,12 @@ REGLES CRITIQUES :
 - url: null toujours (evite les 404)
 
 JSON UNIQUEMENT :
-{"summary":"1 phrase","products":[{"name":"nom produit précis","price":"XX€","store":"amazon","keywords":"termes recherche précis","url":null,"img":null,"badge":"badge"}],"promoCodes":[]}`;
+{"summary":"1 phrase","products":[{"name":"NOM EXACT DU PRODUIT avec marque et modele (ex: Nars Sheer Glow Foundation)","price":"XX€","store":"amazon","keywords":"idem que name","url":null,"img":null,"badge":"badge"}],"promoCodes":[]}
+
+REGLE NAME CRITIQUE : le champ "name" doit etre le NOM REEL du produit (marque + modele).
+Ce nom sera utilise comme terme de recherche Amazon/Rakuten.
+BON : "L Oreal True Match fond de teint 30ml" → lien vers ce produit exact
+MAUVAIS : "Fond de teint couvrant hydratant" → lien vers une page generique`;
       const p2user=`HISTORIQUE:\n${hist||'Début'}\n\nBESOIN: ${recap}\n\nMESSAGE: ${message}`;
 
       // ⚡ RECHERCHE GRATUITE : Groq → Gemini → Mistral
@@ -769,31 +774,15 @@ REGLES CRITIQUES :
 - Adapte la gamme : premium si "pas de budget", entree de gamme si "pas cher"
 
 JSON UNIQUEMENT :
-{"summary":"1 phrase","products":[{"name":"nom produit précis","price":"XX€","store":"amazon","keywords":"termes précis","url":"https://amazon.fr/dp/ASIN_ou_null","img":null,"badge":"badge"}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}`;
+{"summary":"1 phrase","products":[{"name":"NOM EXACT avec marque et modele","price":"XX€","store":"amazon","keywords":"idem que name","url":"https://amazon.fr/dp/ASIN_ou_null","img":null,"badge":"badge"}],"promoCodes":[{"code":"CODE","store":"boutique","discount":"-XX%","best":true}]}
+
+REGLE NAME CRITIQUE : name = NOM REEL du produit (marque + modele + reference).
+BON : "Estee Lauder Double Wear fond de teint longue tenue"
+MAUVAIS : "Fond de teint premium couvrant"`;
 
       const raw=await callClaude(p2sys,`HISTORIQUE:\n${hist||'Début'}\n\nBESOIN: ${recap}\n\nMESSAGE: ${message}`,700,[{type:"web_search_20250305",name:"web_search",max_uses:2}]);
       const p=parseJSON(raw);
       products=p.products||[]; promoCodes=p.promoCodes||[]; summary=p.summary||'';
-    }
-
-    // Validation des résultats
-    // Si tous les produits ont "Voir prix" ou prix absurdes, les résultats sont mauvais
-    const hasRealPrices = products.some(p => p.price && !p.price.includes('Voir') && !p.price.includes('null'));
-    const hasRealNames = products.some(p => p.name && p.name.length > 5 && p.name !== message);
-
-    // Si résultats insuffisants ET Claude pas encore utilisé → appeler Claude pour corriger
-    if ((!hasRealPrices || !hasRealNames) && effectiveStrategy !== 'paid_deep' && hasFreeAI()) {
-      // Dernier recours : Claude recentre avec une vraie recherche web
-      try {
-        const fixSys = `Recherche EXACTEMENT ces produits sur amazon.fr et rakuten. Besoin: ${recap}. Trouve des VRAIS produits avec VRAIS prix. JSON: {"summary":"...","products":[{"name":"nom PRECIS du produit","price":"XX€","store":"amazon","keywords":"termes precis","url":null,"img":null,"badge":"..."}],"promoCodes":[]}`;
-        const fixRaw = await callClaude(fixSys, 'Trouve 2 produits Amazon + 1 Rakuten pour: ' + recap, 500, [{type:"web_search_20250305",name:"web_search",max_uses:1}]);
-        const fixP = parseJSON(fixRaw);
-        if (fixP.products?.length && fixP.products.some(p=>p.price && !p.price.includes('Voir'))) {
-          products = fixP.products;
-          promoCodes = fixP.promoCodes || promoCodes;
-          summary = fixP.summary || summary;
-        }
-      } catch(e) { /* Claude aussi a echoue, on garde ce qu'on a */ }
     }
 
     if(!products.length) {
@@ -823,8 +812,11 @@ JSON UNIQUEMENT :
       const adv=findAdv(advertisers,pr.store);
       if(!adv) continue;
       // Nettoyer l'URL : jamais de /dp/null ou d'URL invalide
-      const rawUrl = (pr.url && pr.url !== 'null' && !pr.url.includes('/dp/null')) ? pr.url : null;
-      const url = buildLink(adv, pr.keywords||pr.name, rawUrl);
+      const rawUrl = (pr.url && pr.url !== 'null' && !pr.url.includes('/dp/null') && pr.url.length > 15) ? pr.url : null;
+      // Utiliser le NOM DU PRODUIT comme recherche (plus précis que les keywords génériques)
+      // "Nars Sheer Glow Foundation" trouve le produit exact, "fond de teint couvrant" non
+      const searchTerms = pr.name && pr.name.length > 5 ? pr.name : (pr.keywords || pr.name);
+      const url = buildLink(adv, searchTerms, rawUrl);
       if(!url) continue;
       buttons+=productCard(pr.name,pr.price||'Voir prix',url,adv,pr.img||null,pr.badge||null);
     }
