@@ -106,15 +106,24 @@ function parseDate(str) {
 }
 
 // Construit URL Skyscanner avec dates précises
-function buildSkyscannerLink(fromIATA, toIATA, outbound, inbound, adults=2) {
-  function iata(s) { const m=(s||'').match(/([A-Z]{3})/); return m?m[1].toLowerCase():'par'; }
-  const from = iata(fromIATA);
-  const to   = iata(toIATA);
-  if (outbound && inbound) {
-    // Format YYMMDD
-    const fmt = d => d.replace(/-/g,'').slice(2); // 2026-06-17 → 260617
-    return `https://www.skyscanner.fr/transport/vols/${from}/${to}/${fmt(outbound)}/${fmt(inbound)}/?adults=${adults}&currency=EUR`;
+function buildSkyscannerLink(fromStr, toStr, outbound, inbound, adults=2) {
+  // Extrait le code IATA depuis "Barcelone BCN", "BCN", "Paris CDG", etc.
+  function iata(s) {
+    if (!s) return null;
+    // Code seul ou en fin de chaîne
+    const m = (s||'').match(/\b([A-Z]{3})\b/);
+    return m ? m[1].toLowerCase() : null;
   }
+  const from = iata(fromStr) || 'par';
+  const to   = iata(toStr)   || 'xxx';
+  // Format date YYMMDD pour Skyscanner (ex: 2026-06-17 → 260617)
+  function fmt(d) { return d ? d.replace(/-/g,'').slice(2) : null; }
+  const out = fmt(outbound);
+  const ret = fmt(inbound);
+  if (out && ret) {
+    return `https://www.skyscanner.fr/transport/vols/${from}/${to}/${out}/${ret}/?adults=${adults}&currency=EUR`;
+  }
+  // Sans dates : lien de recherche simple
   return `https://www.skyscanner.fr/transport/vols/${from}/${to}/`;
 }
 
@@ -556,27 +565,45 @@ IMPORTANT : checkin/checkout en format ISO YYYY-MM-DD. from/to des vols = codes 
 
       if (itin.flights?.out) {
         const f = itin.flights;
-        // Skyscanner avec dates précises et nombre de passagers
+        const adults3 = itin.adults || merged.nb_adultes || 2;
+        // Dates : priorité au JSON Claude, sinon extraction depuis le contexte
         const ci2 = itin.checkin || parseDate(merged.date_depart_raw) || null;
         const co2 = itin.checkout || parseDate(merged.date_retour_raw) || null;
-        const adults3 = itin.adults || merged.nb_adultes || 2;
-        const sky = buildSkyscannerLink(f.out.from, f.out.to, ci2, co2, adults3);
+        // IATA : Claude retourne les codes dans f.out.from (ex: "BCN" ou "Barcelone BCN")
+        const sky = buildSkyscannerLink(f.out.from||'', f.out.to||'', ci2, co2, adults3);
+
         html += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">✈️ Vols recommandés</div>
         <div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;overflow:hidden">
-          <div style="padding:12px 14px;border-bottom:1px solid #f0f4ff"><div style="display:flex;justify-content:space-between;align-items:center">
-            <div><div style="font-size:10px;font-weight:800;color:#7c89a8">ALLER</div>
-            <div style="font-size:13px;font-weight:700;color:#0e1430">${f.out.from||''} → ${f.out.to||''}</div>
-            <div style="font-size:11px;color:#7c89a8">${f.out.co||''} · ${f.out.dur||''}</div></div>
-            <div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">~${f.out.price||'?'}</div><div style="font-size:10px;color:#7c89a8">/pers.</div></div>
-          </div></div>
-          ${f.ret?`<div style="padding:12px 14px"><div style="display:flex;justify-content:space-between;align-items:center">
-            <div><div style="font-size:10px;font-weight:800;color:#7c89a8">RETOUR</div>
-            <div style="font-size:13px;font-weight:700;color:#0e1430">${f.ret.from||''} → ${f.ret.to||''}</div>
-            <div style="font-size:11px;color:#7c89a8">${f.ret.co||''} · ${f.ret.dur||''}</div></div>
-            <div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">~${f.ret.price||'?'}</div><div style="font-size:10px;color:#7c89a8">/pers.</div></div>
-          </div></div>`:''}
+          <div style="padding:12px 14px;border-bottom:1px solid #f0f4ff">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Aller</div>
+                <div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">${f.out.from||''} → ${f.out.to||''}</div>
+                <div style="font-size:11px;color:#7c89a8">${f.out.co||''} · ${f.out.dur||''}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:16px;font-weight:900;color:#2f54ff">~${f.out.price||'?'}</div>
+                <div style="font-size:10px;color:#7c89a8">/pers.</div>
+              </div>
+            </div>
+          </div>
+          ${f.ret ? `<div style="padding:12px 14px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Retour</div>
+                <div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">${f.ret.from||''} → ${f.ret.to||''}</div>
+                <div style="font-size:11px;color:#7c89a8">${f.ret.co||''} · ${f.ret.dur||''}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:16px;font-weight:900;color:#2f54ff">~${f.ret.price||'?'}</div>
+                <div style="font-size:10px;color:#7c89a8">/pers.</div>
+              </div>
+            </div>
+          </div>` : ''}
         </div>
-        <a href="${f.out.link||sky}" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:11px;font-size:13px;font-weight:700;margin-top:6px">🔍 Comparer les vols sur Skyscanner →</a>`;
+        <a href="${sky}" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:11px;font-size:13px;font-weight:700;margin-top:6px">
+          🔍 Voir ces vols sur Skyscanner →
+        </a>`;
       }
 
       if (itin.hotels?.length) {
@@ -588,11 +615,13 @@ IMPORTANT : checkin/checkout en format ISO YYYY-MM-DD. from/to des vols = codes 
         const co = itin.checkout || parseDate(merged.date_retour_raw) || null;
 
         for (const h of itin.hotels) {
-          // Lien direct hôtel avec dates → Booking montre cet hôtel ET ses dispo/prix réels
-          const hotelSearch = (h.name+' '+(h.loc||'')+' '+(itin.dest||'')).trim();
+          // Lien direct : hotel name + destination + dates → Booking affiche cet hôtel
+          // avec ses vraies disponibilités et prix pour la période exacte
+          const hotelSearch = [h.name, h.loc||'', itin.dest||''].filter(Boolean).join(' ').trim();
           const hotelLink = buildBookingLink(hotelSearch, nights, adults2, null, null, ci, co);
           html += hotelCard(
-            {name:h.name, stars:h.stars, price:h.price, location:h.loc, highlight:h.hl, booking_link:null, category:h.cat},
+            {name:h.name, stars:h.stars, price:h.price, location:h.loc, highlight:h.hl,
+             booking_link:null, category:h.cat},
             hotelLink
           );
         }
