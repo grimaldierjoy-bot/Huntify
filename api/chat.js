@@ -841,7 +841,7 @@ RÈGLES:
     // ══════════════════════════════════════════════════════════════════════════
     // MODE PRODUIT
     // ══════════════════════════════════════════════════════════════════════════
-    const qAsked=countQ(history);
+    const qAskedProd=countQ(history);
     const histCat=detectCategory((history||[]).map(m=>m.content||'').join(' '));
     const curCat=detectCategory(message);
     const topicChanged=histCat!=='general'&&curCat!=='general'&&histCat!==curCat;
@@ -854,16 +854,16 @@ RÈGLES:
 
     const hasBudget  = /\d+\s*€|\d+\s*euros?/i.test(message);
     const hasPrecise = message.trim().split(/\s+/).length>=3;
-    const mustSearch = qAsked>=MAX_Q||(hasBudget&&hasPrecise&&(history||[]).length>0);
+    const mustSearch = qAskedProd>=MAX_Q||(hasBudget&&hasPrecise&&(history||[]).length>0);
     let decision={ready:mustSearch,question:null,recap:null,message:null};
 
     // ── Ciblage → GROQ 70b (GRATUIT) ─────────────────────────────────────────
     if (!mustSearch) {
       const p1sys=`Assistant shopping Huntify. JSON UNIQUEMENT.
-Historique: ${histS||'Début'} | Questions posées: ${qAsked}/${MAX_Q}
+Historique: ${histS||'Début'} | Questions posées: ${qAskedProd}/${MAX_Q}
 Demande vague → ready:false + une question.
 Si besoin compris → ready:true + recap (mots-clés produit réels, marque+modèle).
-Si ${qAsked}>=${MAX_Q} → ready:true obligatoire.
+Si ${qAskedProd}>=${MAX_Q} → ready:true obligatoire.
 Ne JAMAIS redemander ce qui est dans l'historique.
 JSON: {"ready":false,"message":"question"} ou {"ready":true,"recap":"mots-clés","message":"phrase courte"}`;
 
