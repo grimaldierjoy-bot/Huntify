@@ -1,23 +1,11 @@
 export const config = { runtime: 'edge' };
 
-// ============================================================
-// HUNTIFY — chat.js v6 PROPRE
-// Architecture :
-// - PRODUITS : IA gratuite (ciblage) → Claude 1er envoi si ROI≥3
-// - VOYAGE   : Claude pour tout (conversation + itinéraire)
-// - AI Router : Groq → Gemini → Mistral → Claude fallback
-// - ROI scoring : budget + urgence + cadeau + premium
-// - Anti-boucle : détection changement de sujet
-// - Liens directs : Amazon /dp/ASIN + Booking hotel + Skyscanner IATA
-// ============================================================
-
 const SUPABASE_URL     = "https://enocxbrqyybendertytl.supabase.co";
 const SUPABASE_KEY     = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
 const MODEL            = 'claude-haiku-4-5';
 const MAX_Q            = 3;
 const TRAVEL_THRESHOLD = 300;
 
-// ── Supabase ──────────────────────────────────────────────────
 async function sbFetch(path, method='GET', body=null) {
   const opts = { method, headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`} };
   if (body) opts.body = JSON.stringify(body);
@@ -33,7 +21,6 @@ async function getAdvertisers() {
   } catch(e) { return []; }
 }
 
-// ── Keywords & liens affiliés ─────────────────────────────────
 function cleanKw(kw) {
   if (!kw) return '';
   const preserve = ['fond de teint','eau de toilette','eau de parfum','creme de jour',
@@ -52,22 +39,27 @@ function cleanKw(kw) {
 }
 
 function buildLink(adv, keywords, directUrl=null) {
-  if (!adv?.active) return null;
-  const kw = cleanKw(keywords);
-  if (adv.slug === 'amazon') {
+  if (!adv) return null;
+  const kw = cleanKw(keywords) || keywords || '';
+  const slug = (adv.slug||'').toLowerCase();
+  if (slug === 'amazon') {
+    const tag = adv.amazon_tag || 'huntify21-21';
     const valid = directUrl && directUrl !== 'null' && directUrl.length > 10
                && directUrl.includes('amazon.fr') && !directUrl.includes('/dp/null');
     const base = valid ? directUrl : `https://www.amazon.fr/s?k=${encodeURIComponent(kw)}`;
-    return `${base}${base.includes('?')?'&':'?'}tag=${adv.amazon_tag}`;
+    return `${base}${base.includes('?')?'&':'?'}tag=${tag}`;
   }
-  if (adv.awin_mid) {
+  if (slug === 'rakuten' || adv.awin_mid) {
+    const mid = adv.awin_mid || '55615';
+    const aff = adv.awin_aff || '2920215';
     let searchBase = adv.search_url || 'https://fr.shopping.rakuten.com/s/{keywords}';
     if (searchBase.includes('/search?keyword=') || searchBase.includes('?keyword='))
       searchBase = 'https://fr.shopping.rakuten.com/s/{keywords}';
     const rkw = encodeURIComponent(kw).replace(/%20/g,'+');
     const dest = searchBase.replace('{keywords}', rkw);
-    return `https://www.awin1.com/cread.php?awinmid=${adv.awin_mid}&awinaffid=${adv.awin_aff}&ued=${encodeURIComponent(dest)}`;
+    return `https://www.awin1.com/cread.php?awinmid=${mid}&awinaffid=${aff}&ued=${encodeURIComponent(dest)}`;
   }
+  if (adv.search_url) return adv.search_url.replace('{keywords}', encodeURIComponent(kw));
   return null;
 }
 
@@ -85,7 +77,6 @@ function buildBookingLink(destination, nights=5, adults=2, minPrice=null, maxPri
   return `https://www.anrdoezrs.net/click-${pubId}-${advId}?url=${encodeURIComponent(base)}`;
 }
 
-// ── DB interne ────────────────────────────────────────────────
 async function queryInternalDB(keywords) {
   const kw = (keywords||'').toLowerCase().split(' ')[0];
   const results = { deals:[], prices:[], promos:[], hasData:false };
@@ -111,7 +102,6 @@ function buildDBContext(d) {
   return parts.join('\n');
 }
 
-// ── ROI & routing ─────────────────────────────────────────────
 function detectBudget(text) {
   if (!text) return null;
   const p = [
@@ -162,7 +152,6 @@ function analyzeConversation(history, message) {
   return { curCat, histCat, topicChanged, deepConversation, exchanges };
 }
 
-// Extrait les infos voyage depuis l'historique
 function extractTravelInfo(hist, message) {
   const text = ((hist||'')+ ' '+message).toLowerCase();
   const info = {};
@@ -186,7 +175,6 @@ function extractTravelInfo(hist, message) {
   return info;
 }
 
-// ── AI Router ─────────────────────────────────────────────────
 async function callGroq(sys, user, model, maxTok) {
   const key = process.env.GROQ_API_KEY; if(!key) return null;
   try {
@@ -224,19 +212,9 @@ async function callMistral(sys, user, maxTok) {
 }
 
 async function callFreeAI(sys, user, depth='fast') {
-  // 70b pour le ciblage (JSON fiable), 8b seulement pour les tâches simples
-  const model = depth==='fast' ? 'llama-3.3-70b-versatile' : 'llama-3.3-70b-versatile';
+  const model = 'llama-3.3-70b-versatile';
   const tok   = depth==='deep' ? 700 : 300;
   return await callGroq(sys,user,model,tok) || await callGemini(sys,user,tok) || await callMistral(sys,user,tok);
-}
-
-async function chainAI(task, context) {
-  const sys = 'Interpreteur de langage naturel. Reponds en JSON court.';
-  const interp = await callGroq(sys, task+'\nContexte: '+context, 'llama-3.1-8b-instant', 150);
-  if (!interp) return await callGemini(sys, task+'\nContexte: '+context, 150);
-  const enriched = await callGemini('Enrichis et valide. Reponds en JSON court.',
-    'Interpretation: '+interp+'\nContexte: '+context, 200);
-  return enriched || interp;
 }
 
 function hasFreeAI() {
@@ -244,14 +222,10 @@ function hasFreeAI() {
 }
 
 async function callClaude(sys, user, maxTok=600, tools=[]) {
-  // PAS de cache_control — le prompt contient des variables dynamiques (hist, context)
-  // qui changent à chaque appel → cache write inutile et coûteux (1.25x le prix normal)
-  // Sans cache : input normal à 1$/M tokens, beaucoup moins cher
   const r = await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
     headers:{'Content-Type':'application/json; charset=utf-8','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-    body:JSON.stringify({model:MODEL, max_tokens:maxTok, tools,
-      system:sys,
+    body:JSON.stringify({model:MODEL, max_tokens:maxTok, tools, system:sys,
       messages:[{role:'user',content:user}]})
   });
   const d = await r.json();
@@ -259,7 +233,6 @@ async function callClaude(sys, user, maxTok=600, tools=[]) {
   let t=''; for(const b of d.content){if(b.type==='text')t+=b.text;} return t;
 }
 
-// ── Utilitaires ───────────────────────────────────────────────
 function parseJSON(raw) {
   if(!raw) return {};
   try { const m=raw.match(/\{[\s\S]*\}/); if(m) return JSON.parse(m[0]); } catch(e){}
@@ -275,14 +248,12 @@ function buildHistory(history) {
 }
 
 function countQ(history) {
-  // Compte les messages de l'agent qui sont des questions (courts, pas de produit)
-  // Un message avec un prix ou une longue réponse = résultat, pas une question
   return (history||[]).filter(m =>
     m.role !== 'user' &&
     (m.content||'').length > 10 &&
-    (m.content||'').length < 300 &&   // Questions courtes
-    !/\d+€/.test(m.content||'') &&   // Pas un résultat avec prix
-    !/(amazon|rakuten|booking)/i.test(m.content||'')  // Pas un lien boutique
+    (m.content||'').length < 300 &&
+    !/\d+€/.test(m.content||'') &&
+    !/(amazon|rakuten|booking)/i.test(m.content||'')
   ).length;
 }
 
@@ -290,7 +261,6 @@ function countTravelQ(history) {
   return (history||[]).filter(m=>m.role!=='user'&&(m.content||'').length>20).length;
 }
 
-// ── Cross-suggestions & auto-coupons ─────────────────────────
 function getCrossSuggestions(recap) {
   const r = (recap||'').toLowerCase();
   const map = {
@@ -313,7 +283,6 @@ async function getAutoCoupons(store) {
   } catch(e) { return []; }
 }
 
-// ── HTML Helpers produits ─────────────────────────────────────
 function productCard(name, price, url, adv, img, badge) {
   const imgHtml  = img ? `<img src="${img}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0" onerror="this.style.display='none'">` : '';
   const badgeHtml= badge ? `<span style="background:rgba(255,255,255,.22);border-radius:100px;padding:2px 8px;font-size:10px;font-weight:700">${badge}</span>` : '';
@@ -347,7 +316,6 @@ function recapBox(r) {
   return `<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12px;color:#5b21b6;font-weight:600">🔎 ${r}</div>`;
 }
 
-// ── HTML Helpers voyage ───────────────────────────────────────
 function hotelCard(h, bookingUrl) {
   const stars = '⭐'.repeat(Math.min(h.stars||3,5));
   const cc = {budget:'#16a34a',confort:'#2f54ff',luxe:'#7c3aed'}[h.category]||'#2f54ff';
@@ -385,7 +353,6 @@ function dayCard(d) {
 }
 
 function budgetCard(b) {
-  // Affiche toutes les lignes principales même si une valeur est absente (montre "—")
   const items = [
     ['✈️ Vols A/R', b.flights_total],
     ['🏨 Hébergement', b.accommodation_total],
@@ -413,7 +380,6 @@ function tipsCard(tips) {
   </div>`;
 }
 
-// ── HANDLER ───────────────────────────────────────────────────
 export default async function handler(req) {
   if (req.method==='OPTIONS') return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type'}});
   if (req.method!=='POST') return new Response('Method not allowed',{status:405});
@@ -437,22 +403,13 @@ export default async function handler(req) {
 
     const hist   = buildHistory(history);
     const ctx    = travelContext||{};
-    const ctxStr = Object.entries(ctx).filter(([k,v])=>v&&k!=='suggestionsShown').map(([k,v])=>`${k}: ${v}`).join(', ');
 
-    // ══════════════════════════════════════════════════════════
-    // MODE VOYAGE — 1 seul appel Claude intelligent
-    // Gère conversation + génération en une requête
-    // Évite les double-appels, timeouts et boucles
-    // ══════════════════════════════════════════════════════════
     if (isTravel) {
       const qAsked  = countTravelQ(history);
       const extr    = extractTravelInfo(hist, message);
       const merged  = {...extr, ...Object.fromEntries(Object.entries(ctx).filter(([k,v])=>v&&k!=='suggestionsShown'))};
       const mStr    = Object.entries(merged).filter(([k,v])=>v).map(([k,v])=>`${k}:${v}`).join(', ');
-      const tBudget = detectBudget(mStr)||detectBudget(hist)||detectBudget(message);
 
-      // Prompt unique : conversation naturelle + génération quand prêt
-      // Court et précis pour réduire les tokens
       const tSys = `Expert agent voyage Huntify. Tu gères la conversation ET génères l'itinéraire.
 
 INFOS COLLECTÉES : ${mStr||'aucune'}
@@ -473,29 +430,25 @@ POUR LA GÉNÉRATION :
 - Hôtels réels que tu connais, dans le budget calculé
 - Programme jour/jour adapté au style
 - Vols : compagnie habituelle sur cette route, horaires typiques, prix approximatif
-- Liens Skyscanner et Booking pour vrais prix
 
 JSON UNIQUEMENT — 3 formats :
 
 Question : {"t":"q","msg":"ta question"}
 
-Suggestions (si pas de destination) :
-{"t":"s","intro":"...","dests":[{"n":"Lisbonne","e":"🇵🇹","why":"...","price":"dès 700€/2","tags":["culture","soleil"]}],"q":"Laquelle te tente ?"}
+Suggestions : {"t":"s","intro":"...","dests":[{"n":"Lisbonne","e":"🇵🇹","why":"...","price":"dès 700€/2","tags":["culture","soleil"]}],"q":"Laquelle te tente ?"}
 
 Itinéraire complet :
-{"t":"i","recap":"...","itin":{"dest":"...","country":"...","flag":"...","dur":"...","trav":"...","style":"...","dep":"...","flights":{"out":{"from":"...","to":"...","price":"...","co":"...","dur":"..."},"ret":{"from":"...","to":"...","price":"...","co":"...","dur":"..."}},"hotels":[{"name":"...","stars":4,"price":"120","loc":"...","hl":"...","cat":"confort"}],"days":[{"n":1,"title":"...","am":"...","pm":"...","eve":"...","resto":{"name":"...","price":"35€/2","spec":"..."},"acts":["..."],"budget":150}],"budget":{"vols":300,"hotel":500,"acts":150,"resto":200,"transport":80,"total":1230,"pp":615}
-(TOUS les champs budget OBLIGATOIRES, surtout "hotel" = coût total hébergement pour tout le séjour),"tips":["..."]}}`;
+{"t":"i","recap":"...","itin":{"dest":"...","country":"...","flag":"...","dur":"...","trav":"...","style":"...","dep":"...","flights":{"out":{"from":"...","to":"...","price":"...","co":"...","dur":"..."},"ret":{"from":"...","to":"...","price":"...","co":"...","dur":"..."}},"hotels":[{"name":"...","stars":4,"price":"120","loc":"...","hl":"...","cat":"confort"}],"days":[{"n":1,"title":"...","am":"...","pm":"...","eve":"...","resto":{"name":"...","price":"35€/2","spec":"..."},"acts":["..."],"budget":150}],"budget":{"vols":300,"hotel":500,"acts":150,"resto":200,"transport":80,"total":1230,"pp":615},"tips":["..."]}}`;
 
       const allText = (hist+' '+message+' '+mStr).toLowerCase();
       const hasDest = merged.destination || /capri|paris|rome|lisbonne|barcelone|londres|tokyo|bali|venise|madrid|amsterdam|berlin|prague|naples|athenes|santorin|marrakech|dubai/i.test(allText);
       const hasDep  = merged.ville_depart || /depuis|de barcelone|de paris|de lyon|de marseille|de nice|de bordeaux|de toulouse|départ/i.test(allText);
-      const hasDates2 = merged.duree || /\\d+\\s*(jours?|nuits?|semaines?)|du \\d+/i.test(allText);
+      const hasDates2 = merged.duree || /\d+\s*(jours?|nuits?|semaines?)|du \d+/i.test(allText);
       const readyGen = hasDest && hasDep && hasDates2;
       const tUser = `COLLECTE: ${mStr||'rien'} HISTORIQUE: ${hist||'debut'} MESSAGE: ${message}${readyGen ? ' [INFOS COMPLETES - GENERE MAINTENANT itineraire format t:i, AUCUNE question]' : ''}`;
       const tRaw  = await callClaude(tSys, tUser, 2500, []);
       const tP    = parseJSON(tRaw||'');
 
-      // ── Question ──────────────────────────────────────────
       if (tP.t === 'q' || (!tP.t && tP.msg)) {
         return new Response(JSON.stringify({
           reply:`<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">${tP.msg||tP.message||''}</div>`,
@@ -503,11 +456,10 @@ Itinéraire complet :
         }),{headers:H});
       }
 
-      // ── Suggestions de destinations ───────────────────────
       if (tP.t === 's' && tP.dests?.length) {
         let html = `<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0 8px">${tP.intro||'Voici mes suggestions :'}</div>`;
         for (const d of tP.dests) {
-          html += `<div onclick="send('${(d.n||'').replace(/'/g,"\'")}') " style="background:#fff;border:1.5px solid #e6ebf7;border-radius:16px;padding:14px;margin-top:8px;cursor:pointer">
+          html += `<div onclick="send('${(d.n||'').replace(/'/g,"\\'")}') " style="background:#fff;border:1.5px solid #e6ebf7;border-radius:16px;padding:14px;margin-top:8px;cursor:pointer">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
               <span style="font-size:24px">${d.e||'🌍'}</span>
               <div><div style="font-size:14px;font-weight:800;color:#0e1430">${d.n}</div>
@@ -521,10 +473,8 @@ Itinéraire complet :
         return new Response(JSON.stringify({reply:html,sessionId:sid}),{headers:H});
       }
 
-      // ── Itinéraire complet ────────────────────────────────
       const itin = tP.itin;
       if (!itin) {
-        // Si Claude n'a pas généré l'itinéraire → demander ce qui manque
         return new Response(JSON.stringify({
           reply:`<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">${tP.msg||"Pour générer votre itinéraire, j'ai besoin de : destination, dates, ville de départ et budget 🗺️"}</div>`,
           sessionId:sid
@@ -533,8 +483,10 @@ Itinéraire complet :
 
       let html = '';
 
-      // Header
-      html += `<div style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:18px;margin-bottom:4px;text-align:center">
+      // ID unique pour l'export
+      const itinId = `itin_${Date.now()}`;
+
+      html += `<div id="${itinId}" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:18px;margin-bottom:4px;text-align:center">
         <div style="font-size:32px;margin-bottom:6px">${itin.flag||'✈️'}</div>
         <div style="font-family:'Sora',sans-serif;font-size:20px;font-weight:800;color:#fff">${itin.dest||''}${itin.country?', '+itin.country:''}</div>
         <div style="font-size:12px;color:rgba(255,255,255,.75);margin-top:6px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap">
@@ -545,10 +497,9 @@ Itinéraire complet :
 
       if (tP.recap) html += recapBox(tP.recap);
 
-      // Vols
       if (itin.flights?.out) {
         const f = itin.flights;
-        function getIATA(s){const m=(s||'').match(/([A-Z]{3})/);return m?m[1].toLowerCase():'par';}
+        function getIATA(s){const m=(s||'').match(/([A-Z]{3})/);return m?m[1].toLowerCase():'par';}
         const sky = `https://www.skyscanner.fr/transport/vols/${getIATA(f.out.from)}/${getIATA(f.out.to)}/`;
         html += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">✈️ Vols recommandés</div>
         <div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;overflow:hidden">
@@ -568,7 +519,6 @@ Itinéraire complet :
         <a href="${f.out.link||sky}" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:11px;font-size:13px;font-weight:700;margin-top:6px">🔍 Comparer les vols sur Skyscanner →</a>`;
       }
 
-      // Hôtels
       if (itin.hotels?.length) {
         html += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">🏨 Hébergements sur Booking.com</div>`;
         const nights = parseInt((itin.dur||'').match(/\d+/)?.[0]||'5');
@@ -584,7 +534,6 @@ Itinéraire complet :
         }
       }
 
-      // Programme
       if (itin.days?.length) {
         html += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">📅 Programme jour par jour</div>`;
         for (const d of itin.days) html += dayCard({
@@ -593,36 +542,59 @@ Itinéraire complet :
         });
       }
 
-      // Budget
       if (itin.budget) {
         const b = itin.budget;
         html += budgetCard({
           flights_total:b.vols, accommodation_total:b.hotel,
           activities_total:b.acts, food_total:b.resto,
           transport_local:b.transport, total:b.total, per_person:b.pp,
-          note:'Prix indicatifs. Cliquez les liens Skyscanner et Booking pour vérifier disponibilités et tarifs réels du moment.'
+          note:'Prix indicatifs. Cliquez les liens pour vérifier disponibilités et tarifs réels.'
         });
       }
 
-      // Conseils
       if (itin.tips?.length) html += tipsCard(itin.tips);
 
-      // Wishlist
-      const vUrl  = (itin.hotels||[])[0]?.link || buildBookingLink(itin.dest||'',5);
-      const vData = JSON.stringify({name:`Voyage ${itin.dest||''}${itin.country?' ('+itin.country+')':''}`,price:itin.budget?.total?itin.budget.total+'€':'',store:'booking',url:vUrl}).replace(/"/g,'&quot;');
-      html += `<button onclick="addToWishlist(${vData})" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border:none;color:#fff;border-radius:12px;padding:12px 16px;margin-top:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;width:100%">♡ Sauvegarder ce voyage dans ma wishlist</button>`;
+      // ── WISHLIST + EXPORT ──────────────────────────────────
+      // Données enrichies : tout ce qu'on sait sur le voyage
+      const nights2 = parseInt((itin.dur||'').match(/\d+/)?.[0]||'5');
+      const h1 = (itin.hotels||[])[0];
+      const h2 = (itin.hotels||[])[1];
+      const h3 = (itin.hotels||[])[2];
+      const skyLink = itin.flights?.out?.link || `https://www.skyscanner.fr/transport/vols/`;
+      const bookLink = h1 ? buildBookingLink((h1.name+' '+(h1.loc||'')+' '+(itin.dest||'')).trim(), nights2) : buildBookingLink(itin.dest||'', nights2);
+
+      const wishData = JSON.stringify({
+        type: 'voyage',
+        name: `${itin.flag||'✈️'} ${itin.dest||''}${itin.country?', '+itin.country:''}`,
+        subtitle: `${itin.dur||''} · ${itin.trav||'2 pers.'} · ${itin.style||''}`,
+        price: itin.budget?.total ? String(itin.budget.total)+'€' : '',
+        perPerson: itin.budget?.pp ? String(itin.budget.pp)+'€/pers.' : '',
+        store: 'booking',
+        url: bookLink,
+        flightUrl: skyLink,
+        dep: itin.dep||'',
+        hotels: (itin.hotels||[]).slice(0,3).map(h=>({
+          name: h.name||'',
+          price: (h.price||'?')+'€/nuit',
+          cat: h.cat||'confort',
+          url: h.link || buildBookingLink((h.name+' '+(h.loc||'')+' '+(itin.dest||'')).trim(), nights2)
+        })),
+        budget: itin.budget||null
+      }).replace(/"/g,'&quot;');
+
+      html += `<div style="display:flex;gap:8px;margin-top:12px">
+        <button onclick="addToWishlist(${wishData})" style="flex:1;background:linear-gradient(135deg,#1f2da0,#2f54ff);border:none;color:#fff;border-radius:12px;padding:12px 14px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">♡ Sauvegarder</button>
+        <button onclick="exportItinerary('${itinId}')" style="background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;border-radius:12px;padding:12px 14px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">⬇️ Exporter</button>
+      </div>`;
 
       if (trackingEnabled) sbFetch('searches','POST',{query:`[VOYAGE] ${message}`,session_id:sid,user_id:userId||null});
       return new Response(JSON.stringify({reply:html,sessionId:sid}),{headers:H});
     }
 
-    // ══════════════════════════════════════════════════════════
-    // MODE PRODUIT
-    // ══════════════════════════════════════════════════════════
+    // ── MODE PRODUIT ──────────────────────────────────────────
     const qAsked = countQ(history);
     const conv   = analyzeConversation(history, message);
 
-    // Changement de sujet → reset
     if (conv.topicChanged && conv.exchanges >= 4) {
       const resetMsg = conv.curCat==='cadeau'
         ? "Nouveau sujet ! Pour un cadeau, dis-moi pour qui et quel budget tu as en tête ?"
@@ -661,10 +633,8 @@ INTERPRÉTATION :
 RÈGLES :
 1. Ne JAMAIS redemander ce qui est dans l'historique — relis-le avant de répondre
 2. MAX ${MAX_Q} questions — tu en as posé ${qAsked} — si >= ${MAX_Q} → ready:true obligatoire
-3. Si tu comprends le besoin principal → ready:true (pas besoin de tout savoir)
+3. Si tu comprends le besoin principal → ready:true
 4. Recap = mots-clés produit concrets JAMAIS les réponses brutes
-   "couvrant + rougeurs" → "fond de teint couvrant anti-rougeurs"
-   "pas de budget" → "fond de teint premium"
 
 HISTORIQUE (LIS AVANT DE RÉPONDRE): ${hist||'Début'}
 
@@ -673,8 +643,6 @@ JSON UNIQUEMENT :
 {"ready":true,"recap":"mots-clés produit","message":"phrase courte"}`;
 
       const p1user = `HISTORIQUE:\n${hist||'Début'}\nQuestions: ${qAsked}/${MAX_Q}\nMESSAGE: ${message}`;
-
-      // IA gratuite directement — pas de chaining complexe
       const t1 = await callFreeAI(p1sys, p1user, 'fast');
 
       if (t1) {
@@ -685,8 +653,6 @@ JSON UNIQUEMENT :
         decision.message  = d.message||d.question||null;
       }
 
-      // Si le ciblage a échoué (pas de JSON valide) ET début de conversation
-      // → poser une question intelligente au lieu de chercher dans le vide
       if (!decision.ready && !decision.message && (history||[]).length === 0) {
         const cat = detectCategory(message);
         const q = cat==='beaute' ? "Super ! Tu cherches quelque chose de précis (teinte, couvrance) ou je te trouve les mieux notés ? Et un budget ?"
@@ -707,17 +673,12 @@ JSON UNIQUEMENT :
     const budget = detectBudget(recap)||detectBudget(hist)||detectBudget(message);
     const roi    = estimateROI(budget, message, hist);
 
-    // Stratégie hybride :
-    // - 1er envoi + ROI>=3 → Claude + web search (liens directs)
-    // - Conversation avancée (4+ échanges même sujet) → deep search
-    // - Sinon → IA gratuite
     const hasPrev    = (history||[]).some(m=>m.role!=='user'&&/\d+€/.test(m.content||''));
     const isFirst    = !hasPrev;
     const strategy   = ((isFirst && roi.score>=3) || deepSearchUnlocked) ? 'paid_deep'
                      : (roi.depth==='medium' ? 'free_deep' : 'free_fast');
     const effective  = (!hasFreeAI() && strategy!=='paid_deep') ? 'paid_deep' : strategy;
 
-    // DB interne
     const dbData    = await queryInternalDB(recap);
     const dbContext = buildDBContext(dbData);
 
@@ -758,7 +719,6 @@ JSON: {"summary":"...","products":[{"name":"NOM EXACT","price":"XX€","store":"
       summary  = `Résultats pour "${message}" :`;
     }
 
-    // Historique prix
     let priceHistHtml = '';
     const main = products.find(p=>p.store==='amazon');
     if (main?.price && !main.price.includes('Voir')) {
@@ -773,11 +733,11 @@ JSON: {"summary":"...","products":[{"name":"NOM EXACT","price":"XX€","store":"
       if (!isNaN(cur)) sbFetch('price_history','POST',{product_id:slug,product_name:main.name,price:cur,store:'amazon',url:main.url||null});
     }
 
-    // Cartes produits
     let buttons = '';
     for (const pr of products) {
       if (!pr.name) continue;
-      const adv = findAdv(advertisers, pr.store); if(!adv) continue;
+      let adv = findAdv(advertisers, pr.store) || advertisers[0];
+      if (!adv) continue;
       const rawUrl = (pr.url&&pr.url!=='null'&&!pr.url.includes('/dp/null')&&pr.url.length>15) ? pr.url : null;
       const terms  = pr.name && pr.name.length>5 ? pr.name : (pr.keywords||pr.name);
       const url    = buildLink(adv, terms, rawUrl);
@@ -785,14 +745,12 @@ JSON: {"summary":"...","products":[{"name":"NOM EXACT","price":"XX€","store":"
       buttons += productCard(pr.name, pr.price||'Voir prix', url, adv, pr.img||null, pr.badge||null);
     }
 
-    // Codes promos
     let promos = '';
     for (const c of (promoCodes||[]).filter(c=>c.code).sort((a,b)=>b.best-a.best).slice(0,2)) {
       promos += promoBox(c.code, c.store||'boutique', c.discount||'Réduction', c.best||false);
       sbFetch('promo_codes','POST',{code:c.code,store:c.store||'unknown',discount:c.discount||'',product_query:message,found_at:new Date().toISOString(),valid:true});
     }
 
-    // Auto-coupons DB
     let dbPromos = '';
     for (const adv of advertisers) {
       const cpns = await getAutoCoupons(adv.slug);
@@ -802,14 +760,12 @@ JSON: {"summary":"...","products":[{"name":"NOM EXACT","price":"XX€","store":"
       }
     }
 
-    // Wishlist
     const first = products[0];
     const adv0  = first ? findAdv(advertisers, first.store) : null;
     const wish  = first && adv0
-      ? `<button onclick="addToWishlist(${JSON.stringify({name:first.name,price:first.price,store:first.store,url:buildLink(adv0,first.keywords||first.name,first.url||null)}).replace(/"/g,'&quot;')})" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">♡ Ajouter à ma wishlist</button>`
+      ? `<button onclick="addToWishlist(${JSON.stringify({type:'product',name:first.name,price:first.price,store:first.store,url:buildLink(adv0,first.keywords||first.name,first.url||null)}).replace(/"/g,'&quot;')})" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">♡ Ajouter à ma wishlist</button>`
       : '';
 
-    // Cross-suggestions
     const sugs = getCrossSuggestions(recap);
     const cross = sugs.length
       ? `<div style="margin-top:12px;padding-top:10px;border-top:1px solid #f0f4ff">
