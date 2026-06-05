@@ -665,27 +665,23 @@ Suggestions: {"t":"s","intro":"...","dests":[{"n":"Ville","e":"🏳","why":"pour
 
       // ── GÉNÉRATION ITINÉRAIRE → CLAUDE UNIQUEMENT (1 seul appel) ─────────
       // System prompt compressé (~380 tokens vs ~600 avant) + cache_control
-      const tSys = `Expert voyage Huntify. Génère des itinéraires complets en JSON.
-Aujourd'hui: ${TODAY}. Infos: ${mStr||'aucune'}.
-
-FORMAT ITINÉRAIRE (JSON strict, toutes clés obligatoires):
-{"t":"i","recap":"résumé 1 ligne","itin":{
-"dest":"Rome","country":"Italie","flag":"🇮🇹","dur":"3 jours / 2 nuits",
-"trav":"2 adultes","style":"romantique","dep":"Nice",
-"checkin":"YYYY-MM-DD","checkout":"YYYY-MM-DD","adults":2,
-"flights":{"out":{"from":"NCE","to":"FCO","price":"85","co":"easyJet","dur":"1h30"},"ret":{"from":"FCO","to":"NCE","price":"95","co":"easyJet","dur":"1h30"}},
-"hotels":[{"name":"Hotel Artemide","stars":4,"price":"150","loc":"Centre","hl":"Rooftop vue","cat":"confort"},{"name":"The Beehive","stars":3,"price":"75","loc":"Monti","hl":"Bobo","cat":"budget"},{"name":"Rome Cavalieri","stars":5,"price":"310","loc":"Parioli","hl":"Spa","cat":"luxe"}],
-"days":[{"n":1,"title":"Arrivée & Dolce Vita","am":"...","pm":"...","eve":"...","resto":{"name":"Armando al Pantheon","price":"45€/pers","spec":"Cucina romana"},"acts":["Fontaine de Trevi","Piazza Navona"],"budget":120}],
-"budget":{"vols":360,"hotel":300,"acts":100,"resto":200,"transport":60,"total":1020,"pp":510},
-"tips":["conseil 1","conseil 2"]}}
-
-RÈGLES:
-- checkin/checkout: vraies dates ISO depuis "${TODAY}" + durée demandée
-- from/to vols: codes IATA 3 lettres MAJUSCULES (NCE CDG FCO BCN etc.)
-- hotels.name: vrais hôtels existants dans la ville
-- 3 hôtels obligatoires (budget/confort/luxe)
-- Budget dispatché logiquement selon destination + style
-- JSON UNIQUEMENT`;
+      const tSys = 'Expert voyage Huntify. Génère des itinéraires complets en JSON.\n'
+        + 'Aujourd\'hui: ' + TODAY + '. Infos: ' + (mStr||'aucune') + '.\n\n'
+        + 'CHAMPS OBLIGATOIRES du JSON (format t:i) :\n'
+        + 't, recap, itin.dest, itin.country, itin.flag, itin.dur, itin.trav, itin.style, itin.dep\n'
+        + 'itin.checkin (YYYY-MM-DD), itin.checkout (YYYY-MM-DD), itin.adults\n'
+        + 'itin.flights.out/ret : from, to (IATA 3 lettres MAJ), price, co, dur\n'
+        + 'itin.hotels : tableau de 3 objets avec name, stars, price, loc, hl, cat (budget/confort/luxe)\n'
+        + 'itin.days : tableau avec n, title, am, pm, eve, resto, acts, budget\n'
+        + 'itin.budget : vols, hotel, acts, resto, transport, total, pp\n'
+        + 'itin.tips : tableau de conseils\n\n'
+        + 'REGLES ABSOLUES:\n'
+        + '- checkin/checkout: vraies dates ISO depuis ' + TODAY + ' + duree demandee\n'
+        + '- from/to vols: codes IATA 3 lettres MAJUSCULES (NCE CDG FCO BCN etc.)\n'
+        + '- hotels.name: vrais hotels existants dans la ville\n'
+        + '- 3 hotels obligatoires (budget/confort/luxe)\n'
+        + '- Budget dispatche logiquement selon destination + style\n'
+        + '- JSON UNIQUEMENT, rien d\'autre';
 
       const tUser = `INFOS: ${mStr}\nHIST: ${hist}\nMSG: "${message}"\n[GÉNÈRE MAINTENANT l'itinéraire complet, format t:i]`;
       const tRaw  = await callClaude(tSys, tUser, 2800, []);  // cache_control actif
