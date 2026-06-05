@@ -441,32 +441,30 @@ export default async function handler(req) {
       const nights = parseInt(((infos.duree||"3 jours").match(/\d+/)||["3"])[0])||3;
       const co = parseDate(infos.checkout||null)||(ci?(function(){const d=new Date(ci);d.setDate(d.getDate()+nights);return d.toISOString().slice(0,10);}()):"");
 
-      // Prompt avec fourchettes de prix RÉALISTES par destination
-      const itinPrompt = "Tu es un expert voyage. Genere un itineraire REALISTE en JSON.\n"
-        +"INFOS: destination="+infos.destination+", depart="+infos.ville_depart+", adultes="+adults
-        +", checkin="+(ci||"?")+" checkout="+(co||"?")+" ("+nights+" nuits)"
-        +", budget="+(infos.budget||"moyen")+" style="+(infos.style||"equilibre")+"\n\n"
-        +"FOURCHETTES DE PRIX REALISTES (adapte a la destination):\n"
-        +"- Vols courts (<2h ex Nice-Rome): 60-120€/pers A/R\n"
-        +"- Vols moyens (2-4h ex Paris-Barcelone): 80-200€/pers A/R\n"
-        +"- Vols longs (>4h): 200-600€/pers A/R\n"
-        +"- Hotels budget Europe: 50-90€/nuit, confort: 90-180€/nuit, luxe: 180-400€/nuit\n"
-        +"- Restos: budget 15-25€/pers, moyen 30-50€/pers, gastronomique 60-120€/pers\n"
-        +"- Activites: 10-50€/pers selon type\n\n"
-        +"JSON COMPLET (tous les champs, rien n oublier):\n"
-        +"t:i, recap:string court, itin:{\n"
-        +"  dest, country, flag(emoji drapeau), dur(ex '3 jours / 2 nuits'), trav(ex '2 adultes'), style, dep,\n"
+      // Groq DeepSearch cherche les VRAIS prix sur le web — aucun prix hardcodé
+      const itinPrompt = "Tu es Huntify, expert voyage avec acces au web en temps reel.\n"
+        +"VOYAGE DEMANDE: "+infos.destination+" depuis "+infos.ville_depart
+        +", "+adults+" adultes, "+(ci||"bientot")+" au "+(co||"")+" ("+nights+" nuits)"
+        +", budget: "+(infos.budget||"pas de contrainte")
+        +", style: "+(infos.style||"equilibre")+"\n\n"
+        +"ETAPE 1 - RECHERCHE WEB (utilise tes capacites de recherche):\n"
+        +"- Cherche les vrais prix de vols "+infos.ville_depart+" → "+infos.destination+" pour ces dates\n"
+        +"- Cherche les vrais prix d hotels a "+infos.destination+" (3 categories: budget, confort, luxe)\n"
+        +"- Cherche les vrais restaurants populaires locaux avec leurs prix\n"
+        +"- Cherche les activites incontournables et leurs tarifs reels\n\n"
+        +"ETAPE 2 - GENERE le JSON avec les prix trouves:\n"
+        +"t:i, recap:string, itin:{\n"
+        +"  dest, country, flag, dur, trav, style, dep,\n"
         +"  checkin:YYYY-MM-DD, checkout:YYYY-MM-DD, adults,\n"
-        +"  flights:{out:{from:IATA,to:IATA,price:nombre,co:compagnie,dur:duree}, ret:{...}},\n"
-        +"  hotels:[exactement 3 objets: {name:hotel reel existant,stars,price:nombre/nuit,loc,hl:point fort,cat:budget ou confort ou luxe}],\n"
-        +"  days:[un objet par jour: {n,title,am,pm,eve,resto:{name,price:ex '35€/pers',spec},acts:[],budget:nombre}],\n"
-        +"  budget:{vols:total vols, hotel:total nuits, acts:total activites, resto:total restos, transport:local, total:somme, pp:par personne},\n"
-        +"  tips:[4 conseils pratiques et specifiques a la destination]\n"
+        +"  flights:{out:{from:IATA,to:IATA,price:prix reel trouve,co:compagnie reelle,dur}, ret:{...}},\n"
+        +"  hotels:[3 vrais hotels: {name,stars,price:prix reel/nuit,loc,hl,cat:budget/confort/luxe}],\n"
+        +"  days:[{n,title,am,pm,eve,resto:{name,price:prix reel,spec},acts:[activites],budget:total jour}],\n"
+        +"  budget:{vols,hotel,acts,resto,transport,total,pp},\n"
+        +"  tips:[4 conseils specifiques]\n"
         +"}\n"
-        +"CODES IATA obligatoires: Paris=CDG, Marseille=MRS, Nice=NCE, Lyon=LYS, Rome=FCO, Barcelone=BCN, Madrid=MAD, Lisbonne=LIS, Londres=LHR, Amsterdam=AMS.\n"
-        +"Hotels: VRAIS etablissements connus (The Beehive Rome, Hotel Arts Barcelona, Bairro Alto Hotel Lisbonne...).\n"
-        +"Prix: REALISTES et coherents avec le budget demande. PAS de zero. PAS d estimations fantaisistes.\n"
-        +"JSON UNIQUEMENT, pas de markdown.";
+        +"IATA: Paris=CDG, Marseille=MRS, Nice=NCE, Lyon=LYS, Rome=FCO, Barcelone=BCN, Madrid=MAD, Lisbonne=LIS, Londres=LHR.\n"
+        +"Hotels et restaurants: vrais etablissements existants avec vrais prix trouves sur le web.\n"
+        +"JSON UNIQUEMENT.";
 
       // 1. Groq DeepSearch (gratuit, web search) — génération principale
       let itinRaw = await groqSearch(itinPrompt, 2500);
