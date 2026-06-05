@@ -8,53 +8,61 @@ const AMAZON_TAG    = 'huntify21-21';
 const AWIN_PUB      = '2920215';
 const TODAY         = new Date().toISOString().slice(0,10);
 
-// ── TRAVELPAYOUTS HOTELLOOK — vrais prix hôtels ───────────────────────────────
+// ── TRAVELPAYOUTS HOTELLOOK — vrais hotels + vrais prix ─────────────────────
 const TP_MARKER = '536663';
 
-async function fetchHotelPrices(destination, checkin, checkout, adults=2) {
+// Retourne 3 vrais hotels (budget/confort/luxe) depuis Hotellook avec vrais prix
+async function fetchRealHotels(destination, checkin, checkout, adults=2) {
   const token = process.env.TRAVELPAYOUTS_TOKEN;
-  if (!token || !checkin || !checkout) return {};
+  if (!token || !checkin || !checkout) return null;
   try {
-    // API cache Hotellook : prix mis à jour toutes les 24h, gratuit avec token
-    const url = `https://engine.hotellook.com/api/v2/cache.json`
-      + `?location=${encodeURIComponent(destination)}`
-      + `&checkIn=${checkin}`
-      + `&checkOut=${checkout}`
-      + `&adultsCount=${adults}`
-      + `&currency=EUR`
-      + `&token=${token}`
-      + `&limit=20`
-      + `&lang=fr`;
+    const url = 'https://engine.hotellook.com/api/v2/cache.json'
+      + '?location=' + encodeURIComponent(destination)
+      + '&checkIn=' + checkin
+      + '&checkOut=' + checkout
+      + '&adultsCount=' + adults
+      + '&currency=EUR'
+      + '&token=' + token
+      + '&limit=25';
     const r = await fetch(url, { headers:{'Accept':'application/json'} });
-    if (!r.ok) return {};
+    if (!r.ok) return null;
     const data = await r.json();
-    if (!Array.isArray(data)) return {};
-    // Construit un index nom → {price, stars, url, id}
-    const index = {};
-    for (const h of data) {
-      const name = (h.hotelName || h.name || '').toLowerCase().trim();
-      if (!name) continue;
-      const pricePerNight = h.priceFrom ? Math.round(h.priceFrom) : null;
-      // Lien Hotellook affilié avec marker
-      const hotelUrl = h.id
-        ? `https://www.hotellook.com/hotels/${h.id}?marker=${TP_MARKER}&adults=${adults}&checkIn=${checkin}&checkOut=${checkout}&currency=EUR`
-        : null;
-      index[name] = { price: pricePerNight, stars: h.stars, url: hotelUrl, id: h.id };
-    }
-    return index;
-  } catch(e) { return {}; }
+    if (!Array.isArray(data) || !data.length) return null;
+
+    const valid = data
+      .filter(h => h.priceFrom && (h.hotelName||h.name) && h.id)
+      .map(h => ({
+        name:  h.hotelName || h.name,
+        stars: Math.round(h.stars || 3),
+        price: Math.round(h.priceFrom),
+        loc:   (h.location && h.location.name) || destination,
+        url:   'https://www.hotellook.com/hotels/' + h.id + '?marker=' + TP_MARKER + '&adults=' + adults + '&checkIn=' + checkin + '&checkOut=' + checkout + '&currency=EUR',
+        id:    h.id
+      }))
+      .sort((a,b) => a.price - b.price);
+
+    if (valid.length < 2) return null;
+
+    const third = Math.max(1, Math.floor(valid.length / 3));
+    const pick = (arr) => arr[Math.floor(arr.length/2)];
+
+    return [
+      {...pick(valid.slice(0, third)),       cat:'budget',  hl:'Meilleur rapport qualite/prix'},
+      {...pick(valid.slice(third, third*2)),  cat:'confort', hl:'Confort et emplacement ideal'},
+      {...pick(valid.slice(-third)),          cat:'luxe',    hl:'Experience premium'},
+    ];
+  } catch(e) { return null; }
 }
 
-// Construit un lien Hotellook affilié pour la recherche large
 function buildHotellookLink(destination, checkin, checkout, adults=2, minPrice=null, maxPrice=null) {
-  let url = `https://www.hotellook.com/search`
-    + `?location=${encodeURIComponent(destination)}`
-    + `&marker=${TP_MARKER}`
-    + `&adults=${adults}`
-    + `&currency=EUR`;
-  if (checkin && checkout) url += `&checkIn=${checkin}&checkOut=${checkout}`;
-  if (minPrice) url += `&priceMin=${minPrice}`;
-  if (maxPrice) url += `&priceMax=${maxPrice}`;
+  let url = 'https://www.hotellook.com/search'
+    + '?location=' + encodeURIComponent(destination)
+    + '&marker=' + TP_MARKER
+    + '&adults=' + adults
+    + '&currency=EUR';
+  if (checkin && checkout) url += '&checkIn=' + checkin + '&checkOut=' + checkout;
+  if (minPrice) url += '&priceMin=' + minPrice;
+  if (maxPrice) url += '&priceMax=' + maxPrice;
   return url;
 }
 
@@ -744,65 +752,39 @@ RÈGLES:
 
       // Hôtels — vrais prix via Travelpayouts Hotellook
       if (itin.hotels?.length) {
-        // Appel API Hotellook pour vrais prix (parallèle, ne bloque pas)
-        const tpPrices = await fetchHotelPrices(itin.dest||'', ci, co, adults);
-        const hasTpData = Object.keys(tpPrices).length > 0;
+        // Hotellook : vrais hotels avec vrais prix pour ces dates
+        const realHotels = await fetchRealHotels(itin.dest||'', ci, co, adults);
+        const hotelsToShow = realHotels || itin.hotels.map(h=>({
+          name:h.name, stars:h.stars, price:null, loc:h.loc, hl:h.hl,
+          cat:h.cat, url:buildBookingLink([h.name,itin.dest].join(' '),nights,adults,null,null,ci,co)
+        }));
+        const hasReal = !!realHotels;
 
-        html+=`<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">🏨 Hébergements · ${hasTpData?'<span style="color:#16a34a">Prix en temps réel ✓</span>':'Booking.com'}</div>`;
+        html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">🏨 '
+          + (hasReal ? 'Hébergements · <span style="color:#16a34a;font-size:11px">Prix réels Hotellook ✓</span>' : 'Hébergements sur Booking.com')
+          + '</div>';
 
-        const realPrices=[];
-        for (const h of itin.hotels) {
-          // Cherche le prix réel par correspondance de nom (fuzzy)
-          const hNameLow = (h.name||'').toLowerCase();
-          let realPrice = null, realUrl = null;
-
-          if (hasTpData) {
-            // Cherche correspondance exacte puis partielle
-            const exactMatch = tpPrices[hNameLow];
-            if (exactMatch) {
-              realPrice = exactMatch.price;
-              realUrl   = exactMatch.url;
-            } else {
-              // Correspondance partielle : cherche si le nom contient un mot-clé
-              const words = hNameLow.split(' ').filter(w=>w.length>3);
-              for (const [key, val] of Object.entries(tpPrices)) {
-                if (words.some(w=>key.includes(w)||w.includes(key.split(' ')[0]))) {
-                  realPrice = val.price;
-                  realUrl   = val.url;
-                  break;
-                }
-              }
-            }
-          }
-
-          if (realPrice) realPrices.push(realPrice);
-
-          // Lien : Hotellook si prix trouvé, sinon Booking
-          const hLink = realUrl
-            || buildBookingLink([h.name,itin.dest].filter(Boolean).join(' '),nights,adults,null,null,ci,co);
-
-          html+=hotelCard({
-            name:h.name, stars:h.stars,
-            price: realPrice ? String(realPrice) : null,  // null = "Voir le prix"
-            priceReal: !!realPrice,                        // badge "Prix réel"
-            location:h.loc, highlight:h.hl,
-            booking_link:null, category:h.cat
+        const prices = [];
+        for (const h of hotelsToShow) {
+          if (h.price) prices.push(h.price);
+          const hLink = h.url || buildBookingLink([h.name,itin.dest].join(' '),nights,adults,null,null,ci,co);
+          html += hotelCard({
+            name:h.name, stars:h.stars, price:h.price ? String(h.price) : null,
+            priceReal:hasReal && !!h.price, location:h.loc||itin.dest,
+            highlight:h.hl, booking_link:hLink, category:h.cat
           }, hLink);
         }
 
-        // "Voir plus" : Hotellook si token dispo, sinon Booking
-        const minP = realPrices.length ? Math.max(0,Math.min(...realPrices)-20) : null;
-        const maxP = realPrices.length ? Math.max(...realPrices)+50 : null;
-        const exploreUrl = hasTpData
+        const minP = prices.length ? Math.max(0, Math.min(...prices)-20) : null;
+        const maxP = prices.length ? Math.max(...prices)+50 : null;
+        const exploreUrl = hasReal
           ? buildHotellookLink(itin.dest||'', ci, co, adults, minP, maxP)
           : buildBookingLink(itin.dest||'', nights, adults, minP, maxP, ci, co);
-        const exploreSrc = hasTpData ? 'Hotellook' : 'Booking.com';
 
-        html+=`<a href="${exploreUrl}" target="_blank" rel="sponsored noopener" style="display:flex;align-items:center;justify-content:center;gap:8px;background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;text-decoration:none;border-radius:12px;padding:11px;margin-top:8px;font-size:12px;font-weight:700">
-          🔍 Voir d'autres hôtels sur ${exploreSrc}${ci?' ('+ci+' → '+co+')':''} →
-        </a>`;
+        html += '<a href="' + exploreUrl + '" target="_blank" rel="sponsored noopener" '
+          + 'style="display:flex;align-items:center;justify-content:center;gap:8px;background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;text-decoration:none;border-radius:12px;padding:11px;margin-top:8px;font-size:12px;font-weight:700">'
+          + '🔍 Voir plus d'hôtels' + (hasReal ? ' sur Hotellook' : '') + (ci ? ' ('+ci+' → '+co+')' : '') + ' →</a>';
       }
-
       // Programme
       if (itin.days?.length) {
         html+=`<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">📅 Programme jour par jour</div>`;
