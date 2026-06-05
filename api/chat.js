@@ -319,21 +319,20 @@ function hasFreeAI() {
   return !!(process.env.GROQ_API_KEY||process.env.GEMINI_API_KEY||process.env.MISTRAL_API_KEY);
 }
 
-// CLAUDE — avec cache_control sur le system prompt (économie 90% tokens entrée)
+// CLAUDE
 async function callClaude(sys, user, maxTok=700, tools=[]) {
-  const r = await fetch('https://api.anthropic.com/v1/messages',{
-    method:'POST',
-    headers:{'Content-Type':'application/json; charset=utf-8',
-      'x-api-key':process.env.ANTHROPIC_API_KEY,
-      'anthropic-version':'2023-06-01',
-      'anthropic-beta':'prompt-caching-2024-07-31'},   // active le cache
+  const r = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"Content-Type":"application/json; charset=utf-8",
+      "x-api-key":process.env.ANTHROPIC_API_KEY,
+      "anthropic-version":"2023-06-01"},
     body:JSON.stringify({model:MODEL, max_tokens:maxTok, tools,
-      system:[{type:'text',text:sys, cache_control:{type:'ephemeral'}}], // ← système mis en cache
-      messages:[{role:'user',content:user}]})
+      system:sys,
+      messages:[{role:"user",content:user}]})
   });
   const d=await r.json();
-  if (!r.ok) throw new Error(d.error?.message||'Claude error');
-  let t=''; for(const b of d.content){if(b.type==='text')t+=b.text;} return t;
+  if (!r.ok) throw new Error(d.error?.message||"Claude error");
+  let t=""; for(const b of d.content){if(b.type==="text")t+=b.text;} return t;
 }
 
 function parseJSON(raw) {
