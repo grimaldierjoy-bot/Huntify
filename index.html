@@ -84,7 +84,7 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
   </div>
 </header>
 
-<!-- HERO foncé -->
+<!-- HERO -->
 <section style="position:relative;overflow:hidden;padding:34px 22px 46px;background:radial-gradient(120% 90% at 70% 0%,#3a5cff 0%,#1f2da0 55%,#141e6b 100%)">
   <div style="position:absolute;inset:0;opacity:.55;background:radial-gradient(40% 30% at 85% 12%,rgba(255,255,255,.18),transparent 70%),radial-gradient(50% 40% at 8% 92%,rgba(120,160,255,.28),transparent 70%)"></div>
   <div style="position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:34px 34px;-webkit-mask:radial-gradient(70% 60% at 50% 18%,#000,transparent 75%);mask:radial-gradient(70% 60% at 50% 18%,#000,transparent 75%)"></div>
@@ -110,7 +110,6 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
         <div><div style="font-family:var(--display);font-weight:700;font-size:15px;color:#fff">Intelligence Artificielle Huntify</div><div style="font-size:11.5px;color:rgba(255,255,255,.72)">Recherche temps réel · Amazon · Rakuten</div></div>
         <div style="margin-left:auto;background:rgba(255,255,255,.16);border-radius:100px;padding:4px 11px"><span style="font-size:10.5px;color:#fff;font-weight:700">EN LIGNE</span></div>
       </div>
-      <!-- Toggle Comparateur / Voyage — dans le header bleu, bien visible -->
       <div id="modeToggle" style="display:flex;background:rgba(255,255,255,.15);border-radius:100px;padding:4px;gap:4px">
         <button id="btnProduct" onclick="switchMode('product')" style="flex:1;border:none;border-radius:100px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:#fff;color:#2f54ff;transition:.2s">🛍️ Comparateur</button>
         <button id="btnTravel" onclick="switchMode('travel')" style="flex:1;border:none;border-radius:100px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:transparent;color:rgba(255,255,255,.8);transition:.2s">✈️ Voyage</button>
@@ -187,7 +186,7 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
 </footer>
 </div>
 
-<!-- ══ BANDEAU COOKIES ══ -->
+<!-- COOKIES -->
 <div class="cookie-banner" id="cookieBanner">
   <div class="cookie-inner">
     <div style="display:flex;align-items:flex-start;gap:12px">
@@ -204,7 +203,7 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
   </div>
 </div>
 
-<!-- ══ AUTH MODAL ══ -->
+<!-- AUTH MODAL -->
 <div class="auth-overlay" id="authOverlay">
   <div class="auth-sheet">
     <div style="width:40px;height:4px;background:var(--line);border-radius:100px;margin:0 auto 24px"></div>
@@ -224,7 +223,7 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
   </div>
 </div>
 
-<!-- ══ NOTIFICATIONS (alertes prix in-app) ══ -->
+<!-- NOTIFICATIONS -->
 <div class="modal-bg" id="notifBg">
   <div class="modal" id="notifContent">
     <div style="width:40px;height:4px;background:var(--line);border-radius:100px;margin:0 auto 22px"></div>
@@ -236,7 +235,7 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
   </div>
 </div>
 
-<!-- ══ MON COMPTE ══ -->
+<!-- MON COMPTE -->
 <div class="account-panel" id="accountPanel">
   <div style="max-width:480px;margin:0 auto;padding:0 0 40px">
     <header style="background:#fff;border-bottom:1px solid var(--line);padding:16px 20px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10">
@@ -268,7 +267,7 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
   </div>
 </div>
 
-<!-- ══ MODAL ALERTE ══ -->
+<!-- MODAL ALERTE -->
 <div class="modal-bg" id="modalBg">
   <div class="modal" id="modalContent">
     <div style="width:40px;height:4px;background:var(--line);border-radius:100px;margin:0 auto 22px"></div>
@@ -296,15 +295,10 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 const CHIPS = ["Casque audio","Sneakers","Protéines","Airfryer","Montre connectée","Legging sport"];
 
 let typing = false, chatHistory = [], currentUser = null;
-let huntifyMode = 'product'; // 'product' | 'travel'
-// Contexte voyage : mémorise ce qu'on sait déjà pour éviter les boucles
+let huntifyMode = 'product';
 let travelContext = {
-  destination: null,   // ex: "Lisbonne"
-  budget: null,        // ex: "1000€"
-  duration: null,      // ex: "7 jours"
-  travelers: null,     // ex: "2 adultes"
-  style: null,         // ex: "culture"
-  suggestionsShown: false  // true si on a déjà proposé des destinations
+  destination: null, budget: null, duration: null, travelers: null,
+  style: null, suggestionsShown: false
 };
 let cookieConsent = localStorage.getItem('hconsent');
 let sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -385,20 +379,12 @@ function switchTab(tab) {
   });
 }
 
-// ── WISHLIST ──
-async function addToWishlist(product) {
-// ============================================================
-// PATCH index.html — 3 fonctions à remplacer/ajouter
-// Copier-coller dans le <script> existant de index.html
-// ============================================================
-
-// ── 1. REMPLACER addToWishlist() ─────────────────────────────
-// Sauvegarde basique en Supabase + données enrichies en localStorage
+// ── WISHLIST ── (MODIFIÉ : enrichie avec données voyage)
 async function addToWishlist(product) {
   if (!currentUser) { openAuth(); return; }
   if (cookieConsent !== 'yes') { alert('Accepte les cookies pour utiliser la wishlist !'); return; }
 
-  // Sauvegarde Supabase (pour sync cross-device)
+  // Supabase : infos de base
   await sb.from('wishlist').insert({
     user_id: currentUser.id,
     product_name: product.name,
@@ -407,109 +393,92 @@ async function addToWishlist(product) {
     product_url: product.url
   });
 
-  // Sauvegarde localStorage (données enrichies pour affichage)
+  // localStorage : données enrichies (hôtels, vols, budget)
   try {
-    const lsKey = 'huntify_wishlist_enriched';
-    const existing = JSON.parse(localStorage.getItem(lsKey)||'[]');
-    const dedup = existing.filter(i => i.name !== product.name);
-    dedup.unshift({ ...product, addedAt: new Date().toISOString() });
-    localStorage.setItem(lsKey, JSON.stringify(dedup.slice(0, 50)));
+    const key = 'huntify_wishlist_enriched';
+    const list = JSON.parse(localStorage.getItem(key)||'[]');
+    const dedup = list.filter(i => i.name !== product.name);
+    dedup.unshift({...product, addedAt: new Date().toISOString()});
+    localStorage.setItem(key, JSON.stringify(dedup.slice(0,50)));
   } catch(e) {}
 
   document.dispatchEvent(new CustomEvent('wishlist-added', { detail: product.name }));
-  msgs.push({from:'bot', text:`♡ <b>${product.name}</b> ajouté à ta wishlist !`});
+  msgs.push({from:'bot', text:`♡ <b>${product.name}</b> ajouté à ta wishlist ! Retrouve-le dans ton compte.`});
   renderChat();
 }
 
-// ── 2. REMPLACER loadWishlist() ──────────────────────────────
-// Affiche les données enrichies (hôtels, vols, budget) pour les voyages
+document.addEventListener('wishlist-added', () => {
+  const btn = document.getElementById('authBtn');
+  btn.style.background = 'linear-gradient(135deg,#f59e0b,#d97706)';
+  setTimeout(()=>updateAuthBtn(), 1500);
+});
+
 async function loadWishlist() {
   if (!currentUser) return;
-  const { data } = await sb.from('wishlist')
-    .select('*').eq('user_id', currentUser.id)
-    .order('created_at', {ascending:false}).limit(30);
-
+  const { data } = await sb.from('wishlist').select('*').eq('user_id',currentUser.id).order('created_at',{ascending:false}).limit(30);
   const el = document.getElementById('wishlistItems');
   if (!data || !data.length) {
-    el.innerHTML = `<div style="text-align:center;padding:20px 0">
-      <div style="font-size:32px;margin-bottom:8px">♡</div>
-      <div style="color:#7c89a8;font-size:13px">Ta wishlist est vide.<br>Utilise le chat pour sauvegarder tes trouvailles !</div>
-    </div>`;
+    el.innerHTML='<div style="text-align:center;padding:20px 0"><div style="font-size:32px;margin-bottom:8px">♡</div><div style="color:#7c89a8;font-size:13px">Ta wishlist est vide.<br>Utilise le chat pour trouver des produits !</div></div>';
     return;
   }
 
-  // Récupérer les données enrichies depuis localStorage
+  // Données enrichies depuis localStorage
   let enriched = {};
   try {
-    const lsData = JSON.parse(localStorage.getItem('huntify_wishlist_enriched')||'[]');
-    lsData.forEach(i => { enriched[i.name] = i; });
+    JSON.parse(localStorage.getItem('huntify_wishlist_enriched')||'[]').forEach(i => enriched[i.name] = i);
   } catch(e) {}
 
-  const catColors = { budget:'#16a34a', confort:'#2f54ff', luxe:'#7c3aed' };
-  const catLabels = { budget:'💚 Budget', confort:'💙 Confort', luxe:'💎 Luxe' };
+  const catColors = {budget:'#16a34a', confort:'#2f54ff', luxe:'#7c3aed'};
+  const catLabels = {budget:'💚 Budget', confort:'💙 Confort', luxe:'💎 Luxe'};
 
   el.innerHTML = data.map(item => {
     const isVoyage = item.product_store === 'booking' || (item.product_name||'').includes('✈️') || (item.product_name||'').startsWith('Voyage');
     const rich = enriched[item.product_name] || {};
-    const date = new Date(item.created_at).toLocaleDateString('fr', {day:'numeric', month:'short'});
+    const date = new Date(item.created_at).toLocaleDateString('fr',{day:'numeric',month:'short'});
+    const gradient = isVoyage ? 'linear-gradient(135deg,#1f2da0,#2f54ff)' : 'linear-gradient(135deg,#2f54ff,#4a6bff)';
 
     if (isVoyage && rich.hotels?.length) {
-      // VOYAGE — affichage enrichi avec hôtels
+      // Voyage enrichi avec hôtels
       return `<div style="background:#fff;border:1px solid #e6ebf7;border-radius:14px;padding:14px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
           <div style="flex:1">
             <div style="font-size:14px;font-weight:800;color:#0e1430">${item.product_name}</div>
             <div style="font-size:11px;color:#7c89a8;margin-top:2px">${rich.subtitle||''}</div>
             <div style="font-size:13px;font-weight:800;color:#2f54ff;margin-top:4px">
-              ${rich.price||''}
-              ${rich.perPerson?`<span style="font-size:11px;color:#94a3b8;font-weight:400"> · ${rich.perPerson}</span>`:''}
+              ${rich.price||''}${rich.perPerson?` <span style="font-size:11px;color:#94a3b8;font-weight:400">· ${rich.perPerson}</span>`:''}
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <span style="font-size:10px;color:#94a3b8">${date}</span>
-            <button onclick="removeFromWishlist(${item.id})" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:18px;padding:0;line-height:1">×</button>
+            <button onclick="removeFromWishlist(${item.id})" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:18px;padding:0">×</button>
           </div>
         </div>
         <div style="margin-bottom:10px">
           <div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase;margin-bottom:5px">🏨 Hôtels</div>
-          ${rich.hotels.map(h=>`
-            <a href="${h.url||'#'}" target="_blank" style="display:flex;justify-content:space-between;align-items:center;background:#f8faff;border-radius:9px;padding:7px 10px;margin-bottom:4px;text-decoration:none;gap:8px">
-              <span style="font-size:10px;font-weight:700;color:${catColors[h.cat]||'#2f54ff'}">${catLabels[h.cat]||'🏨'}</span>
-              <span style="flex:1;font-size:12px;font-weight:600;color:#0e1430">${h.name}</span>
-              <span style="font-size:12px;font-weight:700;color:#2f54ff">${h.price}</span>
-            </a>`).join('')}
+          ${rich.hotels.map(h=>`<a href="${h.url||'#'}" target="_blank" style="display:flex;justify-content:space-between;align-items:center;background:#f8faff;border-radius:9px;padding:7px 10px;margin-bottom:4px;text-decoration:none;gap:8px">
+            <span style="font-size:10px;font-weight:700;color:${catColors[h.cat]||'#2f54ff'}">${catLabels[h.cat]||'🏨'}</span>
+            <span style="flex:1;font-size:12px;font-weight:600;color:#0e1430">${h.name}</span>
+            <span style="font-size:12px;font-weight:700;color:#2f54ff">${h.price}</span>
+          </a>`).join('')}
         </div>
         <div style="display:flex;gap:8px">
           <a href="${item.product_url||'#'}" target="_blank" style="flex:1;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1f2da0,#2f54ff);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:12px;font-weight:700">🏨 Booking</a>
           ${rich.flightUrl?`<a href="${rich.flightUrl}" target="_blank" style="flex:1;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:12px;font-weight:700">✈️ Vols</a>`:''}
         </div>
       </div>`;
-    } else if (isVoyage) {
-      // VOYAGE — affichage simple (sans données enrichies)
-      return `<div style="background:#fff;border:1px solid #e6ebf7;border-radius:14px;padding:14px;margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#1f2da0,#2f54ff);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">✈️</div>
-          <div style="flex:1">
-            <div style="font-size:13px;font-weight:700;color:#0e1430">${item.product_name}</div>
-            <div style="font-size:11px;color:#7c89a8">${item.product_price||''} · ${date}</div>
-          </div>
-          <div style="display:flex;gap:6px">
-            <a href="${item.product_url||'#'}" target="_blank" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);color:#fff;text-decoration:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700">Voir</a>
-            <button onclick="removeFromWishlist(${item.id})" style="background:#fff;border:1.5px solid #fee2e2;color:#ef4444;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit">✕</button>
-          </div>
-        </div>
-      </div>`;
     } else {
-      // PRODUIT
-      return `<div style="background:#fff;border:1px solid #e6ebf7;border-radius:14px;padding:14px;margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#2f54ff,#4a6bff);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">🛍️</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:700;color:#0e1430;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.product_name}</div>
-            <div style="font-size:11px;color:#7c89a8;margin-top:2px">${item.product_store} · ${item.product_price||'Prix non dispo'} · ${date}</div>
+      // Produit ou voyage sans données enrichies
+      return `<div style="background:#fff;border:1px solid #e6ebf7;border-radius:14px;padding:12px 14px;margin-bottom:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+            <div style="width:36px;height:36px;border-radius:10px;background:${gradient};display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">${isVoyage?'✈️':'🛍️'}</div>
+            <div style="min-width:0">
+              <div style="font-size:13px;font-weight:700;color:#0e1430;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.product_name}</div>
+              <div style="font-size:11px;color:#7c89a8;margin-top:2px">${item.product_store} · ${item.product_price||'Prix non dispo'} · ${date}</div>
+            </div>
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
-            <a href="${item.product_url||'#'}" target="_blank" style="background:linear-gradient(135deg,#2f54ff,#4a6bff);color:#fff;text-decoration:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700">Voir</a>
+            <a href="${item.product_url}" target="_blank" style="background:${gradient};color:#fff;text-decoration:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700">${isVoyage?'Réserver':'Voir'}</a>
             <button onclick="removeFromWishlist(${item.id})" style="background:#fff;border:1.5px solid #fee2e2;color:#ef4444;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit">✕</button>
           </div>
         </div>
@@ -518,67 +487,6 @@ async function loadWishlist() {
   }).join('');
 }
 
-// ── 3. AJOUTER exportItinerary() ────────────────────────────
-// Exporte l'itinéraire en page imprimable / PDF
-function exportItinerary(itinId) {
-  // Chercher le conteneur de l'itinéraire par son ID
-  const el = itinId ? document.getElementById(itinId) : null;
-
-  // Si pas d'ID, chercher le dernier message bot contenant un itinéraire
-  let content = '';
-  if (el) {
-    // Remonter au parent du message
-    let parent = el.parentElement;
-    while (parent && !parent.classList.contains('up')) parent = parent.parentElement;
-    content = parent ? parent.innerHTML : el.outerHTML;
-  } else {
-    // Fallback : dernier message bot avec vols ou programme
-    const botMsgs = document.querySelectorAll('[style*="5px 17px 17px 17px"]');
-    botMsgs.forEach(m => {
-      if (m.innerHTML.includes('Vols recommandés') || m.innerHTML.includes('Programme jour')) {
-        content = m.innerHTML;
-      }
-    });
-  }
-
-  if (!content) {
-    alert('Aucun itinéraire à exporter. Générez d\'abord votre voyage !');
-    return;
-  }
-
-  const win = window.open('', '_blank', 'width=820,height=950');
-  win.document.write(`<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <title>Mon Itinéraire Huntify</title>
-  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <style>
-    * { box-sizing:border-box; margin:0; padding:0; }
-    body { font-family:'Plus Jakarta Sans',Arial,sans-serif; max-width:680px; margin:0 auto; padding:24px; color:#1e293b; background:#f4f7ff; }
-    * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-    a { color:#2f54ff; }
-    @media print { .no-print { display:none !important; } body { background:#fff; padding:16px; } }
-    .top-bar { background:#fff; border-radius:16px; padding:16px 20px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; border:1px solid #e6ebf7; }
-    .logo { font-family:'Sora',sans-serif; font-size:20px; font-weight:800; color:#0e1430; }
-    .logo span { color:#2f54ff; }
-    .print-btn { background:linear-gradient(135deg,#2f54ff,#4a6bff); color:#fff; border:none; border-radius:10px; padding:10px 22px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; }
-    .content { background:#fff; border-radius:16px; padding:20px; border:1px solid #e6ebf7; }
-  </style>
-</head>
-<body>
-  <div class="top-bar no-print">
-    <div>
-      <div class="logo">Hunt<span>ify</span> · Feuille de route</div>
-      <div style="font-size:12px;color:#7c89a8;margin-top:2px">Générée le ${new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}</div>
-    </div>
-    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
-  </div>
-  <div class="content">${content}</div>
-</body>
-</html>`);
-  win.document.close();
-}
 async function removeFromWishlist(id) { await sb.from('wishlist').delete().eq('id',id); loadWishlist(); }
 
 async function loadSearchHistory() {
@@ -592,6 +500,7 @@ async function loadSearchHistory() {
       <span style="font-size:11px;color:#94a3b8">${new Date(s.created_at).toLocaleDateString('fr')}</span>
     </div>`).join('');
 }
+
 async function loadTrends() {
   const { data } = await sb.from('trends').select('query,count').order('count',{ascending:false}).limit(8);
   const el = document.getElementById('globalTrends');
@@ -599,6 +508,55 @@ async function loadTrends() {
   el.innerHTML = data.map(t=>`
     <button onclick="send('${t.query.replace(/'/g,"\\'")}');closeAccount();" style="background:#eef2ff;border:1px solid #bfdbfe;color:#2f54ff;border-radius:100px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;margin:3px">
       ${t.query} <span style="opacity:.6">(${t.count})</span></button>`).join('');
+}
+
+// ── EXPORT ITINÉRAIRE ── (NOUVEAU)
+function exportItinerary(itinId) {
+  const el = itinId ? document.getElementById(itinId) : null;
+  let content = '';
+  if (el) {
+    let parent = el;
+    // Remonter pour avoir tout le contenu du message voyage
+    while (parent && !parent.style.maxWidth) parent = parent.parentElement;
+    content = parent ? parent.innerHTML : el.outerHTML;
+  }
+  // Fallback : dernier message bot avec contenu voyage
+  if (!content) {
+    document.querySelectorAll('#chatBox > div').forEach(div => {
+      const inner = div.querySelector('[style*="17px 17px 17px"]') || div.querySelector('[style*="5px 17px"]');
+      if (inner && (inner.innerHTML.includes('Vols recommandés') || inner.innerHTML.includes('Programme jour'))) {
+        content = inner.innerHTML;
+      }
+    });
+  }
+  if (!content) { alert('Aucun itinéraire à exporter. Générez d\'abord votre voyage !'); return; }
+  const win = window.open('', '_blank', 'width=820,height=950');
+  win.document.write(`<!DOCTYPE html>
+<html lang="fr"><head>
+<meta charset="UTF-8">
+<title>Mon Itinéraire Huntify</title>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:'Plus Jakarta Sans',Arial,sans-serif; max-width:680px; margin:0 auto; padding:24px; color:#1e293b; background:#f4f7ff; }
+* { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+a { color:#2f54ff; }
+@media print { .no-print { display:none !important; } body { background:#fff; padding:16px; } }
+.top { background:#fff; border-radius:16px; padding:16px 20px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; border:1px solid #e6ebf7; }
+.logo { font-family:'Sora',sans-serif; font-size:20px; font-weight:800; color:#0e1430; }
+.logo span { color:#2f54ff; }
+.btn { background:linear-gradient(135deg,#2f54ff,#4a6bff); color:#fff; border:none; border-radius:10px; padding:10px 22px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; }
+.content { background:#fff; border-radius:16px; padding:20px; border:1px solid #e6ebf7; }
+</style>
+</head><body>
+<div class="top no-print">
+  <div><div class="logo">Hunt<span>ify</span> · Feuille de route</div>
+  <div style="font-size:12px;color:#7c89a8;margin-top:2px">Générée le ${new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}</div></div>
+  <button class="btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+</div>
+<div class="content">${content}</div>
+</body></html>`);
+  win.document.close();
 }
 
 // ── CHAT ──
@@ -631,33 +589,24 @@ async function send(txt){
     const reply = data.reply || "Désolé, réessayez.";
     chatHistory.push({role:"assistant", content:stripHtml(reply)});
 
-    // Mise à jour du contexte voyage depuis le message utilisateur
     if (huntifyMode === 'travel') {
       const msgLow = q.toLowerCase();
-      // Détection budget
       const budgetM = q.match(/(\d+)\s*(?:€|euros?)/i);
       if (budgetM) travelContext.budget = budgetM[0];
-      // Détection durée
       const durM = q.match(/(\d+)\s*(?:jours?|nuits?|semaines?)/i);
       if (durM) travelContext.duration = durM[0];
-      // Détection voyageurs
       const travM = q.match(/(\d+)\s*(?:personnes?|adultes?|enfants?)/i);
       if (travM) travelContext.travelers = travM[0];
-      // Détection style
       if (/chill|plage|repos|détente/.test(msgLow)) travelContext.style = 'chill';
       if (/culture|musée|histoire|monument/.test(msgLow)) travelContext.style = 'culture';
       if (/aventure|randonnée|sport|nature/.test(msgLow)) travelContext.style = 'aventure';
       if (/famille|enfant|kids/.test(msgLow)) travelContext.style = 'famille';
       if (/romantique|amoureux|couple/.test(msgLow)) travelContext.style = 'romantique';
-      // Détection destination (si la réponse contient un itinéraire → on a une destination)
       if (reply.includes('Jour 1') || reply.includes('Programme jour')) {
-        // L'itinéraire a été généré, la destination est dans le contexte
         travelContext.suggestionsShown = true;
       }
-      // Si le message ressemble à une destination choisie après suggestions
       if (travelContext.suggestionsShown || reply.includes('destinations')) {
         travelContext.suggestionsShown = true;
-        // Mémorise comme destination si c'est une réponse courte après suggestions
         if (q.trim().split(' ').length <= 5 && !budgetM && !durM) {
           travelContext.destination = q.trim();
         }
@@ -672,7 +621,7 @@ async function send(txt){
   renderChat();
 }
 
-// ── MODE TOGGLE ──────────────────────────────────────────────
+// ── MODE TOGGLE ──
 function switchMode(mode) {
   huntifyMode = mode;
   const btnP = document.getElementById('btnProduct');
@@ -702,7 +651,7 @@ function renderChips(){
   document.querySelectorAll('#chipRow .chip').forEach((b,i)=>b.onclick=()=>send(CHIPS[i]));
 }
 
-// ── DEALS DYNAMIQUES (daily_deals + fallback data.js) ──
+// ── DEALS ──
 let DEALS_DATA = [], dealCat = "Tous", dealSort = "pct";
 const CAT_META = [{key:"Tous",em:"✨"},{key:"Mode",em:"👕"},{key:"Électronique",em:"📱"},{key:"Maison",em:"🏠"},{key:"Santé",em:"💊"}];
 const SORT_META = [{key:"pct",label:"🔥 Réductions"},{key:"new",label:"⏱ Nouveautés"},{key:"price",label:"€ Prix bas"}];
@@ -799,7 +748,7 @@ document.getElementById('submitAlertBtn').onclick = async ()=>{
 // ── AUTH STATE ──
 sb.auth.onAuthStateChange((event, session) => { currentUser = session?.user || null; updateAuthBtn(); loadAlerts(); });
 
-// ── NOTIFICATIONS / ALERTES IN-APP ──
+// ── NOTIFICATIONS ──
 async function loadAlerts() {
   const bell = document.getElementById('bellBtn'), countEl = document.getElementById('bellCount');
   if (!currentUser || cookieConsent !== 'yes') { bell.style.display='none'; return; }
