@@ -507,7 +507,7 @@ function hotelCard(h, bookingUrl) {
     ${h.highlight?`<div style="font-size:11px;color:#2f54ff;font-weight:600;background:#eff6ff;border-radius:8px;padding:4px 10px">✨ ${h.highlight}</div>`:''}
     <div style="background:${hasRealPrice?'#f0fdf4':'#f0f9ff'};border-radius:8px;padding:6px 10px;display:flex;align-items:center;gap:6px;margin-top:2px">
       <span style="font-size:11px">${hasRealPrice?'🟢':'🏨'}</span>
-      <span style="font-size:11px;color:${hasRealPrice?'#15803d':'#0369a1'};font-weight:600">${hasRealPrice?'Prix vérifié · Réserver sur Hotellook →':'Voir disponibilités sur Booking.com →'}</span>
+      <span style="font-size:11px;color:${hasRealPrice?'#15803d':'#0369a1'};font-weight:600">${hasRealPrice?'Prix vérifié · Réserver sur Hotellook →':'Voir les prix en temps réel sur Hotellook →'}</span>
     </div>
   </a>`;
 }
@@ -753,38 +753,64 @@ RÈGLES:
       // Hôtels — vrais prix via Travelpayouts Hotellook
       if (itin.hotels?.length) {
         // Hotellook : vrais hotels avec vrais prix pour ces dates
-        const realHotels = await fetchRealHotels(itin.dest||'', ci, co, adults);
-        const hotelsToShow = realHotels || itin.hotels.map(h=>({
-          name:h.name, stars:h.stars, price:null, loc:h.loc, hl:h.hl,
-          cat:h.cat, url:buildBookingLink([h.name,itin.dest].join(' '),nights,adults,null,null,ci,co)
-        }));
-        const hasReal = !!realHotels;
+        // ── HOTELLOOK : vrais prix si API dispo, liens directs sinon ────────
+        // Tente l'API (marche si compte TP activé + dates fournies)
+        const realHotels = (ci && co) ? await fetchRealHotels(itin.dest||'', ci, co, adults) : null;
+        const hasReal = Array.isArray(realHotels) && realHotels.length > 0;
 
         html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">🏨 '
-          + (hasReal ? 'Hébergements · <span style="color:#16a34a;font-size:11px">Prix réels Hotellook ✓</span>' : 'Hébergements sur Booking.com')
-          + '</div>';
+          + 'Hébergements · <span style="color:' + (hasReal ? '#16a34a' : '#2f54ff') + ';font-size:11px">'
+          + (hasReal ? 'Prix réels ✓' : 'Hotellook · cliquez pour les prix')
+          + '</span></div>';
 
-        const prices = [];
+        // Hotels à afficher : vrais si API OK, sinon noms Claude avec liens Hotellook
+        const hotelsToShow = hasReal ? realHotels : (itin.hotels || []).map((h, i) => ({
+          name:  h.name,
+          stars: h.stars || 3,
+          price: null,
+          loc:   h.loc || itin.dest,
+          hl:    h.hl,
+          cat:   ['budget','confort','luxe'][i] || h.cat || 'confort',
+          // Lien Hotellook avec destination + dates + fourchette de prix par catégorie
+          url: 'https://www.hotellook.com/search?location=' + encodeURIComponent(itin.dest||'')
+               + '&marker=' + TP_MARKER
+               + '&adults=' + adults
+               + (ci ? '&checkIn=' + ci : '')
+               + (co ? '&checkOut=' + co : '')
+               + '&currency=EUR'
+               + (i===0 ? '&priceMax=100' : i===1 ? '&priceMin=80&priceMax=200' : '&priceMin=180')
+        }));
+
+        const prices = hotelsToShow.filter(h=>h.price).map(h=>h.price);
+
         for (const h of hotelsToShow) {
-          if (h.price) prices.push(h.price);
-          const hLink = h.url || buildBookingLink([h.name,itin.dest].join(' '),nights,adults,null,null,ci,co);
           html += hotelCard({
-            name:h.name, stars:h.stars, price:h.price ? String(h.price) : null,
-            priceReal:hasReal && !!h.price, location:h.loc||itin.dest,
-            highlight:h.hl, booking_link:hLink, category:h.cat
-          }, hLink);
+            name:      h.name,
+            stars:     h.stars,
+            price:     h.price ? String(h.price) : null,
+            priceReal: hasReal && !!h.price,
+            location:  h.loc || itin.dest,
+            highlight: h.hl,
+            booking_link: h.url,
+            category:  h.cat
+          }, h.url);
         }
 
-        const minP = prices.length ? Math.max(0, Math.min(...prices)-20) : null;
-        const maxP = prices.length ? Math.max(...prices)+50 : null;
-        const exploreUrl = hasReal
-          ? buildHotellookLink(itin.dest||'', ci, co, adults, minP, maxP)
-          : buildBookingLink(itin.dest||'', nights, adults, minP, maxP, ci, co);
+        // Bouton "Voir plus" → toujours Hotellook avec dates
+        const exploreUrl = 'https://www.hotellook.com/search?location=' + encodeURIComponent(itin.dest||'')
+          + '&marker=' + TP_MARKER
+          + '&adults=' + adults
+          + (ci ? '&checkIn=' + ci : '')
+          + (co ? '&checkOut=' + co : '')
+          + '&currency=EUR';
 
         html += '<a href="' + exploreUrl + '" target="_blank" rel="sponsored noopener" '
-          + 'style="display:flex;align-items:center;justify-content:center;gap:8px;background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;text-decoration:none;border-radius:12px;padding:11px;margin-top:8px;font-size:12px;font-weight:700">'
-          + '🔍 Voir plus d'hôtels' + (hasReal ? ' sur Hotellook' : '') + (ci ? ' ('+ci+' → '+co+')' : '') + ' →</a>';
-      }
+          + 'style="display:flex;align-items:center;justify-content:center;gap:8px;'
+          + 'background:linear-gradient(135deg,#0e1430,#2f54ff);color:#fff;text-decoration:none;'
+          + 'border-radius:12px;padding:12px;margin-top:8px;font-size:12px;font-weight:700">'
+          + '🏨 Voir tous les hôtels disponibles sur Hotellook'
+          + (ci ? ' · ' + ci + ' → ' + co : '')
+          + ' →</a>';
       // Programme
       if (itin.days?.length) {
         html+=`<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">📅 Programme jour par jour</div>`;
