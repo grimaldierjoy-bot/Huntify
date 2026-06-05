@@ -76,10 +76,12 @@ function buildLink(adv, keywords, directUrl) {
     return base+"?tag="+tag;
   }
   if (adv.slug==="rakuten") {
+    // Lien direct Rakuten avec tag affilié dans le referer Awin
     const mid = adv.awin_mid||RAKUTEN_MID;
     const aff = adv.awin_affid||adv.awin_aff||AWIN_PUB;
-    const dest = "https://fr.shopping.rakuten.com/s/"+encodeURIComponent(kw.replace(/\s+/g,"+"));
-    return "https://www.awin1.com/cread.php?awinmid="+mid+"&awinaffid="+aff+"&ued="+encodeURIComponent(dest);
+    const searchUrl = "https://fr.shopping.rakuten.com/s/"+encodeURIComponent(kw.replace(/\s+/g,"+"));
+    // Lien Awin direct → Rakuten FR (fonctionne même sans approbation)
+    return "https://www.awin1.com/cread.php?awinmid="+mid+"&awinaffid="+aff+"&clickref=huntify&ued="+encodeURIComponent(searchUrl);
   }
   if (adv.awin_mid) {
     const aff = adv.awin_affid||adv.awin_aff||AWIN_PUB;
@@ -108,32 +110,33 @@ function skyscannerLink(from, to, ci, co, adults) {
 }
 
 // Booking.com — lien affilié Travelpayouts (marker 536663)
-// ── BOOKING.COM (principal, via Travelpayouts) ───────────────────────────────
-// Lien affilié TP : commission trackée via marker 536663
+// ── BOOKING.COM — lien direct avec dates et filtres ──────────────────────────
+// Quand les IDs Travelpayouts seront disponibles, on ajoutera le wrapper TP
 function bookingLink(dest, ci, co, adults, cat) {
   const rooms = Math.ceil((adults||2)/2);
-  let bookUrl = "https://www.booking.com/searchresults.html"
+  let url = "https://www.booking.com/searchresults.html"
     +"?ss="+encodeURIComponent(dest||"")
-    +"&group_adults="+(adults||2)+"&no_rooms="+rooms+"&lang=fr";
-  if (ci) bookUrl += "&checkin="+ci;
-  if (co) bookUrl += "&checkout="+co;
-  // Filtre étoiles selon catégorie
-  if (cat==="budget")  bookUrl += "&nflt=class%3D2%3Bclass%3D3";
-  if (cat==="confort") bookUrl += "&nflt=class%3D3%3Bclass%3D4";
-  if (cat==="luxe")    bookUrl += "&nflt=class%3D4%3Bclass%3D5";
-  // Tracking Travelpayouts (programme Booking.com = ID 4)
-  return "https://tp.media/r?marker="+TP_MARKER+"&trs=233049&p=4&u="+encodeURIComponent(bookUrl);
+    +"&group_adults="+(adults||2)+"&no_rooms="+rooms
+    +"&lang=fr&selected_currency=EUR";
+  if (ci) url += "&checkin="+ci;
+  if (co) url += "&checkout="+co;
+  // Filtres étoiles selon catégorie (Budget=2-3★, Confort=3-4★, Luxe=4-5★)
+  if (cat==="budget")  url += "&nflt=class%3D2%3Bclass%3D3";
+  if (cat==="confort") url += "&nflt=class%3D3%3Bclass%3D4";
+  if (cat==="luxe")    url += "&nflt=class%3D4%3Bclass%3D5";
+  url += "&order=popularity";
+  return url;
 }
 
-// ── EXPEDIA.FR (via Travelpayouts) ────────────────────────────────────────────
+// ── EXPEDIA.FR — lien direct avec dates ──────────────────────────────────────
 function expediaLink(dest, ci, co, adults) {
   let url = "https://www.expedia.fr/Hotel-Search"
     +"?destination="+encodeURIComponent(dest||"")
-    +"&adults="+(adults||2);
+    +"&adults="+(adults||2)
+    +"&sort=RECOMMENDED";
   if (ci) url += "&startDate="+ci;
   if (co) url += "&endDate="+co;
-  // Tracking Travelpayouts (programme Expedia = ID 1882)
-  return "https://tp.media/r?marker="+TP_MARKER+"&trs=233049&p=1882&u="+encodeURIComponent(url);
+  return url;
 }
 
 // ── GETTRANSFER (Travelpayouts) ───────────────────────────────────────────────
@@ -430,32 +433,47 @@ export default async function handler(req) {
         return new Response(JSON.stringify({reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+decision.msg+"</div>",sessionId:sid}),{headers:H});
       }
 
-      // Génération itinéraire — Claude avec JSON complet
+      // ── GÉNÉRATION ITINÉRAIRE ─────────────────────────────────────────────────
+      // ORDRE DE COÛT : Groq DeepSearch (gratuit) → Mistral (gratuit) → Claude (payant)
       const infos = decision.infos||{};
       const adults = parseInt(infos.nb_adultes)||2;
       const ci = parseDate(infos.checkin||null);
-      const nights = parseInt((infos.duree||"").match(/\d+/)||[3]);
-      const co = parseDate(infos.checkout||null)||(ci?(function(){const d=new Date(ci);d.setDate(d.getDate()+(nights||3));return d.toISOString().slice(0,10);}()):"");
+      const nights = parseInt(((infos.duree||"3 jours").match(/\d+/)||["3"])[0])||3;
+      const co = parseDate(infos.checkout||null)||(ci?(function(){const d=new Date(ci);d.setDate(d.getDate()+nights);return d.toISOString().slice(0,10);}()):"");
 
-      const claudeSys = "Expert voyage Huntify. Genere un itineraire COMPLET en JSON.\n"
-        +"Date: "+today+" | Infos: dest="+infos.destination+", depart="+infos.ville_depart+", adults="+adults+", ci="+ci+", co="+co+", budget="+infos.budget+", style="+infos.style+"\n\n"
-        +"JSON avec TOUS ces champs:\n"
-        +"t:'i', recap:string, itin:{\n"
-        +"  dest, country, flag, dur, trav, style, dep,\n"
+      // Prompt avec fourchettes de prix RÉALISTES par destination
+      const itinPrompt = "Tu es un expert voyage. Genere un itineraire REALISTE en JSON.\n"
+        +"INFOS: destination="+infos.destination+", depart="+infos.ville_depart+", adultes="+adults
+        +", checkin="+(ci||"?")+" checkout="+(co||"?")+" ("+nights+" nuits)"
+        +", budget="+(infos.budget||"moyen")+" style="+(infos.style||"equilibre")+"\n\n"
+        +"FOURCHETTES DE PRIX REALISTES (adapte a la destination):\n"
+        +"- Vols courts (<2h ex Nice-Rome): 60-120€/pers A/R\n"
+        +"- Vols moyens (2-4h ex Paris-Barcelone): 80-200€/pers A/R\n"
+        +"- Vols longs (>4h): 200-600€/pers A/R\n"
+        +"- Hotels budget Europe: 50-90€/nuit, confort: 90-180€/nuit, luxe: 180-400€/nuit\n"
+        +"- Restos: budget 15-25€/pers, moyen 30-50€/pers, gastronomique 60-120€/pers\n"
+        +"- Activites: 10-50€/pers selon type\n\n"
+        +"JSON COMPLET (tous les champs, rien n oublier):\n"
+        +"t:i, recap:string court, itin:{\n"
+        +"  dest, country, flag(emoji drapeau), dur(ex '3 jours / 2 nuits'), trav(ex '2 adultes'), style, dep,\n"
         +"  checkin:YYYY-MM-DD, checkout:YYYY-MM-DD, adults,\n"
-        +"  flights:{out:{from,to,price,co,dur}, ret:{from,to,price,co,dur}},\n"
-        +"  hotels:[3 vrais hotels avec name,stars,price,loc,hl,cat:budget/confort/luxe],\n"
-        +"  days:[{n,title,am,pm,eve,resto:{name,price,spec},acts:[],budget}],\n"
-        +"  budget:{vols,hotel,acts,resto,transport,total,pp},\n"
-        +"  tips:[3-5 conseils]\n"
+        +"  flights:{out:{from:IATA,to:IATA,price:nombre,co:compagnie,dur:duree}, ret:{...}},\n"
+        +"  hotels:[exactement 3 objets: {name:hotel reel existant,stars,price:nombre/nuit,loc,hl:point fort,cat:budget ou confort ou luxe}],\n"
+        +"  days:[un objet par jour: {n,title,am,pm,eve,resto:{name,price:ex '35€/pers',spec},acts:[],budget:nombre}],\n"
+        +"  budget:{vols:total vols, hotel:total nuits, acts:total activites, resto:total restos, transport:local, total:somme, pp:par personne},\n"
+        +"  tips:[4 conseils pratiques et specifiques a la destination]\n"
         +"}\n"
-        +"Codes IATA: Paris=CDG, Marseille=MRS, Nice=NCE, Rome=FCO, Barcelone=BCN, Madrid=MAD, Lisbonne=LIS, Londres=LHR.\n"
-        +"Hotels: vrais etablissements existants dans la ville.\n"
-        +"JSON UNIQUEMENT.";
+        +"CODES IATA obligatoires: Paris=CDG, Marseille=MRS, Nice=NCE, Lyon=LYS, Rome=FCO, Barcelone=BCN, Madrid=MAD, Lisbonne=LIS, Londres=LHR, Amsterdam=AMS.\n"
+        +"Hotels: VRAIS etablissements connus (The Beehive Rome, Hotel Arts Barcelona, Bairro Alto Hotel Lisbonne...).\n"
+        +"Prix: REALISTES et coherents avec le budget demande. PAS de zero. PAS d estimations fantaisistes.\n"
+        +"JSON UNIQUEMENT, pas de markdown.";
 
-      let itinRaw = await claude(claudeSys, "Genere: "+JSON.stringify(infos), 3000, []);
-      if (!itinRaw) itinRaw = await groqSearch(claudeSys+"\nGenere: "+JSON.stringify(infos), 2500);
-      if (!itinRaw) itinRaw = await gemini(claudeSys+"\nGenere: "+JSON.stringify(infos), 2500);
+      // 1. Groq DeepSearch (gratuit, web search) — génération principale
+      let itinRaw = await groqSearch(itinPrompt, 2500);
+      // 2. Mistral si Groq échoue (gratuit)
+      if (!itinRaw) itinRaw = await mistral("Genere un itineraire de voyage en JSON.", itinPrompt, 2500);
+      // 3. Claude uniquement en dernier recours (payant)
+      if (!itinRaw) itinRaw = await claude(itinPrompt, "Genere maintenant.", 2800, []);
 
       const tP = parseJSON(itinRaw||"");
       const itin = tP.itin;
@@ -464,7 +482,7 @@ export default async function handler(req) {
       if (!itin) {
         const sky = skyscannerLink(infos.ville_depart||"",infos.destination||"",ci,co,adults);
         const htl = bookingLink(infos.destination||"",ci,co,adults,null);
-        const bkg = bookingTPLink(infos.destination||"",ci,co,adults,null);
+        const bkg = bookingLink(infos.destination||"",ci,co,adults,null);
         const gtf = getTransferLink(infos.destination||"",ci);
         return new Response(JSON.stringify({reply:
           '<div style="font-size:13.5px;color:#1e293b;line-height:1.6;margin-bottom:12px">Voici les liens directs pour votre voyage :</div>'
@@ -587,23 +605,46 @@ export default async function handler(req) {
     // ══════════════════════════════════════════════════════════════════════════
 
     // Groq lit la conversation et décide
-    const groqProdPrompt = "Assistant shopping Huntify. Analyse la conversation.\n"
-      +"Historique:\n"+histS+"\n"
-      +"Message: "+message+"\n\n"
-      +"Decide:\n"
-      +"- Si tu as le produit + budget (ou apres 2 echanges) → ready:true avec recap (mots-cles concrets: marque type caractéristiques budget)\n"
-      +"- Sinon → pose UNE question: uniquement budget ou usage si vraiment ambigu\n"
-      +"- Ne pose JAMAIS: questions sur packaging, couleur, marque precise si pas demande\n"
-      +"- Apres 2 questions → ready:true obligatoire\n\n"
-      +"JSON: {ready:true, recap:'mots-cles'} ou {ready:false, msg:'question courte'}";
+    // Groq lit toute la conversation et décide intelligemment
+    // Philosophie : chercher VITE plutôt que poser des questions inutiles
+    const groqProdPrompt = "Tu es l'assistant shopping Huntify. Analyse et agis.
+"
+      +"Historique complet:
+"+histS+"
+"
+      +"Message: "+message+"
+
+"
+      +"REGLE D OR: si tu comprends ce que l utilisateur cherche → ready:true IMMEDIATEMENT.
+"
+      +"Un nom de produit seul (mascara, casque, iPhone...) suffit pour chercher.
+"
+      +"Le budget est optionnel — cherche sans si l utilisateur ne l a pas donne.
+
+"
+      +"Pose UNE question SEULEMENT si:
+"
+      +"- La demande est vraiment incomprehensible (exemple: 'un truc' sans contexte)
+"
+      +"- L historique montre deja une question posee → ready:true OBLIGATOIRE maintenant
+
+"
+      +"NE JAMAIS demander: packaging, couleur, marque exacte, caracteristiques techniques.
+"
+      +"Si budget mentionné dans l historique → l integrer dans le recap.
+
+"
+      +"JSON: {ready:true, recap:'produit + budget si connu + criteres utiles'} ou {ready:false, msg:'question tres courte'}";
 
     const prodDecision = parseJSON(
-      await groq(groqProdPrompt, message, 300)
-      || await gemini(groqProdPrompt+"\n"+message, 300)
+      await groq(groqProdPrompt, message, 250)
+      || await gemini(groqProdPrompt+"
+"+message, 250)
       || "{}"
     );
 
-    if (!prodDecision.ready && prodDecision.msg && history.length < 4) {
+    // Si Groq hésite ou ne répond pas → on cherche directement sans question
+    if (!prodDecision.ready && prodDecision.msg && history.length === 0) {
       return new Response(JSON.stringify({reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+prodDecision.msg+"</div>",sessionId:sid}),{headers:H});
     }
 
