@@ -71,8 +71,13 @@ function buildLink(adv, keywords, directUrl) {
   const kw = cleanKw(keywords);
   if (adv.slug==="amazon") {
     const tag = adv.amazon_tag||AMAZON_TAG;
-    const valid = directUrl&&directUrl.includes("/dp/")&&!directUrl.includes("/dp/null")&&directUrl.length>20;
-    const base = valid ? directUrl.split("?")[0] : "https://www.amazon.fr/s?k="+encodeURIComponent(kw);
+    // Valide que l ASIN est réel : 10 caractères alphanumériques commençant par B
+    // Un ASIN inventé par une IA ne passe pas ce test → on utilise la recherche
+    const asinMatch = directUrl&&directUrl.match(/\/dp\/([A-Z0-9]{10})(?:[/?]|$)/);
+    const isRealAsin = asinMatch&&/^B[A-Z0-9]{9}$/.test(asinMatch[1]);
+    const base = isRealAsin
+      ? "https://www.amazon.fr/dp/"+asinMatch[1]   // ASIN validé → lien direct
+      : "https://www.amazon.fr/s?k="+encodeURIComponent(kw); // sinon → recherche
     return base+"?tag="+tag;
   }
   if (adv.slug==="rakuten") {
@@ -651,20 +656,52 @@ export default async function handler(req) {
     const budgetNum = parseInt(((recap+" "+histS).match(/(\d+)\s*(?:€|euros?)/i)||[0,"0"])[1])||0;
     const isPremium = budgetNum>=150||/cadeau|premium|luxe|meilleur/.test(recap.toLowerCase());
 
-    const searchPrompt = "Agent shopping. Recherche: "+recap+"\n"
+    // Prompt commun pour Groq et Claude
+    const searchPrompt = "Agent shopping Huntify. Recherche: "+recap+"\n"
       +(dbCtx?"Données internes: "+dbCtx+"\n":"")
-      +"Cherche sur Amazon.fr et Rakuten.fr les vrais produits disponibles.\n"
-      +"Retourne JSON: summary (1 phrase), products (2 Amazon + 1 Rakuten min, chacun: name, price, store, keywords, url, badge), promoCodes.\n"
+      +"Trouve 2 produits sur amazon.fr + 1 sur fr.shopping.rakuten.com.\n"
+      +"Pour Amazon: cherche la vraie page produit et copie l URL exacte (https://www.amazon.fr/dp/BASIN).\n"
+      +"Si ASIN introuvable → url:null.\n"
+      +"JSON: summary, products[name, price, store, keywords, url, badge], promoCodes.\n"
       +"JSON uniquement.";
 
-    let raw;
-    if (isPremium) raw = await claude(searchPrompt,"Cherche: "+recap,800,[{type:"web_search_20250305",name:"web_search",max_uses:3}]);
-    if (!raw) raw = await groqSearch(searchPrompt, 1000);
-    if (!raw) raw = await gemini(searchPrompt, 800);
-    if (!raw) raw = await freeAI("Reponds en JSON.", searchPrompt, 700);
+    // ── STRATÉGIE DE RECHERCHE ────────────────────────────────────────────────
+    // 1. Groq DeepSearch (gratuit) — cherche produits + ASINs sur le web
+    let raw = await groqSearch(searchPrompt, 1000);
+    let products = parseJSON(raw||"").products||[];
+
+    // 2. Vérifie si les ASINs Amazon retournés sont valides
+    const hasValidAsin = products.some(p =>
+      p.store==="amazon" && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url)
+    );
+
+    // 3. Si pas d ASIN valide → Claude + web_search pour trouver les vrais ASINs
+    if (!hasValidAsin) {
+      const claudeRaw = await claude(
+        searchPrompt,
+        "Cherche sur amazon.fr: "+recap+". Trouve les vrais ASINs.",
+        800,
+        [{type:"web_search_20250305",name:"web_search",max_uses:3}]
+      );
+      if (claudeRaw) {
+        const claudeProducts = parseJSON(claudeRaw).products||[];
+        // Merge : garde les produits Claude si meilleurs ASINs
+        if (claudeProducts.some(p=>p.store==="amazon"&&p.url&&/\/dp\/B[A-Z0-9]{9}/.test(p.url))) {
+          products = claudeProducts;
+          raw = claudeRaw;
+        }
+      }
+    }
+
+    // 4. Fallback final si tout échoue
+    if (!products.length) {
+      const fallbackRaw = await gemini(searchPrompt, 800) || await freeAI("Reponds en JSON.", searchPrompt, 700);
+      products = parseJSON(fallbackRaw||"").products||[];
+      if (!raw) raw = fallbackRaw;
+    }
 
     const parsed = parseJSON(raw||"");
-    let products = parsed.products||[];
+    if (!products.length) products = parsed.products||[];
     const summary = parsed.summary||'Voici mes sélections pour "'+message+'" :';
     const promos  = parsed.promoCodes||[];
 
