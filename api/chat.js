@@ -39,27 +39,22 @@ function cleanKw(kw) {
 }
 
 function buildLink(adv, keywords, directUrl=null) {
-  if (!adv) return null;
-  const kw = cleanKw(keywords) || keywords || '';
-  const slug = (adv.slug||'').toLowerCase();
-  if (slug === 'amazon') {
-    const tag = adv.amazon_tag || 'huntify21-21';
+  if (!adv?.active) return null;
+  const kw = cleanKw(keywords);
+  if (adv.slug === 'amazon') {
     const valid = directUrl && directUrl !== 'null' && directUrl.length > 10
                && directUrl.includes('amazon.fr') && !directUrl.includes('/dp/null');
     const base = valid ? directUrl : `https://www.amazon.fr/s?k=${encodeURIComponent(kw)}`;
-    return `${base}${base.includes('?')?'&':'?'}tag=${tag}`;
+    return `${base}${base.includes('?')?'&':'?'}tag=${adv.amazon_tag}`;
   }
-  if (slug === 'rakuten' || adv.awin_mid) {
-    const mid = adv.awin_mid || '55615';
-    const aff = adv.awin_aff || '2920215';
+  if (adv.awin_mid) {
     let searchBase = adv.search_url || 'https://fr.shopping.rakuten.com/s/{keywords}';
     if (searchBase.includes('/search?keyword=') || searchBase.includes('?keyword='))
       searchBase = 'https://fr.shopping.rakuten.com/s/{keywords}';
     const rkw = encodeURIComponent(kw).replace(/%20/g,'+');
     const dest = searchBase.replace('{keywords}', rkw);
-    return `https://www.awin1.com/cread.php?awinmid=${mid}&awinaffid=${aff}&ued=${encodeURIComponent(dest)}`;
+    return `https://www.awin1.com/cread.php?awinmid=${adv.awin_mid}&awinaffid=${adv.awin_aff}&ued=${encodeURIComponent(dest)}`;
   }
-  if (adv.search_url) return adv.search_url.replace('{keywords}', encodeURIComponent(kw));
   return null;
 }
 
@@ -71,7 +66,7 @@ function buildBookingLink(destination, nights=5, adults=2, minPrice=null, maxPri
   const pubId = process.env.CJ_PUBLISHER_ID||null;
   const advId = process.env.CJ_BOOKING_ADVERTISER_ID||null;
   const dest  = encodeURIComponent(destination||'');
-  let base = `https://www.booking.com/searchresults.html?ss=${dest}&group_adults=${adults}&no_rooms=1`;
+  let base = `https://www.booking.com/search.html?ss=${dest}&group_adults=${adults}&nights=${nights}`;
   if (minPrice && maxPrice) base += `&nflt=price%3D${minPrice}-${maxPrice}-1`;
   if (!pubId||!advId) return base;
   return `https://www.anrdoezrs.net/click-${pubId}-${advId}?url=${encodeURIComponent(base)}`;
@@ -212,9 +207,19 @@ async function callMistral(sys, user, maxTok) {
 }
 
 async function callFreeAI(sys, user, depth='fast') {
-  const model = 'llama-3.3-70b-versatile';
+  // 70b pour le ciblage (JSON fiable), 8b seulement pour les tâches simples
+  const model = depth==='fast' ? 'llama-3.3-70b-versatile' : 'llama-3.3-70b-versatile';
   const tok   = depth==='deep' ? 700 : 300;
   return await callGroq(sys,user,model,tok) || await callGemini(sys,user,tok) || await callMistral(sys,user,tok);
+}
+
+async function chainAI(task, context) {
+  const sys = 'Interpreteur de langage naturel. Reponds en JSON court.';
+  const interp = await callGroq(sys, task+'\nContexte: '+context, 'llama-3.1-8b-instant', 150);
+  if (!interp) return await callGemini(sys, task+'\nContexte: '+context, 150);
+  const enriched = await callGemini('Enrichis et valide. Reponds en JSON court.',
+    'Interpretation: '+interp+'\nContexte: '+context, 200);
+  return enriched || interp;
 }
 
 function hasFreeAI() {
@@ -225,7 +230,8 @@ async function callClaude(sys, user, maxTok=600, tools=[]) {
   const r = await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
     headers:{'Content-Type':'application/json; charset=utf-8','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-    body:JSON.stringify({model:MODEL, max_tokens:maxTok, tools, system:sys,
+    body:JSON.stringify({model:MODEL, max_tokens:maxTok, tools,
+      system:[{type:'text',text:sys,cache_control:{type:'ephemeral'}}],
       messages:[{role:'user',content:user}]})
   });
   const d = await r.json();
@@ -248,13 +254,7 @@ function buildHistory(history) {
 }
 
 function countQ(history) {
-  return (history||[]).filter(m =>
-    m.role !== 'user' &&
-    (m.content||'').length > 10 &&
-    (m.content||'').length < 300 &&
-    !/\d+€/.test(m.content||'') &&
-    !/(amazon|rakuten|booking)/i.test(m.content||'')
-  ).length;
+  return (history||[]).filter(m=>m.role!=='user'&&(m.content||'').includes('data-qbox')).length;
 }
 
 function countTravelQ(history) {
@@ -736,7 +736,7 @@ JSON: {"summary":"...","products":[{"name":"NOM EXACT","price":"XX€","store":"
     let buttons = '';
     for (const pr of products) {
       if (!pr.name) continue;
-      let adv = findAdv(advertisers, pr.store) || advertisers[0];
+      const adv = findAdv(advertisers, pr.store); if(!adv) continue;
       if (!adv) continue;
       const rawUrl = (pr.url&&pr.url!=='null'&&!pr.url.includes('/dp/null')&&pr.url.length>15) ? pr.url : null;
       const terms  = pr.name && pr.name.length>5 ? pr.name : (pr.keywords||pr.name);
