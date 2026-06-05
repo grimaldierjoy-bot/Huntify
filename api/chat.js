@@ -62,14 +62,60 @@ function findAdv(advertisers, slug) {
   return advertisers.find(a=>a.slug===slug?.toLowerCase())||null;
 }
 
-function buildBookingLink(destination, nights=5, adults=2, minPrice=null, maxPrice=null) {
+function buildBookingLink(destination, nights=5, adults=2, minPrice=null, maxPrice=null, checkin=null, checkout=null) {
   const pubId = process.env.CJ_PUBLISHER_ID||null;
   const advId = process.env.CJ_BOOKING_ADVERTISER_ID||null;
   const dest  = encodeURIComponent(destination||'');
-  let base = `https://www.booking.com/search.html?ss=${dest}&group_adults=${adults}&nights=${nights}`;
+  let base = `https://www.booking.com/searchresults.html?ss=${dest}&group_adults=${adults}&no_rooms=1`;
+  // Dates précises → Booking montre vraies dispos pour la période
+  if (checkin && checkout) {
+    base += `&checkin=${checkin}&checkout=${checkout}`;
+  } else if (nights > 1) {
+    base += `&nights=${nights}`;
+  }
   if (minPrice && maxPrice) base += `&nflt=price%3D${minPrice}-${maxPrice}-1`;
   if (!pubId||!advId) return base;
   return `https://www.anrdoezrs.net/click-${pubId}-${advId}?url=${encodeURIComponent(base)}`;
+}
+
+// Convertit "17 juin 2026" ou "17/06/2026" en "2026-06-17"
+function parseDate(str) {
+  if (!str) return null;
+  // Format ISO déjà
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  // Format JJ/MM/AAAA
+  const dm = str.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (dm) {
+    const y = dm[3].length===2 ? '20'+dm[3] : dm[3];
+    return `${y}-${dm[2].padStart(2,'0')}-${dm[1].padStart(2,'0')}`;
+  }
+  // "17 juin" ou "17 juin 2026"
+  const months = {jan:'01',fév:'02',mar:'03',avr:'04',mai:'05',juin:'06',
+    juil:'07',aoû:'08',sep:'09',oct:'10',nov:'11',déc:'12',
+    janv:'01',fevr:'02',mars:'03',avril:'04',juillet:'07',aout:'08',
+    sept:'09',octobre:'10',novembre:'11',decembre:'12'};
+  const fm = str.toLowerCase().match(/(\d{1,2})\s+([a-zéû]+)(?:\s+(\d{4}))?/);
+  if (fm) {
+    const m = Object.entries(months).find(([k])=>fm[2].startsWith(k));
+    if (m) {
+      const y = fm[3] || '2026';
+      return `${y}-${m[1]}-${fm[1].padStart(2,'0')}`;
+    }
+  }
+  return null;
+}
+
+// Construit URL Skyscanner avec dates précises
+function buildSkyscannerLink(fromIATA, toIATA, outbound, inbound, adults=2) {
+  function iata(s) { const m=(s||'').match(/([A-Z]{3})/); return m?m[1].toLowerCase():'par'; }
+  const from = iata(fromIATA);
+  const to   = iata(toIATA);
+  if (outbound && inbound) {
+    // Format YYMMDD
+    const fmt = d => d.replace(/-/g,'').slice(2); // 2026-06-17 → 260617
+    return `https://www.skyscanner.fr/transport/vols/${from}/${to}/${fmt(outbound)}/${fmt(inbound)}/?adults=${adults}&currency=EUR`;
+  }
+  return `https://www.skyscanner.fr/transport/vols/${from}/${to}/`;
 }
 
 async function queryInternalDB(keywords) {
@@ -161,6 +207,15 @@ function extractTravelInfo(hist, message) {
   if (travM) info.voyageurs = travM[0];
   const depM = text.match(/(?:depuis|de|depart|départ)\s+([a-zA-ZÀ-ÿ\s]{2,20})(?:\s|,|\.)/i);
   if (depM) info.ville_depart = depM[1].trim();
+  // Dates check-in / check-out ("du 17 au 21 juin", "17 juin", "17/06")
+  const dateRange = text.match(/du\s+(\d{1,2}(?:\s+\w+)?)\s+au\s+(\d{1,2}(?:\s+\w+)?(?:\s+\d{4})?)/i);
+  if (dateRange) {
+    info.date_depart_raw = dateRange[1].trim();
+    info.date_retour_raw = dateRange[2].trim();
+  }
+  // Nombre de voyageurs adultes
+  const adultsM = text.match(/(\d+)\s+adultes?/i) || text.match(/pour\s+(\d+)\s/i);
+  if (adultsM) info.nb_adultes = parseInt(adultsM[1]) || 2;
   if (/chill|plage|repos|détente/.test(text)) info.style = 'chill';
   else if (/culture|musée|histoire|monument/.test(text)) info.style = 'culture';
   else if (/aventure|randonnée|sport|nature/.test(text)) info.style = 'aventure';
@@ -438,7 +493,9 @@ Question : {"t":"q","msg":"ta question"}
 Suggestions : {"t":"s","intro":"...","dests":[{"n":"Lisbonne","e":"🇵🇹","why":"...","price":"dès 700€/2","tags":["culture","soleil"]}],"q":"Laquelle te tente ?"}
 
 Itinéraire complet :
-{"t":"i","recap":"...","itin":{"dest":"...","country":"...","flag":"...","dur":"...","trav":"...","style":"...","dep":"...","flights":{"out":{"from":"...","to":"...","price":"...","co":"...","dur":"..."},"ret":{"from":"...","to":"...","price":"...","co":"...","dur":"..."}},"hotels":[{"name":"...","stars":4,"price":"120","loc":"...","hl":"...","cat":"confort"}],"days":[{"n":1,"title":"...","am":"...","pm":"...","eve":"...","resto":{"name":"...","price":"35€/2","spec":"..."},"acts":["..."],"budget":150}],"budget":{"vols":300,"hotel":500,"acts":150,"resto":200,"transport":80,"total":1230,"pp":615},"tips":["..."]}}`;
+{"t":"i","recap":"...","itin":{"dest":"...","country":"...","flag":"...","dur":"...","trav":"...","style":"...","dep":"...","checkin":"2026-06-17","checkout":"2026-06-21","adults":2,"flights":{"out":{"from":"BCN","to":"NAP","price":"...","co":"...","dur":"..."},"ret":{"from":"NAP","to":"BCN","price":"...","co":"...","dur":"..."}},"hotels":[{"name":"...","stars":4,"price":"120","loc":"...","hl":"...","cat":"confort"}],"days":[{"n":1,"title":"...","am":"...","pm":"...","eve":"...","resto":{"name":"...","price":"35€/2","spec":"..."},"acts":["..."],"budget":150}],"budget":{"vols":300,"hotel":500,"acts":150,"resto":200,"transport":80,"total":1230,"pp":615},"tips":["..."]}}
+
+IMPORTANT : checkin/checkout en format ISO YYYY-MM-DD. from/to des vols = codes IATA 3 lettres (ex: BCN, CDG, NAP, LIS).`;
 
       const allText = (hist+' '+message+' '+mStr).toLowerCase();
       const hasDest = merged.destination || /capri|paris|rome|lisbonne|barcelone|londres|tokyo|bali|venise|madrid|amsterdam|berlin|prague|naples|athenes|santorin|marrakech|dubai/i.test(allText);
@@ -499,8 +556,11 @@ Itinéraire complet :
 
       if (itin.flights?.out) {
         const f = itin.flights;
-        function getIATA(s){const m=(s||'').match(/([A-Z]{3})/);return m?m[1].toLowerCase():'par';}
-        const sky = `https://www.skyscanner.fr/transport/vols/${getIATA(f.out.from)}/${getIATA(f.out.to)}/`;
+        // Skyscanner avec dates précises et nombre de passagers
+        const ci2 = itin.checkin || parseDate(merged.date_depart_raw) || null;
+        const co2 = itin.checkout || parseDate(merged.date_retour_raw) || null;
+        const adults3 = itin.adults || merged.nb_adultes || 2;
+        const sky = buildSkyscannerLink(f.out.from, f.out.to, ci2, co2, adults3);
         html += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">✈️ Vols recommandés</div>
         <div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;overflow:hidden">
           <div style="padding:12px 14px;border-bottom:1px solid #f0f4ff"><div style="display:flex;justify-content:space-between;align-items:center">
@@ -521,17 +581,31 @@ Itinéraire complet :
 
       if (itin.hotels?.length) {
         html += `<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">🏨 Hébergements sur Booking.com</div>`;
-        const nights = parseInt((itin.dur||'').match(/\d+/)?.[0]||'5');
+        const nights  = parseInt((itin.dur||'').match(/\d+/)?.[0]||'5');
+        const adults2 = itin.adults || merged.nb_adultes || 2;
+        // Dates précises si disponibles → vrais dispos sur la période
+        const ci = itin.checkin || parseDate(merged.date_depart_raw) || null;
+        const co = itin.checkout || parseDate(merged.date_retour_raw) || null;
+
         for (const h of itin.hotels) {
+          // Lien direct hôtel avec dates → Booking montre cet hôtel ET ses dispo/prix réels
+          const hotelSearch = (h.name+' '+(h.loc||'')+' '+(itin.dest||'')).trim();
+          const hotelLink = buildBookingLink(hotelSearch, nights, adults2, null, null, ci, co);
           html += hotelCard(
-            {name:h.name,stars:h.stars,price:h.price,location:h.loc,highlight:h.hl,booking_link:h.link||null,category:h.cat},
-            buildBookingLink((h.name+' '+(h.loc||'')+' '+(itin.dest||'')).trim(), nights)
+            {name:h.name, stars:h.stars, price:h.price, location:h.loc, highlight:h.hl, booking_link:null, category:h.cat},
+            hotelLink
           );
         }
+
+        // "Voir d'autres hôtels" → recherche large sur la destination avec les mêmes dates
         const hP = itin.hotels.map(h=>parseInt(h.price)||0).filter(p=>p>0);
-        if (hP.length) {
-          html += `<a href="${buildBookingLink(itin.dest||'',nights,2,Math.max(0,Math.min(...hP)-30),Math.max(...hP)+50)}" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;text-decoration:none;border-radius:12px;padding:10px;margin-top:8px;font-size:12px;font-weight:700">🔍 Explorer d'autres hôtels sur Booking.com →</a>`;
-        }
+        const exploreLink = buildBookingLink(
+          itin.dest||'', nights, adults2,
+          hP.length ? Math.max(0,Math.min(...hP)-30) : null,
+          hP.length ? Math.max(...hP)+50 : null,
+          ci, co
+        );
+        html += `<a href="${exploreLink}" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;text-decoration:none;border-radius:12px;padding:10px;margin-top:8px;font-size:12px;font-weight:700">🔍 Voir d'autres hôtels disponibles sur cette période →</a>`;
       }
 
       if (itin.days?.length) {
