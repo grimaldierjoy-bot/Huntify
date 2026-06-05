@@ -611,21 +611,21 @@ export default async function handler(req) {
           !merged.budget && 'budget (optionnel)',
         ].filter(Boolean);
 
-        const groqQ = `Tu es un agent voyage Huntify expert et chaleureux.
-Infos collectées: ${mStr||'aucune'}
-Historique: ${histS||'début'}
-Message: "${message}"
-Questions déjà posées: ${qAsked}
-Info manquantes: ${missing.join(', ')||'aucune'}
-Aujourd'hui: ${TODAY}
+        const groqQ = 'Tu es un agent voyage Huntify expert et chaleureux.\n'
+          + 'Infos collectees: ' + (mStr||'aucune') + '\n'
+          + 'Historique: ' + (histS||'debut') + '\n'
+          + 'Message: ' + message + '\n'
+          + 'Questions posees: ' + qAsked + '\n'
+          + 'Info manquantes: ' + (missing.join(', ')||'aucune') + '\n'
+          + 'Aujourdhui: ' + TODAY + '\n\n'
+          + 'TACHE: Pose UNE seule question pour collecter la prochaine info manquante.\n'
+          + 'Si message = destination seule → suggere 3 destinations similaires.\n'
+          + 'Si toutes les infos sont la → dis que tu generes l itineraire.\n\n'
+          + 'Reponds UNIQUEMENT en JSON, rien d autre:\n'
+          + 'Pour question: t=q, msg=question courte\n'
+          + 'Pour suggestions: t=s, intro=texte, dests=tableau, q=question suivi';
 
-TÂCHE: Pose UNE seule question naturelle pour collecter la prochaine info manquante.
-Si message = une destination seule sans contexte → suggère 3 destinations similaires.
-Si toutes les infos sont là → dis que tu génères l'itinéraire.
 
-Réponds UNIQUEMENT en JSON, rien d'autre:
-Question: {"t":"q","msg":"ta question courte et naturelle"}
-Suggestions: {"t":"s","intro":"...","dests":[{"n":"Ville","e":"🏳","why":"pourquoi visiter","price":"dès X€/pers","tags":["tag1","tag2"]}],"q":"question de suivi"}`;
 
         const gRaw = await callGroqDS(groqQ, 400) || await callFreeAI('JSON uniquement.', groqQ, 400);
         const gP   = parseJSON(gRaw || '');
@@ -861,7 +861,7 @@ Demande vague → ready:false + une question.
 Si besoin compris → ready:true + recap (mots-clés produit réels, marque+modèle).
 Si ${qAskedProd}>=${MAX_Q} → ready:true obligatoire.
 Ne JAMAIS redemander ce qui est dans l'historique.
-JSON: {"ready":false,"message":"question"} ou {"ready":true,"recap":"mots-clés","message":"phrase courte"}`;
+JSON UNIQUEMENT: ready true ou false, message, recap si ready true.`;
 
       const t1=await callGroq(p1sys,`HIST:\n${histS}\nMSG: ${message}`,'llama-3.3-70b-versatile',300)
             || await callGemini(p1sys,`MSG: ${message}`,300);
@@ -901,35 +901,35 @@ JSON: {"ready":false,"message":"question"} ou {"ready":true,"recap":"mots-clés"
 
     // ── Groq DeepSearch (GRATUIT, web search) ─────────────────────────────────
     if (effective==='groq_search') {
-      const gPrompt=`Agent shopping. Cherche sur Amazon.fr et fr.shopping.rakuten.com les meilleurs produits.
-BESOIN: ${recap}
-${dbContext}
-Trouve 2 produits Amazon + 1 Rakuten avec vrais noms (marque+modèle).
-Si tu trouves un ASIN Amazon réel → url = "https://www.amazon.fr/dp/ASIN"
-JSON UNIQUEMENT:
-{"summary":"...","products":[{"name":"VRAI NOM PRODUIT","price":"XX€","store":"amazon","keywords":"VRAI NOM","url":"https://www.amazon.fr/dp/ASIN_ou_null","img":null,"badge":"Bestseller"},{"name":"VRAI NOM 2","price":"XX€","store":"rakuten","keywords":"VRAI NOM 2","url":null,"img":null,"badge":"Rapport qualité-prix"}],"promoCodes":[]}`;
-      const raw=await callGroqDS(gPrompt,1000);
+      const gPrompt='Agent shopping. Cherche sur Amazon.fr et fr.shopping.rakuten.com.\n'
+        + 'BESOIN: ' + recap + '\n'
+        + dbContext + '\n'
+        + 'Trouve 2 produits Amazon + 1 Rakuten avec vrais noms (marque+modele).\n'
+        + 'Si ASIN Amazon reel trouve: url=https://www.amazon.fr/dp/ASIN\n'
+        + 'Retourne JSON: summary, products(name/price/store/keywords/url/badge), promoCodes.';
+
+
       const p=parseJSON(raw||''); products=p.products||[]; promoCodes=p.promoCodes||[]; summary=p.summary||'';
     }
     // ── Claude + web_search (premium, cache_control) ──────────────────────────
     else if (effective==='paid_deep') {
-      const p2sys=`Agent shopping Huntify. Boutiques: ${activeNames}.
-BESOIN: ${recap}
-${dbContext}
-1. AMAZON.FR → 2 produits avec ASIN réels dans URL /dp/ASIN
-2. RAKUTEN FR → 1 produit réel
-3. CODES PROMO → dealabs.com si disponible
-name = NOM COMPLET RÉEL (marque + modèle). store = "amazon" ou "rakuten".
-JSON: {"summary":"...","products":[{"name":"...","price":"XX€","store":"amazon","keywords":"...","url":"https://www.amazon.fr/dp/ASIN","img":null,"badge":"..."}],"promoCodes":[{"code":"...","store":"...","discount":"...","best":true}]}`;
-      const raw=await callClaude(p2sys,`BESOIN: ${recap}\nMSG: ${message}`,800,[{type:"web_search_20250305",name:"web_search",max_uses:3}]);
+      const p2sys='Agent shopping Huntify. Boutiques: ' + activeNames + '.\n'
+        + 'BESOIN: ' + recap + '\n'
+        + dbContext + '\n'
+        + '1. AMAZON.FR: 2 produits avec ASIN reels dans URL /dp/ASIN\n'
+        + '2. RAKUTEN FR: 1 produit reel\n'
+        + '3. CODES PROMO: dealabs.com si disponible\n'
+        + 'name=NOM COMPLET REEL (marque+modele). store=amazon ou rakuten.\n'
+        + 'Retourne JSON: summary, products(name/price/store/keywords/url/badge), promoCodes.';
+
       const p=parseJSON(raw); products=p.products||[]; promoCodes=p.promoCodes||[]; summary=p.summary||'';
     }
     // ── Groq 70b rapide ────────────────────────────────────────────────────────
     else {
-      const p2sys=`Agent shopping. Boutiques: ${activeNames}. BESOIN: ${recap} ${dbContext}
-2 produits Amazon + 1 Rakuten. name=NOM RÉEL (marque+modèle).
-JSON:{"summary":"...","products":[{"name":"...","price":"XX€","store":"amazon","keywords":"...","url":null,"img":null,"badge":"..."}],"promoCodes":[]}`;
-      const raw=await callFreeAI(p2sys,`BESOIN: ${recap}`,350);
+      const p2sys='Agent shopping. Boutiques: ' + activeNames + '. BESOIN: ' + recap + ' ' + dbContext + '\n'
+        + '2 produits Amazon + 1 Rakuten. name=NOM REEL (marque+modele).\n'
+        + 'Retourne JSON: summary, products(name/price/store/keywords/url/badge), promoCodes.';
+      const raw=await callFreeAI(p2sys,'BESOIN: '+recap,350);
       const p=parseJSON(raw||''); products=p.products||[]; promoCodes=p.promoCodes||[]; summary=p.summary||'';
     }
 
