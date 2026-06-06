@@ -678,17 +678,26 @@ export default async function handler(req) {
               // Pourquoi ce choix
               +'<div style="font-size:11px;color:#64748b;background:#f8fafc;border-radius:8px;padding:6px 10px;margin-bottom:10px">'
               +"\uD83D\uDCA1 "+(p.why||"")+"</div>"
-           + '<button data-huntify-plan="Planifie un itinéraire complet jour par jour pour ' + (p.dest || '') + '" ' 
+              // Boutons
+              +'<div style="display:flex;gap:8px">'
+              +'<a href="'+skyP+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\u2708\uFE0F Vols</a>'
+              +'<a href="'+bkgP+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\uD83C\uDFE8 H\u00f4tels</a>'
+              +'<button data-huntify-plan="Planifie un itineraire complet pour '+p.dest+' depuis '+dep+' du '+(p.checkin||ciK)+' au '+(p.checkout||coK)+' pour '+adultK+' adultes budget '+budget+'" data-mode="travel" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit" onclick="(function(b){var m=b.getAttribute(\'data-huntify-plan\');if(window.sendPrompt){window.sendPrompt(m);}else{var i=document.querySelector(\'textarea,input[type=text]\');if(i){i.value=m;i.dispatchEvent(new Event(\'input\',{bubbles:true}));var s=i.closest(\'form\');if(s)s.querySelector(\'button[type=submit],button:last-of-type\').click();else i.dispatchEvent(new KeyboardEvent(\'keydown\',{key:\'Enter\',keyCode:13,bubbles:true}));}else{window.dispatchEvent(new CustomEvent(\'huntify_send\',{detail:{message:m,mode:\'travel\'}}));}}})(this)">\uD83D\uDDFA\uFE0F Planifier</button>'
+              +"</div></div>";
+          }
+html3 += '<div style="display:flex;gap:8px">'
+    + '<a href="'+skyP+'" ... >Vols</a>'
+    + '<a href="'+bkgP+'" ... >Hôtels</a>'
+    + '<button data-huntify-plan="Planifie un itinéraire complet jour par jour pour ' + (p.dest || '') + '" ' 
     + 'onclick="handlePlanifyButton(this)" '
     + 'style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">'
     + '📍 Planifier</button>'
     + '</div>';
 }
-          html3 += '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:8px">'
-            +'Cliquez "Planifier" sur la destination de votre choix pour l itineraire complet jour par jour</div>';
 
           return new Response(JSON.stringify({reply:html3,sessionId:sid}),{headers:H});
         }
+
         // Si l IA n a pas pu generer → on force une destination par defaut
         if (!knownInfos.destination) knownInfos.destination = "Lisbonne";
       }
