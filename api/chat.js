@@ -272,8 +272,40 @@ async function mistral(sys, user, maxTok) {
   } catch(e){return null;}
 }
 
+async function perplexity(prompt, maxTok) {
+  const key = process.env.PERPLEXITY_API_KEY; if (!key) return null;
+  try {
+    const r = await fetch("https://api.perplexity.ai/chat/completions",{
+      method:"POST", headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+      body:JSON.stringify({model:"llama-3.1-sonar-small-128k-online",max_tokens:maxTok||500,messages:[{role:"user",content:prompt}]})
+    });
+    if (!r.ok) return null;
+    const d = await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
+  } catch(e){return null;}
+}
+
+// DeepSeek V4 Flash — $0.14/M tokens (100x moins cher que Claude)
+// 5M tokens gratuits à l inscription sur platform.deepseek.com
+// Ajouter DEEPSEEK_API_KEY dans Vercel quand prêt
+async function deepseek(sys, user, maxTok) {
+  const key = process.env.DEEPSEEK_API_KEY; if (!key) return null;
+  try {
+    const r = await fetch("https://api.deepseek.com/v1/chat/completions",{
+      method:"POST", headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+      body:JSON.stringify({model:"deepseek-chat",max_tokens:maxTok||500,messages:[{role:"system",content:sys},{role:"user",content:user}]})
+    });
+    if (!r.ok) return null;
+    const d = await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
+  } catch(e){return null;}
+}
+
 async function freeAI(sys, user, maxTok) {
-  return await groq(sys,user,maxTok)||await gemini(sys+"\n\n"+user,maxTok)||await mistral(sys,user,maxTok);
+  // Cascade coût croissant: Groq (gratuit) → Gemini (gratuit) → Mistral (gratuit) → DeepSeek ($0.14/M) → Perplexity
+  return await groq(sys,user,maxTok)
+      || await gemini(sys+"\n\n"+user,maxTok)
+      || await mistral(sys,user,maxTok)
+      || await deepseek(sys,user,maxTok)
+      || await perplexity(sys+"\n\n"+user,maxTok);
 }
 
 async function claude(sys, user, maxTok, tools) {
@@ -472,9 +504,9 @@ export default async function handler(req) {
         +"JSON UNIQUEMENT.";
 
       // 1. Groq DeepSearch (gratuit, web search) — génération principale
-      let itinRaw = await groqSearch(itinPrompt, 2500);
+      let itinRaw = await groqSearch(itinPrompt, 3000);
       // 2. Mistral si Groq échoue (gratuit)
-      if (!itinRaw) itinRaw = await mistral("Genere un itineraire de voyage en JSON.", itinPrompt, 2500);
+      if (!itinRaw) itinRaw = await mistral("Genere un itineraire de voyage en JSON.", itinPrompt, 3000);
       // 3. Claude uniquement en dernier recours (payant)
       if (!itinRaw) itinRaw = await claude(itinPrompt, "Genere maintenant.", 2800, []);
 
@@ -647,14 +679,15 @@ export default async function handler(req) {
     );
 
     // Si Groq hésite ou ne répond pas → on cherche directement sans question
-    if (!prodDecision.ready && prodDecision.msg && history.length === 0) {
+    if (!prodDecision.ready && prodDecision.msg && history.length < 4) {
       return new Response(JSON.stringify({reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+prodDecision.msg+"</div>",sessionId:sid}),{headers:H});
     }
 
     const recap = (prodDecision.ready&&prodDecision.recap) ? prodDecision.recap : (formatHistory(history,300)+" "+message).trim();
     const dbCtx = await dbLookup(recap);
     const budgetNum = parseInt(((recap+" "+histS).match(/(\d+)\s*(?:€|euros?)/i)||[0,"0"])[1])||0;
-    const isPremium = budgetNum>=150||/cadeau|premium|luxe|meilleur/.test(recap.toLowerCase());
+    // Groq décide lui-même la qualité de recherche nécessaire selon le contexte
+    const isPremium = budgetNum>=100||/cadeau|premium|luxe|meilleur|haute gamme|qualite/.test((recap+" "+histS).toLowerCase())||history.length>=4;
 
     // Prompt commun pour Groq et Claude
     const searchPrompt = "Agent shopping Huntify. Recherche: "+recap+"\n"
