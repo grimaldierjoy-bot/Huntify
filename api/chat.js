@@ -637,8 +637,8 @@ export default async function handler(req) {
             "Romantique":"#e83e8c","Culturel":"#6f42c1","Soleil":"#fd7e14",
             "Aventure":"#20c997","Gastronomie":"#e63946"
           };
-          let html3 = '<div style="font-size:14px;font-weight:700;color:#0e1430;margin-bottom:12px">'
-            +'\uD83C\uDF1F Voici mes 3 coups de coeur pour vous depuis '+dep+' :</div>';
+          // Script huntifyPlan injecte dans le rendu - fonctionne sans dependance frontend
+          let html3 = '<script>function huntifyPlan(dest,dep,ci,co,adults,budget){'            +'var msg="Planifie un itineraire complet pour "+dest+" depuis "+dep+" du "+ci+" au "+co+" pour "+adults+" adultes budget "+budget;'            +'var inp=document.querySelector("textarea,input[type=text],input[placeholder],#message-input,.chat-input");'            +'if(inp){inp.value=msg;inp.dispatchEvent(new Event("input",{bubbles:true}));'            +'setTimeout(function(){'            +'var btn=inp.closest("form")?inp.closest("form").querySelector("button[type=submit],button:last-of-type"):null;'            +'if(!btn)btn=document.querySelector("button[type=submit],[data-action=send],[aria-label=Envoyer]");'            +'if(btn)btn.click();'            +'else inp.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",keyCode:13,bubbles:true}));'            +'},120);}'            +'else if(window.sendPrompt)window.sendPrompt(msg);'            +'else window.dispatchEvent(new CustomEvent("huntify_send",{detail:{message:msg,mode:"travel"}}));'            +'}<\/script>'            +'<div style="font-size:14px;font-weight:700;color:#0e1430;margin-bottom:12px">'            +'\uD83C\uDF1F Voici mes 3 coups de coeur pour vous depuis '+dep+' :</div>';
 
           for (const p of propData.proposals.slice(0,3)) {
             const vc = vibeColor[p.vibe]||"#2f54ff";
@@ -683,7 +683,7 @@ export default async function handler(req) {
               +'<div style="display:flex;gap:8px">'
               +'<a href="'+skyP+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\u2708\uFE0F Vols</a>'
               +'<a href="'+bkgP+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\uD83C\uDFE8 H\u00f4tels</a>'
-              +'<button onclick="window.dispatchEvent(new CustomEvent(\'huntify_plan\',{detail:{dest:\''+p.dest+'\',dep:\''+dep+'\',checkin:\''+p.checkin+'\',checkout:\''+p.checkout+'\',adults:'+adultK+'}}));if(window.sendPrompt)sendPrompt(\'Planifie un itineraire complet pour '+p.dest+' depuis '+dep+' du '+p.checkin+' au '+p.checkout+' pour '+adultK+' adultes, budget '+budget+'\')" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">\uD83D\uDDFA\uFE0F Planifier</button>'
+              +'<button onclick="huntifyPlan(\''+p.dest+'\',\''+dep+'\',\''+p.checkin+'\',\''+p.checkout+'\','+adultK+',\''+budget+'\')" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">\uD83D\uDDFA\uFE0F Planifier</button>'
               +"</div></div>";
           }
 
