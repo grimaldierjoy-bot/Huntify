@@ -964,96 +964,79 @@ export default async function handler(req) {
       ||/cadeau|premium|luxe|meilleur|haute gamme|qualite/.test((recap+" "+histS).toLowerCase())
       ||history.length>=4;
 
-    // ── RECHERCHE PRODUIT : Claude web_search en PREMIER pour prix reels ─────
-    // Strategie : Claude cherche les vrais prix Amazon + ASIN via web_search
-    // Groq DeepSearch en parallele pour Rakuten et codes promo
-    // On fusionne les resultats pour avoir prix reels + liens directs
+    // ── RECHERCHE PRODUIT — Strategie intelligente low-cost ────────────────
+    // 1. Groq DeepSearch cherche les produits (gratuit)
+    // 2. On valide : ASIN reel ? Prix coherent ? Pas invente ?
+    // 3. Claude web_search SEULEMENT si Groq echoue la validation
+    //    = Claude appele ~20% du temps seulement, pas systematiquement
 
-    // 1. Claude + web_search = seul capable de trouver les vrais prix Amazon en temps reel
-    const claudeSearchSys = "Tu es un agent shopping expert. Cherche sur amazon.fr les meilleurs produits "
-      +"correspondant exactement a cette demande : "+recap+"\n"
-      +"Pour chaque produit trouve :\n"
-      +"- Le vrai prix actuel en EUR (pas un prix invente)\n"
-      +"- L URL exacte amazon.fr/dp/ASIN (ASIN = B suivi de 9 caracteres alphanumeriques)\n"
-      +"- La note client si disponible\n"
-      +"Cherche aussi 1 produit sur fr.shopping.rakuten.com.\n"
-      +"Retourne un JSON valide uniquement :\n"
-      +"{ summary:'phrase naturelle et utile', products:[{name:string, price:string, store:'amazon'|'rakuten', keywords:string, url:string, badge:string, rating:string}], promoCodes:[{code,store,discount,best}] }";
+    const groqProdPrompt = "Cherche sur amazon.fr les meilleurs produits pour : "+recap+"\n"
+      +(dbCtx?"Donnees internes : "+dbCtx+"\n":"")
+      +"Trouve 2 produits Amazon avec leurs VRAIS ASINs (URL /dp/B + 9 alphanum) et leurs vrais prix actuels.\n"
+      +"Trouve aussi 1 produit sur fr.shopping.rakuten.com.\n"
+      +"Si tu n es pas sur d un ASIN, mets url:null plutot que d inventer.\n"
+      +"JSON: {summary:string, products:[{name:string, price:string, store:'amazon'|'rakuten', keywords:string, url:string|null, badge:string}], promoCodes:[{code,store,discount,best}]}\n"
+      +"JSON uniquement.";
 
-    const claudeSearchUser = "Cherche maintenant sur amazon.fr : "+recap
-      +". Trouve les vrais prix et ASINs reels. JSON uniquement.";
+    const groqRaw = await groqSearch(groqProdPrompt, 1200);
+    const groqParsed = parseJSON(groqRaw||"");
+    let products = groqParsed.products||[];
+    let summary  = groqParsed.summary||"";
+    let promos   = groqParsed.promoCodes||[];
 
-    // Lance Claude web_search + Groq DeepSearch en parallele pour aller plus vite
-    const [claudeRaw, groqRaw] = await Promise.all([
-      claude(claudeSearchSys, claudeSearchUser, 1200,
-        [{type:"web_search_20250305", name:"web_search", max_uses:5}]
-      ),
-      groqSearch(
-        "Tu es agent shopping. Cherche sur amazon.fr et rakuten.fr : "+recap+"\n"
-        +"Trouve les vrais produits avec vrais prix et ASINs amazon.fr.\n"
-        +"JSON: {summary:string, products:[{name,price,store,keywords,url,badge}], promoCodes:[{code,store,discount,best}]}\n"
-        +"JSON uniquement.",
-        1200
-      )
-    ]);
+    // ── VALIDATION Groq : detecte les inventions ──────────────────────────────
+    // Groq invente quand : ASIN inexistant, prix aberrant, URL mal formee
+    const amazonFromGroq = products.filter(function(p){
+      return (p.store||"").toLowerCase().includes("amazon");
+    });
 
-    // Parse les deux resultats
-    const claudeParsed = parseJSON(claudeRaw||"");
-    const groqParsed   = parseJSON(groqRaw||"");
+    const validAsinGroq = amazonFromGroq.filter(function(p){
+      // ASIN valide : B + exactement 9 chars alphanumeriques
+      if (!p.url) return false;
+      const m = p.url.match(/\/dp\/(B[A-Z0-9]{9})(?:[/?]|$)/);
+      if (!m) return false;
+      // Prix coherent : nombre entre 1 et 9999
+      const pNum = parseFloat((p.price||"0").replace(/[^0-9,.]/g,"").replace(",","."));
+      return pNum > 0.5 && pNum < 9999;
+    });
 
-    // Fusion intelligente : on prend le meilleur de chaque
-    // Claude est prioritaire pour Amazon (vrais prix via web_search)
-    // Groq peut complementer avec Rakuten
-    let products = [];
-    const claudeProds = claudeParsed.products||[];
-    const groqProds   = groqParsed.products||[];
+    const groqInvented = amazonFromGroq.length > 0 && validAsinGroq.length === 0;
+    // Groq a trouve des produits Amazon mais aucun ASIN valide = il a invente
 
-    // Produits Amazon : Claude prioritaire si ASIN valide
+    // ── Claude web_search : seulement si Groq a invente ──────────────────────
+    let claudeProds = [];
+    if (groqInvented || amazonFromGroq.length === 0) {
+      // Claude corrige ou complete — appel cible, max_uses reduit a 3
+      const claudeRaw = await claude(
+        "Tu es un agent shopping. Cherche sur amazon.fr : "+recap
+        +". Retourne UNIQUEMENT un JSON : "
+        +"{products:[{name:string,price:string,store:'amazon',keywords:string,url:string,badge:string}]}",
+        "Cherche les vrais ASINs amazon.fr pour : "+recap+". URL format: https://www.amazon.fr/dp/BXXXXXXXXX",
+        600,
+        [{type:"web_search_20250305", name:"web_search", max_uses:3}]
+      );
+      claudeProds = parseJSON(claudeRaw||"").products||[];
+      // Met a jour summary si Claude a trouve mieux
+      if (!summary && parseJSON(claudeRaw||"").summary) summary = parseJSON(claudeRaw||"").summary;
+    }
+
+    // ── FUSION : meilleur de Groq + correctif Claude ──────────────────────────
+    // Amazon : ASINs valides de Claude en priorite, puis Groq valides, puis Groq sans ASIN
     const claudeAmazon = claudeProds.filter(function(p){
       return (p.store||"").toLowerCase().includes("amazon")
-        && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url)
-        && p.price && p.price !== "Voir prix";
-    });
-    const groqAmazon = groqProds.filter(function(p){
-      return (p.store||"").toLowerCase().includes("amazon")
-        && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url)
-        && p.price && p.price !== "Voir prix";
+        && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url);
     });
 
-    // Prend Claude si disponible, sinon Groq, sinon produit sans prix
-    const amazonProds = claudeAmazon.length ? claudeAmazon.slice(0,2)
-      : groqAmazon.length ? groqAmazon.slice(0,2)
-      : claudeProds.filter(function(p){return (p.store||"").toLowerCase().includes("amazon");}).slice(0,2)
-      || groqProds.filter(function(p){return (p.store||"").toLowerCase().includes("amazon");}).slice(0,2);
+    const finalAmazon = claudeAmazon.length ? claudeAmazon.slice(0,2)
+      : validAsinGroq.length ? validAsinGroq.slice(0,2)
+      : amazonFromGroq.slice(0,2);  // Garde quand meme pour afficher avec lien search
 
-    // Produits Rakuten : Groq puis Claude
-    const rakutenProds = groqProds.filter(function(p){return (p.store||"").toLowerCase().includes("rakuten");}).slice(0,1)
-      || claudeProds.filter(function(p){return (p.store||"").toLowerCase().includes("rakuten");}).slice(0,1);
+    // Rakuten : Groq puis Claude (Groq est generalement bon pour Rakuten)
+    const finalRakuten = products.filter(function(p){
+      return (p.store||"").toLowerCase().includes("rakuten");
+    }).slice(0,1);
 
-    products = amazonProds.concat(rakutenProds);
-
-    // Codes promo : merge les deux sources
-    const promos = (claudeParsed.promoCodes||[]).concat(groqParsed.promoCodes||[])
-      .filter(function(c){return c&&c.code;})
-      .slice(0,2);
-
-    // Summary : Claude est plus naturel
-    const summary = claudeParsed.summary || groqParsed.summary || "Voici ma selection pour vous :";
-
-    // Fallback si toujours rien de valide
-    if (!products.length) {
-      const fbRaw = await deepseek("Agent shopping. JSON uniquement.", claudeSearchSys+". "+claudeSearchUser, 900)
-        || await mistral("Agent shopping. JSON uniquement.", claudeSearchSys+". "+claudeSearchUser, 900);
-      if (fbRaw) products = parseJSON(fbRaw||"").products||[];
-    }
-
-    // Garantit Amazon + Rakuten meme sans produit trouve
-    if (!products.some(function(p){return (p.store||"").toLowerCase().includes("amazon");})) {
-      products.unshift({name:recap, price:"Voir prix", store:"amazon", keywords:recap, url:null, badge:"Meilleure vente"});
-    }
-    if (!products.some(function(p){return (p.store||"").toLowerCase().includes("rakuten");})) {
-      products.push({name:recap, price:"Voir prix", store:"rakuten", keywords:recap, url:null, badge:"Bon plan"});
-    }
+    products = finalAmazon.concat(finalRakuten);
 
     let buttons = "";
     for (const pr of products.slice(0,4)) {
