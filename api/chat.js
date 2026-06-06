@@ -637,8 +637,7 @@ export default async function handler(req) {
             "Romantique":"#e83e8c","Culturel":"#6f42c1","Soleil":"#fd7e14",
             "Aventure":"#20c997","Gastronomie":"#e63946"
           };
-          // Script huntifyPlan injecte dans le rendu - fonctionne sans dependance frontend
-          let html3 = '<script>function huntifyPlan(dest,dep,ci,co,adults,budget){'            +'var msg="Planifie un itineraire complet pour "+dest+" depuis "+dep+" du "+ci+" au "+co+" pour "+adults+" adultes budget "+budget;'            +'var inp=document.querySelector("textarea,input[type=text],input[placeholder],#message-input,.chat-input");'            +'if(inp){inp.value=msg;inp.dispatchEvent(new Event("input",{bubbles:true}));'            +'setTimeout(function(){'            +'var btn=inp.closest("form")?inp.closest("form").querySelector("button[type=submit],button:last-of-type"):null;'            +'if(!btn)btn=document.querySelector("button[type=submit],[data-action=send],[aria-label=Envoyer]");'            +'if(btn)btn.click();'            +'else inp.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",keyCode:13,bubbles:true}));'            +'},120);}'            +'else if(window.sendPrompt)window.sendPrompt(msg);'            +'else window.dispatchEvent(new CustomEvent("huntify_send",{detail:{message:msg,mode:"travel"}}));'            +'}<\/script>'            +'<div style="font-size:14px;font-weight:700;color:#0e1430;margin-bottom:12px">'            +'\uD83C\uDF1F Voici mes 3 coups de coeur pour vous depuis '+dep+' :</div>';
+          let html3 = '<div style="font-size:14px;font-weight:700;color:#0e1430;margin-bottom:12px">'            +'\uD83C\uDF1F Voici mes 3 coups de coeur pour vous depuis '+dep+' :</div>';
 
           for (const p of propData.proposals.slice(0,3)) {
             const vc = vibeColor[p.vibe]||"#2f54ff";
@@ -683,7 +682,7 @@ export default async function handler(req) {
               +'<div style="display:flex;gap:8px">'
               +'<a href="'+skyP+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\u2708\uFE0F Vols</a>'
               +'<a href="'+bkgP+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\uD83C\uDFE8 H\u00f4tels</a>'
-              +'<button onclick="huntifyPlan(\''+p.dest+'\',\''+dep+'\',\''+p.checkin+'\',\''+p.checkout+'\','+adultK+',\''+budget+'\')" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">\uD83D\uDDFA\uFE0F Planifier</button>'
+              +'<button data-huntify-plan="Planifie un itineraire complet pour '+p.dest+' depuis '+dep+' du '+(p.checkin||ciK)+' au '+(p.checkout||coK)+' pour '+adultK+' adultes budget '+budget+'" data-mode="travel" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit" onclick="(function(b){var m=b.getAttribute(\'data-huntify-plan\');if(window.sendPrompt){window.sendPrompt(m);}else{var i=document.querySelector(\'textarea,input[type=text]\');if(i){i.value=m;i.dispatchEvent(new Event(\'input\',{bubbles:true}));var s=i.closest(\'form\');if(s)s.querySelector(\'button[type=submit],button:last-of-type\').click();else i.dispatchEvent(new KeyboardEvent(\'keydown\',{key:\'Enter\',keyCode:13,bubbles:true}));}else{window.dispatchEvent(new CustomEvent(\'huntify_send\',{detail:{message:m,mode:\'travel\'}}));}}})(this)">\uD83D\uDDFA\uFE0F Planifier</button>'
               +"</div></div>";
           }
 
@@ -1004,14 +1003,19 @@ export default async function handler(req) {
     // 3. Claude web_search SEULEMENT si Groq echoue la validation
     //    = Claude appele ~20% du temps seulement, pas systematiquement
 
-    const groqProdPrompt = "Recherche sur amazon.fr : "+recap+"\n"
-      +(dbCtx?"Contexte : "+dbCtx+"\n":"")
-      +"REGLE ABSOLUE : ne retourne un ASIN que si tu es certain qu il existe vraiment.\n"
-      +"Un ASIN reel = B suivi EXACTEMENT de 9 caracteres alphanumeriques majuscules ex: B08N5WRWNW\n"
-      +"Si tu n es pas certain : mets url:null (le systeme fera une recherche normale)\n"
-      +"Prix : retourne le vrai prix constate sur amazon.fr en EUR. Si inconnu, mets null.\n"
-      +"Trouve aussi 1 produit rakuten (url:null ok pour rakuten).\n"
-      +"JSON: {summary:string, products:[{name:string, price:string|null, store:'amazon'|'rakuten', keywords:string, url:string|null, badge:string}], promoCodes:[{code,store,discount,best}]}\n"
+    // Contexte complet de la conversation pour que l IA comprenne l evolution de la demande
+    const convContext = hist ? "Conversation precedente :\n"+hist+"\n\n" : "";
+
+    const groqProdPrompt = convContext
+      +"Demande actuelle : "+recap+"\n"
+      +(dbCtx?"Donnees internes : "+dbCtx+"\n":"")
+      +"Tu dois tenir compte de TOUS les criteres mentionnes dans la conversation.\n"
+      +"Exemple : si l utilisateur a dit 'couvrant et lumineux' puis 'budget 40 euros', cherche un fond de teint couvrant lumineux a moins de 40 euros.\n\n"
+      +"Cherche sur amazon.fr des produits correspondant exactement a ces criteres.\n"
+      +"ASIN : B + 9 caracteres alphanumeriques EXACTS. Si tu n es pas certain, mets url:null.\n"
+      +"Prix : le vrai prix amazon.fr en EUR. Si inconnu : null.\n"
+      +"Trouve aussi 1 produit rakuten adapte aux criteres.\n"
+      +"JSON: {summary:'phrase qui resume bien la recherche avec les criteres', products:[{name:string, price:string|null, store:'amazon'|'rakuten', keywords:string, url:string|null, badge:string}], promoCodes:[{code,store,discount,best}]}\n"
       +"JSON uniquement.";
 
     const groqRaw = await groqSearch(groqProdPrompt, 1200);
