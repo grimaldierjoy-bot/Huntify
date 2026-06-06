@@ -669,6 +669,19 @@ initCookieBanner();
 renderChat();
 renderChips();
 loadDeals();
+
+
+  window.handlePlanifyButton = function(btn) {
+  const prompt = btn.getAttribute('data-huntify-plan');
+  // Injecte dans ton input chat + submit
+  const input = document.querySelector('textarea, input[type="text"]');
+  if (input) {
+    input.value = prompt;
+    input.dispatchEvent(new Event('input', {bubbles: true}));
+    const form = input.closest('form');
+    if (form) form.dispatchEvent(new Event('submit', {bubbles: true}));
+  }
+};
 </script>
 </body>
 </html>
