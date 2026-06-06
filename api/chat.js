@@ -114,42 +114,38 @@ function findAdv(advertisers, slug) {
 }
 
 // ── TRAVELPAYOUTS — LIENS AFFILIES CORRECTS ───────────────────────────────────
-// tp.media/r = redirecteur universel TP avec tracking marker
-// Booking.com programme 257 = partenaire global Travelpayouts
-// Expedia programme 2041 = partenaire TP
-// Ces liens trackent les conversions meme sans approbation formelle dans certains cas
-// Sinon : fallback lien direct en attendant approbation
+// Booking.com lien affilie direct
+// AID a recuperer : dashboard Travelpayouts → Booking.com → Get link → parametre aid=XXXXXXX
+// Ajouter BOOKING_AID dans les variables Vercel
+const BOOKING_AID = process.env.BOOKING_AID||"2311236";
 
 function bookingTPLink(dest, ci, co, adults, cat) {
   const rooms = Math.ceil((adults||2)/2);
-  let destUrl = "https://www.booking.com/searchresults.html"
+  let url = "https://www.booking.com/searchresults.html"
     +"?ss="+encodeURIComponent(dest||"")
     +"&group_adults="+(adults||2)
     +"&no_rooms="+rooms
-    +"&lang=fr&selected_currency=EUR";
-  if (ci) destUrl += "&checkin="+ci;
-  if (co) destUrl += "&checkout="+co;
-  if (cat==="budget")  destUrl += "&nflt=class%3D2%3Bclass%3D3";
-  if (cat==="confort") destUrl += "&nflt=class%3D3%3Bclass%3D4";
-  if (cat==="luxe")    destUrl += "&nflt=class%3D4%3Bclass%3D5";
-  destUrl += "&aid=304142";
-  // Wrapper TP universel — commissions trackes via marker 536663
-  return "https://tp.media/r?marker="+TP_MARKER
-    +"&trs=233738&p="+TP_BOOKING_PID
-    +"&u="+encodeURIComponent(destUrl);
+    +"&lang=fr&selected_currency=EUR"
+    +"&aid="+BOOKING_AID;
+  if (ci) url += "&checkin="+ci;
+  if (co) url += "&checkout="+co;
+  if (cat==="budget")  url += "&nflt=class%3D2%3Bclass%3D3";
+  if (cat==="confort") url += "&nflt=class%3D3%3Bclass%3D4";
+  if (cat==="luxe")    url += "&nflt=class%3D4%3Bclass%3D5";
+  url += "&order=popularity";
+  return url;
 }
 
 function expediaTPLink(dest, ci, co, adults) {
-  let destUrl = "https://www.expedia.fr/Hotel-Search"
+  const aid = process.env.EXPEDIA_AID||"";
+  let url = "https://www.expedia.fr/Hotel-Search"
     +"?destination="+encodeURIComponent(dest||"")
     +"&adults="+(adults||2)
     +"&sort=RECOMMENDED";
-  if (ci) destUrl += "&startDate="+ci;
-  if (co) destUrl += "&endDate="+co;
-  // Wrapper TP universel pour Expedia
-  return "https://tp.media/r?marker="+TP_MARKER
-    +"&trs=233738&p="+TP_EXPEDIA_PID
-    +"&u="+encodeURIComponent(destUrl);
+  if (ci) url += "&startDate="+ci;
+  if (co) url += "&endDate="+co;
+  if (aid) url += "&affcid="+aid;
+  return url;
 }
 
 function skyscannerLink(from, to, ci, co, adults) {
@@ -553,155 +549,128 @@ export default async function handler(req) {
         ) || "{}"
       );
 
-      // ── CAS 1 : l utilisateur veut des propositions → l IA choisit une destination ──
+            // ── CAS 1 : l utilisateur veut des propositions ou pas de destination → 3 DESTINATIONS ──
       if (wantsSuggestions || !knownInfos.destination) {
-        const dep     = knownInfos.ville_depart||"France";
-        const budget  = knownInfos.budget||"2000EUR";
-        const ciK     = knownInfos.checkin||ci;
-        const coK     = knownInfos.checkout||co;
-        const dureeK  = knownInfos.duree||"4 jours";
-        const styleK  = knownInfos.style||"romantique en amoureux";
-        const adultK  = knownInfos.nb_adultes||2;
+        const dep    = knownInfos.ville_depart||"France";
+        const budget = knownInfos.budget||"2000EUR";
+        const ciK    = knownInfos.checkin||ci;
+        const coK    = knownInfos.checkout||co;
+        const dureeK = knownInfos.duree||"4 nuits";
+        const styleK = knownInfos.style||"romantique en amoureux";
+        const adultK = knownInfos.nb_adultes||2;
 
-        // L IA choisit la meilleure destination selon le contexte et genere directement
-        const propPrompt = "Tu es le conseiller voyage Huntify, passionne et expert.\n"
-          +"Un couple part depuis "+dep+" pour un sejour "
-          +(ciK?"du "+ciK+" au "+(coK||""):"de "+dureeK)
-          +", budget "+budget+", style : "+styleK+".\n\n"
-          +"Utilise tes capacites de recherche web pour :\n"
-          +"1. Choisir LA meilleure destination depuis "+dep+" pour ce profil (accessible, pas chere en vol, romantique)\n"
-          +"2. Verifier les vrais prix de vols depuis "+dep+" pour ces dates\n"
-          +"3. Trouver de vrais hotels avec vrais prix\n"
-          +"4. Trouver les meilleurs restaurants locaux avec vrais prix\n\n"
-          +"Destinations ideales depuis "+dep+" avec budget "+budget+" : Lisbonne, Porto, Rome, Florence, Prague, Dubrovnik, Majorque, Santorin, Marrakech...\n"
-          +"Choisis celle avec le meilleur rapport qualite/prix/romantisme pour les dates demandees.\n\n"
-          +"Genere un JSON complet :\n"
+        // L IA genere 3 destinations differentes avec vrais prix
+        const multiPropPrompt = "Tu es le conseiller voyage Huntify, passionne et expert.\n"
+          +"Un couple part depuis "+dep+" du "+(ciK||"17 juin")+" au "+(coK||"21 juin")+"\n"
+          +"Budget total max : "+budget+" pour 2 personnes. Style : "+styleK+".\n\n"
+          +"Utilise tes capacites de recherche web pour trouver des VRAIS prix de vols et hotels.\n\n"
+          +"Genere EXACTEMENT 3 propositions de destinations differentes et complementaires.\n"
+          +"Pour chaque destination : vols depuis "+dep+", hotels avec vrais prix, programme.\n\n"
+          +"JSON :\n"
           +"{\n"
-          +"  t: 'i',\n"
-          +"  recap: 'phrase enthousiaste expliquant pourquoi tu as choisi cette destination',\n"
-          +"  itin: {\n"
-          +"    dest:string, country:string, flag:string, dur:string, trav:string, style:string, dep:string,\n"
-          +"    checkin:'YYYY-MM-DD', checkout:'YYYY-MM-DD', adults:number,\n"
-          +"    flights:{ out:{from:string,to:string,price:number,co:string,dur:string}, ret:{from:string,to:string,price:number,co:string,dur:string} },\n"
-          +"    hotels:[ {name:string,stars:number,price:number,loc:string,hl:string,cat:'budget'|'confort'|'luxe'} x3 ],\n"
-          +"    days:[ {n:number,title:string,am:string,pm:string,eve:string,resto:{name:string,price:string,spec:string},acts:[string],budget:number} ],\n"
-          +"    budget:{vols:number,hotel:number,acts:number,resto:number,transport:number,total:number,pp:number},\n"
-          +"    tips:[4 conseils specifiques et pratiques]\n"
-          +"  }\n"
+          +"  proposals: [\n"
+          +"    {\n"
+          +"      dest:string, country:string, flag:string,\n"
+          +"      pitch: 'une phrase percutante qui donne envie (2 lignes max)',\n"
+          +"      vibe: 'mot cle : Romantique | Culturel | Soleil | Aventure | Gastronomie',\n"
+          +"      flight_price: number, flight_co: string, flight_dur: string,\n"
+          +"      hotel_budget_name: string, hotel_budget_price: number,\n"
+          +"      hotel_luxe_name: string, hotel_luxe_price: number,\n"
+          +"      total_est: number,\n"
+          +"      checkin: 'YYYY-MM-DD', checkout: 'YYYY-MM-DD',\n"
+          +"      from_iata: string, to_iata: string,\n"
+          +"      top3: ['activite 1', 'activite 2', 'activite 3'],\n"
+          +"      why: 'pourquoi cette destination depuis "+dep+" pour ce profil'\n"
+          +"    }\n"
+          +"  ]\n"
           +"}\n"
-          +"IATA : Paris=CDG, Marseille=MRS, Nice=NCE, Lyon=LYS, Bordeaux=BOD, Barcelone=BCN, "
-          +"Rome=FCO, Florence=FLR, Lisbonne=LIS, Porto=OPO, Prague=PRG, Dubrovnik=DBV, "
-          +"Majorque=PMI, Santorin=JTR, Marrakech=RAK, Amsterdam=AMS, Budapest=BUD.\n"
+          +"Les 3 destinations doivent etre TRES differentes (ex: une ville culturelle, une destination soleil, une ville romantique proche).\n"
+          +"Toutes accessibles depuis "+dep+" dans le budget "+budget+".\n"
           +"JSON uniquement.";
 
-        // Cascade DeepSeek prioritaire ici car meilleur en raisonnement multi-etapes
-        let propRaw = await groqSearch(propPrompt, 4000);
-        if (!propRaw || !parseJSON(propRaw).itin) propRaw = await deepseek("Tu es expert voyage. JSON uniquement.", propPrompt, 3500);
-        if (!propRaw || !parseJSON(propRaw).itin) propRaw = await mistral("Tu es expert voyage. JSON uniquement.", propPrompt, 3000);
-        if (!propRaw || !parseJSON(propRaw).itin) propRaw = await gemini("Tu es expert voyage. Reponds en JSON uniquement.\n\n"+propPrompt, 3000);
-        if (!propRaw || !parseJSON(propRaw).itin) propRaw = await claude("Tu es expert voyage. JSON uniquement.", propPrompt, 3000, []);
-
-        const propP = parseJSON(propRaw||"");
-        if (propP.itin) {
-          // Injecte dans decision pour le rendu commun ci-dessous
-          const pi = propP.itin;
-          knownInfos.destination   = pi.dest||"";
-          knownInfos.ville_depart  = pi.dep||dep;
-          knownInfos.nb_adultes    = pi.adults||adultK;
-          knownInfos.checkin       = pi.checkin||ciK;
-          knownInfos.checkout      = pi.checkout||coK;
-          // Rendu direct — on court-circuite le bloc generation standard
-          const fCi = pi.checkin||ciK||"";
-          const fCo = pi.checkout||coK||"";
-          const fAd = pi.adults||adultK;
-          const itinId2 = "itin_"+Date.now();
-          let html2 = "";
-
-          html2 += '<div id="'+itinId2+'" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:18px;margin-bottom:4px;text-align:center">'
-            +'<div style="font-size:32px;margin-bottom:6px">'+(pi.flag||"\u2708\uFE0F")+"</div>"
-            +'<div style="font-family:sans-serif;font-size:20px;font-weight:800;color:#fff">'+(pi.dest||"")+(pi.country?", "+pi.country:"")+"</div>"
-            +'<div style="font-size:12px;color:rgba(255,255,255,.75);margin-top:6px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap">'
-            +"<span>\uD83D\uDCC5 "+(pi.dur||"")+"</span><span>\uD83D\uDC65 "+(pi.trav||fAd+" pers.")+"</span>"
-            +(pi.dep?"<span>\uD83D\uDEEB Depuis "+pi.dep+"</span>":"")
-            +(pi.budget&&pi.budget.total?"<span>\uD83D\uDCB0 ~"+pi.budget.total+"EUR / 2 pers.</span>":"")
-            +"</div></div>";
-
-          if (propP.recap) {
-            html2 += '<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:12px 14px;margin-top:8px;font-size:13px;color:#5b21b6;font-weight:600;line-height:1.6">'
-              +"\uD83D\uDCA1 "+propP.recap+"</div>";
-          }
-
-          if (pi.flights&&pi.flights.out) {
-            const f2 = pi.flights;
-            const sky2 = skyscannerLink(f2.out.from||dep,f2.out.to||pi.dest||"",fCi,fCo,fAd);
-            html2 += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">\u2708\uFE0F Vols depuis '+dep+'</div>'
-              +'<div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;overflow:hidden">'
-              +'<div style="padding:12px 14px;border-bottom:1px solid #f0f4ff">'
-              +'<div style="display:flex;justify-content:space-between;align-items:center">'
-              +'<div><div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Aller'+(fCi?" \u00B7 "+fCi:"")+"</div>"
-              +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'+f2.out.from+" \u2192 "+f2.out.to+"</div>"
-              +'<div style="font-size:11px;color:#7c89a8">'+(f2.out.co||"")+" \u00B7 "+(f2.out.dur||"")+"</div></div>"
-              +'<div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">~'+f2.out.price+"EUR</div>"
-              +'<div style="font-size:10px;color:#7c89a8">/pers.</div></div></div></div>"'
-              +(f2.ret?'<div style="padding:12px 14px">'
-                +'<div style="display:flex;justify-content:space-between;align-items:center">'
-                +'<div><div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Retour'+(fCo?" \u00B7 "+fCo:"")+"</div>"
-                +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'+f2.ret.from+" \u2192 "+f2.ret.to+"</div>"
-                +'<div style="font-size:11px;color:#7c89a8">'+(f2.ret.co||"")+" \u00B7 "+(f2.ret.dur||"")+"</div></div>"
-                +'<div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">~'+f2.ret.price+"EUR</div>"
-                +'<div style="font-size:10px;color:#7c89a8">/pers.</div></div></div></div>':"")
-              +"</div>"
-              +'<a href="'+sky2+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:12px;font-size:13px;font-weight:700;margin-top:6px">\uD83D\uDD0D Confirmer ces vols sur Skyscanner \u2192</a>';
-          }
-
-          const realH2 = await fetchHotelPrices(pi.dest||"",fCi,fCo,fAd);
-          const hasR2  = !!(realH2&&realH2.length);
-          const hotShow2 = hasR2 ? realH2 : (pi.hotels||[]).map(function(h,i){
-            return {name:h.name,stars:h.stars||3,price:null,loc:h.loc||pi.dest,hl:h.hl,
-              cat:["budget","confort","luxe"][i]||"confort",
-              url:bookingTPLink(pi.dest||"",fCi,fCo,fAd,["budget","confort","luxe"][i])};
-          });
-
-          html2 += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">\uD83C\uDFE8 Hebergements romantiques</div>';
-          for (const h of hotShow2) {
-            const hLnk = h.url||bookingTPLink(pi.dest||"",fCi,fCo,fAd,null);
-            html2 += cardHotel({name:h.name,stars:h.stars,price:h.price?String(h.price):null,priceReal:hasR2&&!!h.price,loc:h.loc||pi.dest,hl:h.hl,cat:h.cat},hLnk);
-          }
-
-          html2 += '<div style="display:flex;gap:8px;margin-top:8px">'
-            +'<a href="'+bookingTPLink(pi.dest||"",fCi,fCo,fAd,null)+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;gap:6px;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\uD83C\uDFE8 Booking.com</a>'
-            +'<a href="'+expediaTPLink(pi.dest||"",fCi,fCo,fAd)+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;gap:6px;background:linear-gradient(135deg,#00355f,#00a0e3);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\u2708\uFE0F Expedia.fr</a>'
-            +"</div>";
-
-          if (fCi) {
-            html2 += '<a href="'+getTransferLink(pi.dest||"",fCi)+'" target="_blank" rel="sponsored" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:11px;margin-top:8px;font-size:12px;font-weight:700">\uD83D\uDE97 Transfert aeroport \u00B7 GetTransfer \u2192</a>';
-          }
-
-          if (pi.days&&pi.days.length) {
-            html2 += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">\uD83D\uDCC5 Programme romantique jour par jour</div>';
-            for (const d of pi.days) html2 += cardDay(d);
-          }
-
-          if (pi.budget) html2 += cardBudget(pi.budget);
-          if (pi.tips&&pi.tips.length) html2 += cardTips(pi.tips);
-
-          const wD2 = JSON.stringify({
-            type:"voyage", name:(pi.flag||"\u2708\uFE0F")+" "+(pi.dest||"")+(pi.country?", "+pi.country:""),
-            subtitle:(pi.dur||"")+" \u00B7 en amoureux \u00B7 "+(pi.style||"romantique"),
-            price:pi.budget&&pi.budget.total?String(pi.budget.total)+"EUR":"",
-            store:"booking", url:bookingTPLink(pi.dest||"",fCi,fCo,fAd,null),
-            budget:pi.budget||null
-          }).replace(/"/g,"&quot;");
-
-          html2 += '<div style="display:flex;gap:8px;margin-top:12px">'
-            +'<button onclick="addToWishlist('+wD2+')" style="flex:1;background:linear-gradient(135deg,#1f2da0,#2f54ff);border:none;color:#fff;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">\u2661 Sauvegarder ce voyage</button>'
-            +'<button onclick="exportItinerary(\''+itinId2+'\')" style="background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">\u2B07\uFE0F Exporter PDF</button>'
-            +"</div>";
-
-          return new Response(JSON.stringify({reply:html2,sessionId:sid}),{headers:H});
+        // Cascade pour les propositions
+        let propRaw = await groqSearch(multiPropPrompt, 3000);
+        let propData = parseJSON(propRaw||"");
+        if (!propData.proposals||!propData.proposals.length) {
+          propRaw = await deepseek("Expert voyage. JSON uniquement.", multiPropPrompt, 2800);
+          propData = parseJSON(propRaw||"");
         }
-        // Si l IA n a pas pu generer un itineraire complet → on continue avec le flux normal
-        // en forcant une destination populaire par defaut
+        if (!propData.proposals||!propData.proposals.length) {
+          propRaw = await mistral("Expert voyage. JSON uniquement.", multiPropPrompt, 2500);
+          propData = parseJSON(propRaw||"");
+        }
+        if (!propData.proposals||!propData.proposals.length) {
+          propRaw = await gemini("Expert voyage. JSON uniquement.\n\n"+multiPropPrompt, 2500);
+          propData = parseJSON(propRaw||"");
+        }
+        if (!propData.proposals||!propData.proposals.length) {
+          propRaw = await claude("Expert voyage. JSON uniquement.", multiPropPrompt, 2500, []);
+          propData = parseJSON(propRaw||"");
+        }
+
+        // Rendu cartes destinations multiples
+        if (propData.proposals&&propData.proposals.length) {
+          const vibeColor = {
+            "Romantique":"#e83e8c","Culturel":"#6f42c1","Soleil":"#fd7e14",
+            "Aventure":"#20c997","Gastronomie":"#e63946"
+          };
+          let html3 = '<div style="font-size:14px;font-weight:700;color:#0e1430;margin-bottom:12px">'
+            +'\uD83C\uDF1F Voici mes 3 coups de coeur pour vous depuis '+dep+' :</div>';
+
+          for (const p of propData.proposals.slice(0,3)) {
+            const vc = vibeColor[p.vibe]||"#2f54ff";
+            const skyP = skyscannerLink(p.from_iata||dep, p.to_iata||p.dest||"", p.checkin||ciK, p.checkout||coK, adultK);
+            const bkgP = bookingTPLink(p.dest||"", p.checkin||ciK, p.checkout||coK, adultK, null);
+
+            html3 += '<div style="background:#fff;border:2px solid #e6ebf7;border-radius:16px;padding:16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
+              // Header destination
+              +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">'
+              +'<div style="font-size:36px">'+(p.flag||"\u2708\uFE0F")+"</div>"
+              +'<div style="flex:1">'
+              +'<div style="font-size:16px;font-weight:900;color:#0e1430">'+(p.dest||"")+(p.country?", "+p.country:"")+"</div>"
+              +'<span style="background:'+vc+';color:#fff;border-radius:100px;padding:2px 10px;font-size:10px;font-weight:800">'+(p.vibe||"Voyage")+"</span>"
+              +"</div>"
+              +'<div style="text-align:right"><div style="font-size:11px;color:#7c89a8">Budget estim\u00e9</div>'
+              +'<div style="font-size:18px;font-weight:900;color:#2f54ff">~'+(p.total_est||"?")+"EUR</div>"
+              +'<div style="font-size:10px;color:#7c89a8">/ 2 pers.</div></div>'
+              +"</div>"
+              // Pitch
+              +'<div style="font-size:13px;color:#374151;font-style:italic;background:#f8f9ff;border-radius:10px;padding:8px 12px;margin-bottom:10px;line-height:1.5">'
+              +"\u201C"+(p.pitch||"")+"\u201D</div>"
+              // Vols + hotels
+              +'<div style="display:flex;gap:8px;margin-bottom:8px">'
+              +'<div style="flex:1;background:#eff6ff;border-radius:10px;padding:8px 10px">'
+              +'<div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">\u2708\uFE0F Vol aller</div>'
+              +'<div style="font-size:13px;font-weight:800;color:#2f54ff">~'+(p.flight_price||"?")+"EUR</div>"
+              +'<div style="font-size:10px;color:#7c89a8">'+(p.flight_co||"")+" \u00B7 "+(p.flight_dur||"")+"</div>"
+              +"</div>"
+              +'<div style="flex:1;background:#f0fdf4;border-radius:10px;padding:8px 10px">'
+              +'<div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">\uD83C\uDFE8 H\u00f4tel budget</div>'
+              +'<div style="font-size:13px;font-weight:800;color:#16a34a">~'+(p.hotel_budget_price||"?")+"EUR/nuit</div>"
+              +'<div style="font-size:10px;color:#7c89a8">'+(p.hotel_budget_name||"")+"</div>"
+              +"</div></div>"
+              // Top 3 activites
+              +(p.top3&&p.top3.length?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">'
+                +p.top3.map(function(a){return '<span style="background:#f5f3ff;color:#6f42c1;border-radius:100px;padding:3px 10px;font-size:11px;font-weight:600">'+a+"</span>";}).join("")
+                +"</div>":"")
+              // Pourquoi ce choix
+              +'<div style="font-size:11px;color:#64748b;background:#f8fafc;border-radius:8px;padding:6px 10px;margin-bottom:10px">'
+              +"\uD83D\uDCA1 "+(p.why||"")+"</div>"
+              // Boutons
+              +'<div style="display:flex;gap:8px">'
+              +'<a href="'+skyP+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\u2708\uFE0F Vols</a>'
+              +'<a href="'+bkgP+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\uD83C\uDFE8 H\u00f4tels</a>'
+              +'<button onclick="this.closest(\'div[id]\') && sendPrompt(\'Planifie le voyage complet pour '+p.dest+'\');" style="flex:1;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">\uD83D\uDDFA\uFE0F Planifier</button>'
+              +"</div></div>";
+          }
+
+          html3 += '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:8px">'
+            +'Cliquez "Planifier" sur la destination de votre choix pour l itineraire complet jour par jour</div>';
+
+          return new Response(JSON.stringify({reply:html3,sessionId:sid}),{headers:H});
+        }
+
+        // Si l IA n a pas pu generer → on force une destination par defaut
         if (!knownInfos.destination) knownInfos.destination = "Lisbonne";
       }
 
