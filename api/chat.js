@@ -678,11 +678,12 @@ export default async function handler(req) {
               // Pourquoi ce choix
               +'<div style="font-size:11px;color:#64748b;background:#f8fafc;border-radius:8px;padding:6px 10px;margin-bottom:10px">'
               +"\uD83D\uDCA1 "+(p.why||"")+"</div>"
-            '<button data-huntify-plan="Planifie un itinéraire complet jour par jour pour ' + p.dest + '" ' +
-'onclick="handlePlanifyButton(this)" ' +
-'style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">' +
-'📍 Planifier</button>'
-
+           + '<button data-huntify-plan="Planifie un itinéraire complet jour par jour pour ' + (p.dest || '') + '" ' 
+    + 'onclick="handlePlanifyButton(this)" '
+    + 'style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">'
+    + '📍 Planifier</button>'
+    + '</div>';
+}
           html3 += '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:8px">'
             +'Cliquez "Planifier" sur la destination de votre choix pour l itineraire complet jour par jour</div>';
 
