@@ -14,7 +14,7 @@ const RAKUTEN_MID   = "55615";
 const TP_MARKER     = "536663";
 const MODEL         = "claude-haiku-4-5";
 
-// Codes IATA — données de référence, pas de logique
+// Codes IATA
 const IATA = {
   paris:"CDG",lyon:"LYS",marseille:"MRS",nice:"NCE",bordeaux:"BOD",toulouse:"TLS",
   nantes:"NTE",strasbourg:"SXB",montpellier:"MPL",rennes:"RNS",
@@ -71,21 +71,17 @@ function buildLink(adv, keywords, directUrl) {
   const kw = cleanKw(keywords);
   if (adv.slug==="amazon") {
     const tag = adv.amazon_tag||AMAZON_TAG;
-    // Valide que l ASIN est réel : 10 caractères alphanumériques commençant par B
-    // Un ASIN inventé par une IA ne passe pas ce test → on utilise la recherche
     const asinMatch = directUrl&&directUrl.match(/\/dp\/([A-Z0-9]{10})(?:[/?]|$)/);
     const isRealAsin = asinMatch&&/^B[A-Z0-9]{9}$/.test(asinMatch[1]);
     const base = isRealAsin
-      ? "https://www.amazon.fr/dp/"+asinMatch[1]   // ASIN validé → lien direct
-      : "https://www.amazon.fr/s?k="+encodeURIComponent(kw); // sinon → recherche
+      ? "https://www.amazon.fr/dp/"+asinMatch[1]
+      : "https://www.amazon.fr/s?k="+encodeURIComponent(kw);
     return base+"?tag="+tag;
   }
   if (adv.slug==="rakuten") {
-    // Lien direct Rakuten avec tag affilié dans le referer Awin
     const mid = adv.awin_mid||RAKUTEN_MID;
     const aff = adv.awin_affid||adv.awin_aff||AWIN_PUB;
     const searchUrl = "https://fr.shopping.rakuten.com/s/"+encodeURIComponent(kw.replace(/\s+/g,"+"));
-    // Lien Awin direct → Rakuten FR (fonctionne même sans approbation)
     return "https://www.awin1.com/cread.php?awinmid="+mid+"&awinaffid="+aff+"&clickref=huntify&ued="+encodeURIComponent(searchUrl);
   }
   if (adv.awin_mid) {
@@ -101,12 +97,10 @@ function findAdv(advertisers, slug) {
 }
 
 // ── TRAVELPAYOUTS LIENS ───────────────────────────────────────────────────────
-
-// Skyscanner via Travelpayouts
 function skyscannerLink(from, to, ci, co, adults) {
   const f = (toIATA(from)||"par").toLowerCase();
   const t = (toIATA(to)||"xxx").toLowerCase();
-  const fmt = d => d?d.replace(/-/g,"").slice(2):null;
+  const fmt = function(d) { return d?d.replace(/-/g,"").slice(2):null; };
   const out = fmt(ci), ret = fmt(co);
   const base = "https://www.skyscanner.fr/transport/vols/"+f+"/"+t+"/";
   if (out&&ret) return base+out+"/"+ret+"/?adults="+(adults||2)+"&currency=EUR";
@@ -114,9 +108,6 @@ function skyscannerLink(from, to, ci, co, adults) {
   return base;
 }
 
-// Booking.com — lien affilié Travelpayouts (marker 536663)
-// ── BOOKING.COM — lien direct avec dates et filtres ──────────────────────────
-// Quand les IDs Travelpayouts seront disponibles, on ajoutera le wrapper TP
 function bookingLink(dest, ci, co, adults, cat) {
   const rooms = Math.ceil((adults||2)/2);
   let url = "https://www.booking.com/searchresults.html"
@@ -125,7 +116,6 @@ function bookingLink(dest, ci, co, adults, cat) {
     +"&lang=fr&selected_currency=EUR";
   if (ci) url += "&checkin="+ci;
   if (co) url += "&checkout="+co;
-  // Filtres étoiles selon catégorie (Budget=2-3★, Confort=3-4★, Luxe=4-5★)
   if (cat==="budget")  url += "&nflt=class%3D2%3Bclass%3D3";
   if (cat==="confort") url += "&nflt=class%3D3%3Bclass%3D4";
   if (cat==="luxe")    url += "&nflt=class%3D4%3Bclass%3D5";
@@ -133,7 +123,6 @@ function bookingLink(dest, ci, co, adults, cat) {
   return url;
 }
 
-// ── EXPEDIA.FR — lien direct avec dates ──────────────────────────────────────
 function expediaLink(dest, ci, co, adults) {
   let url = "https://www.expedia.fr/Hotel-Search"
     +"?destination="+encodeURIComponent(dest||"")
@@ -144,16 +133,13 @@ function expediaLink(dest, ci, co, adults) {
   return url;
 }
 
-// ── GETTRANSFER (Travelpayouts) ───────────────────────────────────────────────
 function getTransferLink(dest, ci) {
   const base = "https://gettransfer.tpk.mx/vMnVrFfO";
   if (dest) return base+"?to="+encodeURIComponent(dest)+(ci?"&date="+ci:"");
   return base;
 }
 
-// ── TRAVELPAYOUTS : API PRIX HÔTELS (Hotellook backend) ──────────────────────
-// Même si le site hotellook.com n'est pas affiché, l'API retourne des prix
-// qu'on redirige ensuite vers Booking.com pour la réservation
+// ── TRAVELPAYOUTS : API PRIX HOTELS (Hotellook) ───────────────────────────────
 async function fetchHotelPrices(dest, ci, co, adults) {
   const token = process.env.TRAVELPAYOUTS_TOKEN;
   if (!token||!ci||!co||!dest) return null;
@@ -168,23 +154,22 @@ async function fetchHotelPrices(dest, ci, co, adults) {
     const data = await r.json();
     if (!Array.isArray(data)||data.length<2) return null;
     const valid = data
-      .filter(h=>h.priceFrom&&(h.hotelName||h.name)&&h.id)
-      .map(h=>({
+      .filter(function(h){return h.priceFrom&&(h.hotelName||h.name)&&h.id;})
+      .map(function(h){return {
         name:  h.hotelName||h.name,
         stars: Math.round(h.stars||3),
         price: Math.round(h.priceFrom),
         loc:   (h.location&&h.location.name)||dest,
-        // On redirige vers Booking.com pour la réservation (site français et sécurisé)
         url:   bookingLink(h.hotelName||h.name, ci, co, adults, null)
-      }))
-      .sort((a,b)=>a.price-b.price);
+      };})
+      .sort(function(a,b){return a.price-b.price;});
     if (valid.length<2) return null;
     const t = Math.max(1,Math.floor(valid.length/3));
-    const mid = arr => arr[Math.floor(arr.length/2)];
+    const mid = function(arr){return arr[Math.floor(arr.length/2)];};
     return [
-      Object.assign({},mid(valid.slice(0,t)),    {cat:"budget",  hl:"Meilleur rapport qualité/prix"}),
-      Object.assign({},mid(valid.slice(t,t*2)),  {cat:"confort", hl:"Confort et emplacement idéal"}),
-      Object.assign({},mid(valid.slice(-t)),     {cat:"luxe",    hl:"Expérience premium"}),
+      Object.assign({},mid(valid.slice(0,t)),    {cat:"budget",  hl:"Meilleur rapport qualite/prix"}),
+      Object.assign({},mid(valid.slice(t,t*2)),  {cat:"confort", hl:"Confort et emplacement ideal"}),
+      Object.assign({},mid(valid.slice(-t)),     {cat:"luxe",    hl:"Experience premium"}),
     ];
   } catch(e) { return null; }
 }
@@ -194,16 +179,16 @@ function parseDate(str) {
   if (!str) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
   const now = new Date();
-  const addDays = n => { const d=new Date(now); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+  const addDays = function(n) { const d=new Date(now); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
   const s = str.toLowerCase().trim();
   if (s==="demain") return addDays(1);
   if (/apres.?demain/.test(s)) return addDays(2);
   const slash = str.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
   if (slash) { const y=slash[3].length===2?"20"+slash[3]:slash[3]; return y+"-"+slash[2].padStart(2,"0")+"-"+slash[1].padStart(2,"0"); }
   const MONTHS = {jan:1,janv:1,fev:2,mar:3,mars:3,avr:4,avril:4,mai:5,juin:6,juil:7,juillet:7,aout:8,sep:9,sept:9,oct:10,nov:11,dec:12};
-  const mn = s.match(/(\d{1,2})\s+([a-zéûôà]+)(?:\s+(\d{4}))?/);
+  const mn = s.match(/(\d{1,2})\s+([a-z\u00e9\u00fb\u00f4\u00e0]+)(?:\s+(\d{4}))?/);
   if (mn) {
-    const mo = Object.entries(MONTHS).find(([k])=>mn[2].startsWith(k));
+    const mo = Object.entries(MONTHS).find(function(e){return mn[2].startsWith(e[0]);});
     if (mo) {
       let y = mn[3]||String(now.getFullYear());
       const d = new Date(y+"-"+String(mo[1]).padStart(2,"0")+"-"+mn[1].padStart(2,"0"));
@@ -216,7 +201,7 @@ function parseDate(str) {
 
 // ── HISTORIQUE ────────────────────────────────────────────────────────────────
 function formatHistory(history, maxLen) {
-  return ((history||[]).map(m=>{
+  return ((history||[]).map(function(m){
     const who = m.role==="user"?"Client":"Huntify";
     const text = (m.content||"").replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim().slice(0,300);
     return text?who+": "+text:null;
@@ -272,21 +257,6 @@ async function mistral(sys, user, maxTok) {
   } catch(e){return null;}
 }
 
-async function perplexity(prompt, maxTok) {
-  const key = process.env.PERPLEXITY_API_KEY; if (!key) return null;
-  try {
-    const r = await fetch("https://api.perplexity.ai/chat/completions",{
-      method:"POST", headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"llama-3.1-sonar-small-128k-online",max_tokens:maxTok||500,messages:[{role:"user",content:prompt}]})
-    });
-    if (!r.ok) return null;
-    const d = await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
-  } catch(e){return null;}
-}
-
-// DeepSeek V4 Flash — $0.14/M tokens (100x moins cher que Claude)
-// 5M tokens gratuits à l inscription sur platform.deepseek.com
-// Ajouter DEEPSEEK_API_KEY dans Vercel quand prêt
 async function deepseek(sys, user, maxTok) {
   const key = process.env.DEEPSEEK_API_KEY; if (!key) return null;
   try {
@@ -299,8 +269,19 @@ async function deepseek(sys, user, maxTok) {
   } catch(e){return null;}
 }
 
+async function perplexity(prompt, maxTok) {
+  const key = process.env.PERPLEXITY_API_KEY; if (!key) return null;
+  try {
+    const r = await fetch("https://api.perplexity.ai/chat/completions",{
+      method:"POST", headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+      body:JSON.stringify({model:"llama-3.1-sonar-small-128k-online",max_tokens:maxTok||500,messages:[{role:"user",content:prompt}]})
+    });
+    if (!r.ok) return null;
+    const d = await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
+  } catch(e){return null;}
+}
+
 async function freeAI(sys, user, maxTok) {
-  // Cascade coût croissant: Groq (gratuit) → Gemini (gratuit) → Mistral (gratuit) → DeepSeek ($0.14/M) → Perplexity
   return await groq(sys,user,maxTok)
       || await gemini(sys+"\n\n"+user,maxTok)
       || await mistral(sys,user,maxTok)
@@ -337,9 +318,9 @@ async function dbLookup(kw) {
       sbFetch("promo_codes?valid=eq.true&order=found_at.desc&limit=2")
     ]);
     const parts=[];
-    if(deals&&deals.length) parts.push("Deals: "+deals.map(x=>x.name+" "+x.price+"€").join(" | "));
-    if(prices&&prices.length) parts.push("Prix: "+prices.map(x=>x.product_name+" "+x.price+"€").join(" | "));
-    if(promos&&promos.length) parts.push("Codes: "+promos.map(x=>x.code+" ("+x.store+")").join(" | "));
+    if(deals&&deals.length) parts.push("Deals: "+deals.map(function(x){return x.name+" "+x.price+"EUR";}).join(" | "));
+    if(prices&&prices.length) parts.push("Prix: "+prices.map(function(x){return x.product_name+" "+x.price+"EUR";}).join(" | "));
+    if(promos&&promos.length) parts.push("Codes: "+promos.map(function(x){return x.code+" ("+x.store+")";}).join(" | "));
     return parts.join("\n");
   } catch(e){return "";}
 }
@@ -347,36 +328,36 @@ async function dbLookup(kw) {
 // ── COMPOSANTS HTML ───────────────────────────────────────────────────────────
 function cardProduct(name, price, url, adv, img, badge) {
   const imgH = img?'<img src="'+img+'" style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0" onerror="this.style.display=\'none\'">':'';
-  const pill = '<span style="background:rgba(255,255,255,.2);border-radius:100px;padding:2px 10px;font-size:10px;font-weight:800">'+(adv.emoji||"🛍️")+" "+adv.name+"</span>";
+  const pill = '<span style="background:rgba(255,255,255,.2);border-radius:100px;padding:2px 10px;font-size:10px;font-weight:800">'+(adv.emoji||"\uD83D\uDECD\uFE0F")+" "+adv.name+"</span>";
   return '<a href="'+url+'" target="_blank" rel="sponsored noopener" style="display:flex;align-items:center;gap:12px;background:'+(adv.color||"#2f54ff")+';color:#fff;text-decoration:none;border-radius:14px;padding:12px 14px;margin-top:8px">'
-    +imgH+'<div style="flex:1;min-width:0"><div style="font-size:10px;margin-bottom:4px;opacity:.85">'+pill+(badge?" · "+badge:"")+"</div>"
+    +imgH+'<div style="flex:1;min-width:0"><div style="font-size:10px;margin-bottom:4px;opacity:.85">'+pill+(badge?" \u00B7 "+badge:"")+"</div>"
     +'<div style="font-size:13px;font-weight:800;line-height:1.3;word-break:break-word">'+name+"</div></div>"
     +'<span style="background:rgba(255,255,255,.22);border-radius:8px;padding:5px 10px;white-space:nowrap;font-size:14px;font-weight:900;flex-shrink:0">'+(price||"Voir prix")+"</span></a>";
 }
 
 function promoBox(code, store, desc, best) {
   return '<div style="background:'+(best?"#dcfce7":"#f0fdf4")+';border:'+(best?"2px solid #16a34a":"1.5px solid #86efac")+';border-radius:12px;padding:10px 14px;margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:8px">'
-    +'<div><span style="font-size:11px;color:#16a34a;font-weight:700">'+(best?"⭐ MEILLEUR — ":"")+"🏷️ "+store+"</span>"
+    +'<div><span style="font-size:11px;color:#16a34a;font-weight:700">'+(best?"\u2B50 MEILLEUR \u2014 ":"")+"\uD83C\uDFF7\uFE0F "+store+"</span>"
     +'<div style="font-size:12px;color:#166534;font-weight:600">'+desc+"</div></div>"
-    +'<div onclick="navigator.clipboard.writeText(\''+code+'\');this.innerHTML=\'✓\';setTimeout(()=>this.innerHTML=\''+code+'\',2000)" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0">'+code+"</div></div>";
+    +'<div onclick="navigator.clipboard.writeText(\''+code+'\');this.innerHTML=\'&#10003;\';setTimeout(()=>this.innerHTML=\''+code+'\',2000)" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0">'+code+"</div></div>";
 }
 
 function cardHotel(h, link) {
-  const stars = "⭐".repeat(Math.min(h.stars||3,5));
+  const stars = "\u2B50".repeat(Math.min(h.stars||3,5));
   const cc = {budget:"#16a34a",confort:"#2f54ff",luxe:"#7c3aed"}[h.cat]||"#2f54ff";
-  const cl = {budget:"💚 Budget",confort:"💙 Confort",luxe:"💎 Luxe"}[h.cat]||"";
+  const cl = {budget:"\uD83D\uDC9A Budget",confort:"\uD83D\uDC99 Confort",luxe:"\uD83D\uDC8E Luxe"}[h.cat]||"";
   const hasPrice = h.price&&h.priceReal;
   const priceDiv = hasPrice
-    ? '<div style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border-radius:10px;padding:7px 11px;text-align:center;flex-shrink:0;margin-left:8px"><div style="font-size:9px;opacity:.85">Prix réel ✓</div><div style="font-size:15px;font-weight:900">'+h.price+'€</div><div style="font-size:9px;opacity:.75">/nuit</div></div>'
-    : '<div style="background:linear-gradient(135deg,'+cc+','+cc+'cc);color:#fff;border-radius:10px;padding:8px 12px;text-align:center;flex-shrink:0;margin-left:8px;min-width:60px"><div style="font-size:10px">Voir prix</div><div style="font-size:12px;font-weight:800">→</div></div>';
+    ? '<div style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border-radius:10px;padding:7px 11px;text-align:center;flex-shrink:0;margin-left:8px"><div style="font-size:9px;opacity:.85">Prix reel</div><div style="font-size:15px;font-weight:900">'+h.price+'EUR</div><div style="font-size:9px;opacity:.75">/nuit</div></div>'
+    : '<div style="background:linear-gradient(135deg,'+cc+','+cc+'cc);color:#fff;border-radius:10px;padding:8px 12px;text-align:center;flex-shrink:0;margin-left:8px;min-width:60px"><div style="font-size:10px">Voir prix</div><div style="font-size:12px;font-weight:800">\u2192</div></div>';
   return '<a href="'+link+'" target="_blank" rel="sponsored noopener" style="display:flex;flex-direction:column;background:#fff;border:1.5px solid '+(hasPrice?"#bbf7d0":"#e6ebf7")+';border-radius:14px;padding:13px;margin-top:8px;text-decoration:none;gap:5px">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
     +'<div style="flex:1">'+(cl?'<span style="background:#eff6ff;color:'+cc+';border-radius:100px;padding:2px 9px;font-size:10px;font-weight:800">'+cl+"</span>":"")
     +'<div style="font-size:13px;font-weight:800;color:#0e1430;margin-top:3px">'+h.name+"</div>"
-    +'<div style="font-size:11px;color:#7c89a8">'+stars+" · "+(h.loc||"")+"</div></div>"+priceDiv+"</div>"
-    +(h.hl?'<div style="font-size:11px;color:'+cc+';font-weight:600;background:#eff6ff;border-radius:8px;padding:4px 10px">✨ '+h.hl+"</div>":"")
+    +'<div style="font-size:11px;color:#7c89a8">'+stars+" \u00B7 "+(h.loc||"")+"</div></div>"+priceDiv+"</div>"
+    +(h.hl?'<div style="font-size:11px;color:'+cc+';font-weight:600;background:#eff6ff;border-radius:8px;padding:4px 10px">\u2728 '+h.hl+"</div>":"")
     +'<div style="background:'+(hasPrice?"#f0fdf4":"#f0f9ff")+';border-radius:8px;padding:6px 10px;font-size:11px;color:'+(hasPrice?"#15803d":"#0369a1")+';font-weight:600">'
-    +(hasPrice?"🟢 Prix vérifié · Réserver sur Booking.com →":"🏨 Voir disponibilités et prix sur Booking.com →")+"</div></a>";
+    +(hasPrice?"\uD83D\uDFE2 Prix verifie \u00B7 Reserver sur Booking.com \u2192":"\uD83C\uDFE8 Voir disponibilites et prix sur Booking.com \u2192")+"</div></a>";
 }
 
 function cardDay(d) {
@@ -384,32 +365,38 @@ function cardDay(d) {
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
     +'<div style="background:linear-gradient(135deg,#2f54ff,#4a6bff);color:#fff;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:800">Jour '+d.n+"</div>"
     +'<div style="font-size:12px;font-weight:700;color:#0e1430;flex:1;margin-left:8px">'+(d.title||"")+"</div>"
-    +(d.budget?'<div style="font-size:11px;color:#16a34a;font-weight:700">~'+d.budget+"€</div>":"")+"</div>"
-    +(d.am?'<div style="display:flex;gap:9px;margin-bottom:8px"><span>🌅</span><div><div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase">Matin</div><div style="font-size:12px;color:#374151">'+d.am+"</div></div></div>":"")
-    +(d.pm?'<div style="display:flex;gap:9px;margin-bottom:8px"><span>☀️</span><div><div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase">Après-midi</div><div style="font-size:12px;color:#374151">'+d.pm+"</div></div></div>":"")
-    +(d.eve?'<div style="display:flex;gap:9px;margin-bottom:4px"><span>🌙</span><div><div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase">Soirée</div><div style="font-size:12px;color:#374151">'+d.eve+"</div></div></div>":"")
-    +(d.resto?'<div style="background:#f0fdf4;border-radius:9px;padding:7px 11px;margin-top:6px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:11px;color:#16a34a;font-weight:700">🍽️ '+d.resto.name+"</div>"+(d.resto.spec?'<div style="font-size:10px;color:#86efac">'+d.resto.spec+"</div>":"")+"</div>"+'<div style="font-size:12px;color:#16a34a;font-weight:800">'+d.resto.price+"</div></div>":"")
-    +(d.acts&&d.acts.length?'<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px">'+d.acts.map(a=>'<span style="background:#eff6ff;color:#2f54ff;border-radius:100px;padding:2px 9px;font-size:10.5px;font-weight:600">'+a+"</span>").join("")+"</div>":"")
+    +(d.budget?'<div style="font-size:11px;color:#16a34a;font-weight:700">~'+d.budget+"EUR</div>":"")+"</div>"
+    +(d.am?'<div style="display:flex;gap:9px;margin-bottom:8px"><span>\uD83C\uDF05</span><div><div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase">Matin</div><div style="font-size:12px;color:#374151">'+d.am+"</div></div></div>":"")
+    +(d.pm?'<div style="display:flex;gap:9px;margin-bottom:8px"><span>\u2600\uFE0F</span><div><div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase">Apres-midi</div><div style="font-size:12px;color:#374151">'+d.pm+"</div></div></div>":"")
+    +(d.eve?'<div style="display:flex;gap:9px;margin-bottom:4px"><span>\uD83C\uDF19</span><div><div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase">Soiree</div><div style="font-size:12px;color:#374151">'+d.eve+"</div></div></div>":"")
+    +(d.resto?'<div style="background:#f0fdf4;border-radius:9px;padding:7px 11px;margin-top:6px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:11px;color:#16a34a;font-weight:700">\uD83C\uDF7D\uFE0F '+d.resto.name+"</div>"+(d.resto.spec?'<div style="font-size:10px;color:#86efac">'+d.resto.spec+"</div>":"")+"</div>"+'<div style="font-size:12px;color:#16a34a;font-weight:800">'+d.resto.price+"</div></div>":"")
+    +(d.acts&&d.acts.length?'<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px">'+d.acts.map(function(a){return '<span style="background:#eff6ff;color:#2f54ff;border-radius:100px;padding:2px 9px;font-size:10.5px;font-weight:600">'+a+"</span>";}).join("")+"</div>":"")
     +"</div>";
 }
 
 function cardBudget(b) {
-  const rows = [["✈️ Vols A/R",b.vols],["🏨 Hébergement",b.hotel],["🎯 Activités",b.acts],["🍽️ Restaurants",b.resto],["🚇 Transport",b.transport]].filter(r=>r[1]!=null);
+  const rows = [
+    ["\u2708\uFE0F Vols A/R",b.vols],
+    ["\uD83C\uDFE8 Hebergement",b.hotel],
+    ["\uD83C\uDFAF Activites",b.acts],
+    ["\uD83C\uDF7D\uFE0F Restaurants",b.resto],
+    ["\uD83D\uDE87 Transport",b.transport]
+  ].filter(function(r){return r[1]!=null;});
   return '<div style="background:linear-gradient(135deg,#0e1430,#1f2da0);border-radius:16px;padding:16px;margin-top:12px">'
-    +'<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:12px">💰 Budget estimé par l\'IA</div>'
-    +rows.map(r=>'<div style="display:flex;justify-content:space-between;margin-bottom:7px"><span style="font-size:12px;color:rgba(255,255,255,.75)">'+r[0]+'</span><span style="font-size:12px;font-weight:700;color:#fff">~'+r[1]+"€</span></div>").join("")
+    +'<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:12px">\uD83D\uDCB0 Budget estime par IA</div>'
+    +rows.map(function(r){return '<div style="display:flex;justify-content:space-between;margin-bottom:7px"><span style="font-size:12px;color:rgba(255,255,255,.75)">'+r[0]+'</span><span style="font-size:12px;font-weight:700;color:#fff">~'+r[1]+"EUR</span></div>";}).join("")
     +'<div style="border-top:1px solid rgba(255,255,255,.2);margin-top:10px;padding-top:10px;display:flex;justify-content:space-between">'
     +'<span style="font-size:13px;font-weight:800;color:#fff">TOTAL</span>'
-    +'<span style="font-size:16px;font-weight:900;color:#bcd0ff">~'+(b.total||"")+"€</span></div>"
-    +(b.pp?'<div style="font-size:11px;color:rgba(255,255,255,.6);text-align:right;margin-top:3px">soit ~'+b.pp+"€/personne</div>":"")
-    +'<div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:8px">Estimations IA · Cliquez les liens pour les vrais prix</div></div>';
+    +'<span style="font-size:16px;font-weight:900;color:#bcd0ff">~'+(b.total||"")+"EUR</span></div>"
+    +(b.pp?'<div style="font-size:11px;color:rgba(255,255,255,.6);text-align:right;margin-top:3px">soit ~'+b.pp+"EUR/personne</div>":"")
+    +'<div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:8px">Estimations IA - Cliquez les liens pour les vrais prix</div></div>';
 }
 
 function cardTips(tips) {
   if (!tips||!tips.length) return "";
   return '<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:14px;padding:14px;margin-top:10px">'
-    +'<div style="font-size:12px;font-weight:800;color:#5b21b6;margin-bottom:8px">💡 Conseils pratiques</div>'
-    +tips.map(t=>'<div style="font-size:12px;color:#374151;margin-bottom:5px;padding-left:8px;border-left:2px solid #c4b5fd">• '+t+"</div>").join("")+"</div>";
+    +'<div style="font-size:12px;font-weight:800;color:#5b21b6;margin-bottom:8px">\uD83D\uDCA1 Conseils pratiques</div>'
+    +tips.map(function(t){return '<div style="font-size:12px;color:#374151;margin-bottom:5px;padding-left:8px;border-left:2px solid #c4b5fd">\u2022 '+t+"</div>";}).join("")+"</div>";
 }
 
 // ── HANDLER ───────────────────────────────────────────────────────────────────
@@ -431,31 +418,30 @@ export default async function handler(req) {
       Promise.all([
         sbFetch("searches","POST",{query:message,session_id:sid,user_id:body.userId||null}),
         sbFetch("trends","POST",{query:message.toLowerCase().trim(),count:1,last_searched:new Date().toISOString()})
-      ]).catch(()=>{});
+      ]).catch(function(){});
     }
 
     const hist  = formatHistory(history, 2000);
     const histS = formatHistory(history, 1000);
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  MODE VOYAGE — Groq pilote, Claude génère
+    //  MODE VOYAGE
     // ══════════════════════════════════════════════════════════════════════════
     if (isTravel) {
 
-      // Groq DeepSearch lit toute la conversation et décide seul
       const groqPrompt = "Tu es Huntify, agent voyage expert et chaleureux.\n"
-        +"Aujourd'hui: "+today+"\n\n"
+        +"Aujourd hui: "+today+"\n\n"
         +"CONVERSATION COMPLETE:\n"+hist+"\n"
         +"MESSAGE: "+message+"\n\n"
         +"MISSION: analyse tout et decides.\n"
         +"Extrais les infos: destination, ville_depart, checkin (YYYY-MM-DD), checkout (YYYY-MM-DD), duree, nb_adultes, budget, style.\n"
-        +"La ville de depart peut etre dite de n'importe quelle facon (marseille / depuis marseille / je pars de nice / marseilel = faute ok).\n"
-        +"Si l'utilisateur repond a une question, sa reponse est la reponse a cette question.\n"
-        +"Ne pose JAMAIS deux fois la meme question. Lis l'historique.\n\n"
+        +"La ville de depart peut etre dite de n importe quelle facon (marseille / depuis marseille / je pars de nice / marseilel = faute ok).\n"
+        +"Si l utilisateur repond a une question, sa reponse est la reponse a cette question.\n"
+        +"Ne pose JAMAIS deux fois la meme question. Lis l historique.\n\n"
         +"DECISION:\n"
-        +"- destination + ville_depart + (duree OU dates) connues → action:generate\n"
-        +"- info manquante importante → action:question avec UNE question courte\n"
-        +"- plus de 3 echanges → action:generate avec ce qu'on a\n\n"
+        +"- destination + ville_depart + (duree OU dates) connues : action:generate\n"
+        +"- info manquante importante : action:question avec UNE question courte\n"
+        +"- plus de 3 echanges : action:generate avec ce qu on a\n\n"
         +"JSON:\n"
         +"question: {action:'question', msg:'question courte'}\n"
         +"generation: {action:'generate', infos:{destination, ville_depart, nb_adultes, checkin, checkout, duree, budget, style}}";
@@ -470,22 +456,19 @@ export default async function handler(req) {
         return new Response(JSON.stringify({reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+decision.msg+"</div>",sessionId:sid}),{headers:H});
       }
 
-      // ── GÉNÉRATION ITINÉRAIRE ─────────────────────────────────────────────────
-      // ORDRE DE COÛT : Groq DeepSearch (gratuit) → Mistral (gratuit) → Claude (payant)
       const infos = decision.infos||{};
       const adults = parseInt(infos.nb_adultes)||2;
       const ci = parseDate(infos.checkin||null);
       const nights = parseInt(((infos.duree||"3 jours").match(/\d+/)||["3"])[0])||3;
       const co = parseDate(infos.checkout||null)||(ci?(function(){const d=new Date(ci);d.setDate(d.getDate()+nights);return d.toISOString().slice(0,10);}()):"");
 
-      // Groq DeepSearch cherche les VRAIS prix sur le web — aucun prix hardcodé
       const itinPrompt = "Tu es Huntify, expert voyage avec acces au web en temps reel.\n"
-        +"VOYAGE DEMANDE: "+infos.destination+" depuis "+infos.ville_depart
-        +", "+adults+" adultes, "+(ci||"bientot")+" au "+(co||"")+" ("+nights+" nuits)"
-        +", budget: "+(infos.budget||"pas de contrainte")
+        +"VOYAGE DEMANDE: "+infos.destination+" depuis "+(infos.ville_depart||"France")+"\n"
+        +", "+(adults)+" adultes, "+(ci||"bientot")+" au "+(co||"")+" ("+nights+" nuits)\n"
+        +", budget: "+(infos.budget||"pas de contrainte")+"\n"
         +", style: "+(infos.style||"equilibre")+"\n\n"
-        +"ETAPE 1 - RECHERCHE WEB (utilise tes capacites de recherche):\n"
-        +"- Cherche les vrais prix de vols "+infos.ville_depart+" → "+infos.destination+" pour ces dates\n"
+        +"ETAPE 1 - RECHERCHE WEB:\n"
+        +"- Cherche les vrais prix de vols "+(infos.ville_depart||"France")+" vers "+infos.destination+" pour ces dates\n"
         +"- Cherche les vrais prix d hotels a "+infos.destination+" (3 categories: budget, confort, luxe)\n"
         +"- Cherche les vrais restaurants populaires locaux avec leurs prix\n"
         +"- Cherche les activites incontournables et leurs tarifs reels\n\n"
@@ -493,93 +476,82 @@ export default async function handler(req) {
         +"t:i, recap:string, itin:{\n"
         +"  dest, country, flag, dur, trav, style, dep,\n"
         +"  checkin:YYYY-MM-DD, checkout:YYYY-MM-DD, adults,\n"
-        +"  flights:{out:{from:IATA,to:IATA,price:prix reel trouve,co:compagnie reelle,dur}, ret:{...}},\n"
-        +"  hotels:[3 vrais hotels: {name,stars,price:prix reel/nuit,loc,hl,cat:budget/confort/luxe}],\n"
-        +"  days:[{n,title,am,pm,eve,resto:{name,price:prix reel,spec},acts:[activites],budget:total jour}],\n"
-        +"  budget:{vols,hotel,acts,resto,transport,total,pp},\n"
-        +"  tips:[4 conseils specifiques]\n"
+        +"  flights:{out:{from:IATA,to:IATA,price:nombre,co:compagnie,dur:string}, ret:{...}},\n"
+        +"  hotels:[3 objets: {name,stars,price:nombre,loc,hl,cat:budget|confort|luxe}],\n"
+        +"  days:[{n,title,am,pm,eve,resto:{name,price:string,spec},acts:[],budget:nombre}],\n"
+        +"  budget:{vols:nombre,hotel:nombre,acts:nombre,resto:nombre,transport:nombre,total:nombre,pp:nombre},\n"
+        +"  tips:[4 conseils]\n"
         +"}\n"
-        +"IATA: Paris=CDG, Marseille=MRS, Nice=NCE, Lyon=LYS, Rome=FCO, Barcelone=BCN, Madrid=MAD, Lisbonne=LIS, Londres=LHR.\n"
-        +"Hotels et restaurants: vrais etablissements existants avec vrais prix trouves sur le web.\n"
-        +"JSON UNIQUEMENT.";
+        +"IATA de reference: Paris=CDG, Marseille=MRS, Nice=NCE, Lyon=LYS, Rome=FCO, Barcelone=BCN, Madrid=MAD, Lisbonne=LIS, Londres=LHR.\n"
+        +"Reponds en JSON uniquement.";
 
-      // 1. Groq DeepSearch (gratuit, web search) — génération principale
       let itinRaw = await groqSearch(itinPrompt, 3000);
-      // 2. Mistral si Groq échoue (gratuit)
       if (!itinRaw) itinRaw = await mistral("Genere un itineraire de voyage en JSON.", itinPrompt, 3000);
-      // 3. Claude uniquement en dernier recours (payant)
       if (!itinRaw) itinRaw = await claude(itinPrompt, "Genere maintenant.", 2800, []);
 
       const tP = parseJSON(itinRaw||"");
       const itin = tP.itin;
 
-      // Fallback minimal si génération échoue
       if (!itin) {
         const sky = skyscannerLink(infos.ville_depart||"",infos.destination||"",ci,co,adults);
-        const htl = bookingLink(infos.destination||"",ci,co,adults,null);
         const bkg = bookingLink(infos.destination||"",ci,co,adults,null);
         const gtf = getTransferLink(infos.destination||"",ci);
         return new Response(JSON.stringify({reply:
           '<div style="font-size:13.5px;color:#1e293b;line-height:1.6;margin-bottom:12px">Voici les liens directs pour votre voyage :</div>'
-          +'<a href="'+sky+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">✈️ Vols sur Skyscanner →</a>'
-          +'<a href="'+bkg+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">🏨 Hôtels sur Booking.com →</a>'
-          +'<a href="'+gtf+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">🚗 Transfert aéroport GetTransfer →</a>',
+          +'<a href="'+sky+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">\u2708\uFE0F Vols sur Skyscanner \u2192</a>'
+          +'<a href="'+bkg+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">\uD83C\uDFE8 Hotels sur Booking.com \u2192</a>'
+          +'<a href="'+gtf+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">\uD83D\uDE97 Transfert aeroport GetTransfer \u2192</a>',
           sessionId:sid}),{headers:H});
       }
 
-      // Render itinéraire complet
       const finalCi = (/^\d{4}-\d{2}-\d{2}$/.test(itin.checkin||""))?itin.checkin:(ci||"");
       const finalCo = (/^\d{4}-\d{2}-\d{2}$/.test(itin.checkout||""))?itin.checkout:(co||"");
       const finalAdults = itin.adults||adults;
       const itinId = "itin_"+Date.now();
       let html = "";
 
-      // Header destination
       html += '<div id="'+itinId+'" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:18px;margin-bottom:4px;text-align:center">'
-        +'<div style="font-size:32px;margin-bottom:6px">'+(itin.flag||"✈️")+"</div>"
-        +'<div style="font-family:\'Sora\',sans-serif;font-size:20px;font-weight:800;color:#fff">'+(itin.dest||"")+(itin.country?", "+itin.country:"")+"</div>"
+        +'<div style="font-size:32px;margin-bottom:6px">'+(itin.flag||"\u2708\uFE0F")+"</div>"
+        +'<div style="font-family:sans-serif;font-size:20px;font-weight:800;color:#fff">'+(itin.dest||"")+(itin.country?", "+itin.country:"")+"</div>"
         +'<div style="font-size:12px;color:rgba(255,255,255,.75);margin-top:6px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap">'
-        +"<span>📅 "+(itin.dur||"")+"</span><span>👥 "+(itin.trav||finalAdults+" pers.")+"</span>"
-        +(itin.dep?"<span>🛫 Depuis "+itin.dep+"</span>":"")
-        +(itin.budget&&itin.budget.total?"<span>💰 ~"+itin.budget.total+"€</span>":"")
+        +"<span>\uD83D\uDCC5 "+(itin.dur||"")+"</span><span>\uD83D\uDC65 "+(itin.trav||finalAdults+" pers.")+"</span>"
+        +(itin.dep?"<span>\uD83D\uDEEB Depuis "+itin.dep+"</span>":"")
+        +(itin.budget&&itin.budget.total?"<span>\uD83D\uDCB0 ~"+itin.budget.total+"EUR</span>":"")
         +"</div></div>";
 
-      if (tP.recap) html += '<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12px;color:#5b21b6;font-weight:600">🔎 '+tP.recap+"</div>";
+      if (tP.recap) html += '<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12px;color:#5b21b6;font-weight:600">\uD83D\uDD0E '+tP.recap+"</div>";
 
-      // Vols
       if (itin.flights&&itin.flights.out) {
         const f = itin.flights;
         const sky = skyscannerLink(f.out.from||itin.dep||infos.ville_depart||"",f.out.to||itin.dest||"",finalCi,finalCo,finalAdults);
-        html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">✈️ Vols recommandés</div>'
+        html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">\u2708\uFE0F Vols recommandes</div>'
           +'<div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;overflow:hidden">'
           +'<div style="padding:12px 14px;border-bottom:1px solid #f0f4ff"><div style="display:flex;justify-content:space-between;align-items:center">'
-          +'<div><div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Aller'+(finalCi?" · "+finalCi:"")+"</div>"
-          +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'+(f.out.from||"")+" → "+(f.out.to||"")+"</div>"
-          +'<div style="font-size:11px;color:#7c89a8">'+(f.out.co||"")+" · "+(f.out.dur||"")+"</div></div>"
-          +'<div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">~'+(f.out.price||"?")+"€</div><div style='font-size:10px;color:#7c89a8'>/pers.</div></div></div></div>"
+          +'<div><div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Aller'+(finalCi?" \u00B7 "+finalCi:"")+"</div>"
+          +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'+(f.out.from||"")+" \u2192 "+(f.out.to||"")+"</div>"
+          +'<div style="font-size:11px;color:#7c89a8">'+(f.out.co||"")+" \u00B7 "+(f.out.dur||"")+"</div></div>"
+          +'<div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">~'+(f.out.price||"?")+"EUR</div></div></div></div>"
           +(f.ret?'<div style="padding:12px 14px"><div style="display:flex;justify-content:space-between;align-items:center">'
-            +'<div><div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Retour'+(finalCo?" · "+finalCo:"")+"</div>"
-            +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'+(f.ret.from||"")+" → "+(f.ret.to||"")+"</div>"
-            +'<div style="font-size:11px;color:#7c89a8">'+(f.ret.co||"")+" · "+(f.ret.dur||"")+"</div></div>"
-            +'<div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">~'+(f.ret.price||"?")+"€</div><div style='font-size:10px;color:#7c89a8'>/pers.</div></div></div></div>":"")
+            +'<div><div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Retour'+(finalCo?" \u00B7 "+finalCo:"")+"</div>"
+            +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'+(f.ret.from||"")+" \u2192 "+(f.ret.to||"")+"</div>"
+            +'<div style="font-size:11px;color:#7c89a8">'+(f.ret.co||"")+" \u00B7 "+(f.ret.dur||"")+"</div></div>"
+            +'<div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">~'+(f.ret.price||"?")+"EUR</div></div></div></div>":"")
           +"</div>"
-          +'<a href="'+sky+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:12px;font-size:13px;font-weight:700;margin-top:6px">🔍 Voir ces vols sur Skyscanner →</a>';
+          +'<a href="'+sky+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:12px;font-size:13px;font-weight:700;margin-top:6px">\uD83D\uDD0D Voir ces vols sur Skyscanner \u2192</a>';
       }
 
-      // Hôtels — Hotellook API (vrais prix) + Booking fallback
       const realHotels = await fetchHotelPrices(itin.dest||"",finalCi,finalCo,finalAdults);
       const hasReal = !!(realHotels&&realHotels.length);
       const hotelsShow = hasReal ? realHotels : (itin.hotels||[]).map(function(h,i){
         return {
           name:h.name, stars:h.stars||3, price:null, loc:h.loc||itin.dest, hl:h.hl,
           cat:["budget","confort","luxe"][i]||h.cat||"confort",
-          // Lien Booking avec filtre étoiles selon catégorie
           url: bookingLink(itin.dest||"",finalCi,finalCo,finalAdults, i===0?"budget":i===1?"confort":"luxe")
         };
       });
 
-      html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">🏨 Hébergements · '
-        +(hasReal?'<span style="color:#16a34a;font-size:11px">Prix réels Bookingok ✓</span>':'<span style="color:#7c89a8;font-size:11px">Comparez les prix ci-dessous</span>')+"</div>";
+      html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">\uD83C\uDFE8 Hebergements \u00B7 '
+        +(hasReal?'<span style="color:#16a34a;font-size:11px">Prix reels Booking \u2713</span>':'<span style="color:#7c89a8;font-size:11px">Comparez les prix ci-dessous</span>')+"</div>";
 
       const htPrices = [];
       for (const h of hotelsShow) {
@@ -588,35 +560,29 @@ export default async function handler(req) {
         html += cardHotel({name:h.name,stars:h.stars,price:h.price?String(h.price):null,priceReal:hasReal&&!!h.price,loc:h.loc||itin.dest,hl:h.hl,cat:h.cat}, hLink);
       }
 
-      // Boutons voir plus : Booking + Expedia
-      const htMin = htPrices.length?Math.max(0,Math.min.apply(null,htPrices)-20):null;
-      const htMax = htPrices.length?Math.max.apply(null,htPrices)+50:null;
-      html += '<div style="font-size:11px;color:#7c89a8;font-weight:600;margin:10px 0 4px">🔍 Voir plus d\'hotels :</div>'
+      html += '<div style="font-size:11px;color:#7c89a8;font-weight:600;margin:10px 0 4px">\uD83D\uDD0D Voir plus d hotels :</div>'
         +'<div style="display:flex;gap:8px">'
-        +'<a href="'+bookingLink(itin.dest||"",finalCi,finalCo,finalAdults,null)+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">🏨 Booking.com</a>'
-        +'<a href="'+expediaLink(itin.dest||"",finalCi,finalCo,finalAdults)+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#00355f,#00a0e3);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">✈️ Expedia.fr</a>'
+        +'<a href="'+bookingLink(itin.dest||"",finalCi,finalCo,finalAdults,null)+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\uD83C\uDFE8 Booking.com</a>'
+        +'<a href="'+expediaLink(itin.dest||"",finalCi,finalCo,finalAdults)+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#00355f,#00a0e3);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\u2708\uFE0F Expedia.fr</a>'
         +"</div>";
 
-      // GetTransfer — transfert aéroport
       if (finalCi) {
-        html += '<a href="'+getTransferLink(itin.dest||"",finalCi)+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:11px;margin-top:8px;font-size:12px;font-weight:700">🚗 Réserver son transfert aéroport · GetTransfer →</a>';
+        html += '<a href="'+getTransferLink(itin.dest||"",finalCi)+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:11px;margin-top:8px;font-size:12px;font-weight:700">\uD83D\uDE97 Reserver son transfert aeroport \u00B7 GetTransfer \u2192</a>';
       }
 
-      // Programme jour par jour
       if (itin.days&&itin.days.length) {
-        html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">📅 Programme jour par jour</div>';
+        html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">\uD83D\uDCC5 Programme jour par jour</div>';
         for (const d of itin.days) html += cardDay(d);
       }
 
       if (itin.budget) html += cardBudget(itin.budget);
       if (itin.tips&&itin.tips.length) html += cardTips(itin.tips);
 
-      // Wishlist + Export
       const wData = JSON.stringify({
         type:"voyage",
-        name:(itin.flag||"✈️")+" "+(itin.dest||"")+(itin.country?", "+itin.country:""),
-        subtitle:(itin.dur||"")+" · "+(itin.trav||finalAdults+" pers.")+" · "+(itin.style||""),
-        price:itin.budget&&itin.budget.total?String(itin.budget.total)+"€":"",
+        name:(itin.flag||"\u2708\uFE0F")+" "+(itin.dest||"")+(itin.country?", "+itin.country:""),
+        subtitle:(itin.dur||"")+" \u00B7 "+(itin.trav||finalAdults+" pers.")+" \u00B7 "+(itin.style||""),
+        price:itin.budget&&itin.budget.total?String(itin.budget.total)+"EUR":"",
         store:"booking",
         url:bookingLink(itin.dest||"",finalCi,finalCo,finalAdults,null),
         flightUrl:itin.flights&&itin.flights.out?skyscannerLink(itin.flights.out.from||"",itin.flights.out.to||"",finalCi,finalCo,finalAdults):"",
@@ -627,122 +593,92 @@ export default async function handler(req) {
       }).replace(/"/g,"&quot;");
 
       html += '<div style="display:flex;gap:8px;margin-top:12px">'
-        +'<button onclick="addToWishlist('+wData+')" style="flex:1;background:linear-gradient(135deg,#1f2da0,#2f54ff);border:none;color:#fff;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">♡ Sauvegarder</button>'
-        +'<button onclick="exportItinerary(\''+itinId+'\')" style="background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">⬇️ Exporter</button>'
+        +'<button onclick="addToWishlist('+wData+')" style="flex:1;background:linear-gradient(135deg,#1f2da0,#2f54ff);border:none;color:#fff;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">\u2661 Sauvegarder</button>'
+        +'<button onclick="exportItinerary(\''+itinId+'\')" style="background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">\u2B07\uFE0F Exporter</button>'
         +"</div>";
 
-      if (body.trackingEnabled) sbFetch("searches","POST",{query:"[VOYAGE] "+message,session_id:sid,user_id:body.userId||null}).catch(()=>{});
+      if (body.trackingEnabled) sbFetch("searches","POST",{query:"[VOYAGE] "+message,session_id:sid,user_id:body.userId||null}).catch(function(){});
       return new Response(JSON.stringify({reply:html,sessionId:sid}),{headers:H});
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  MODE PRODUIT — Groq décide, Groq DeepSearch cherche, Claude si premium
+    //  MODE PRODUIT
     // ══════════════════════════════════════════════════════════════════════════
 
-    // Groq lit la conversation et décide
-    // Groq lit toute la conversation et décide intelligemment
-    // Philosophie : chercher VITE plutôt que poser des questions inutiles
-    const groqProdPrompt = "Tu es l'assistant shopping Huntify. Analyse et agis.
-"
-      +"Historique complet:
-"+histS+"
-"
-      +"Message: "+message+"
-
-"
-      +"REGLE D OR: si tu comprends ce que l utilisateur cherche → ready:true IMMEDIATEMENT.
-"
-      +"Un nom de produit seul (mascara, casque, iPhone...) suffit pour chercher.
-"
-      +"Le budget est optionnel — cherche sans si l utilisateur ne l a pas donne.
-
-"
-      +"Pose UNE question SEULEMENT si:
-"
-      +"- La demande est vraiment incomprehensible (exemple: 'un truc' sans contexte)
-"
-      +"- L historique montre deja une question posee → ready:true OBLIGATOIRE maintenant
-
-"
-      +"NE JAMAIS demander: packaging, couleur, marque exacte, caracteristiques techniques.
-"
-      +"Si budget mentionné dans l historique → l integrer dans le recap.
-
-"
+    const groqProdSys = "Tu es l assistant shopping Huntify. Analyse et agis.\n"
+      +"REGLE D OR: si tu comprends ce que l utilisateur cherche : ready:true IMMEDIATEMENT.\n"
+      +"Un nom de produit seul (mascara, casque, iPhone...) suffit pour chercher.\n"
+      +"Le budget est optionnel - cherche sans si l utilisateur ne l a pas donne.\n"
+      +"Pose UNE question SEULEMENT si:\n"
+      +"- La demande est vraiment incomprehensible (exemple: un truc sans contexte)\n"
+      +"- L historique montre deja une question posee : ready:true OBLIGATOIRE maintenant\n"
+      +"NE JAMAIS demander: packaging, couleur, marque exacte, caracteristiques techniques.\n"
+      +"Si budget mentionne dans l historique : l integrer dans le recap.\n"
       +"JSON: {ready:true, recap:'produit + budget si connu + criteres utiles'} ou {ready:false, msg:'question tres courte'}";
 
+    const groqProdUser = "Historique complet:\n"+histS+"\nMessage: "+message;
+
     const prodDecision = parseJSON(
-      await groq(groqProdPrompt, message, 250)
-      || await gemini(groqProdPrompt+"
-"+message, 250)
+      await groq(groqProdSys, groqProdUser, 250)
+      || await gemini(groqProdSys+"\n\n"+groqProdUser, 250)
       || "{}"
     );
 
-    // Si Groq hésite ou ne répond pas → on cherche directement sans question
     if (!prodDecision.ready && prodDecision.msg && history.length < 4) {
       return new Response(JSON.stringify({reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+prodDecision.msg+"</div>",sessionId:sid}),{headers:H});
     }
 
     const recap = (prodDecision.ready&&prodDecision.recap) ? prodDecision.recap : (formatHistory(history,300)+" "+message).trim();
     const dbCtx = await dbLookup(recap);
-    const budgetNum = parseInt(((recap+" "+histS).match(/(\d+)\s*(?:€|euros?)/i)||[0,"0"])[1])||0;
-    // Groq décide lui-même la qualité de recherche nécessaire selon le contexte
+    const budgetNum = parseInt(((recap+" "+histS).match(/(\d+)\s*(?:EUR|euros?)/i)||[0,"0"])[1])||0;
     const isPremium = budgetNum>=100||/cadeau|premium|luxe|meilleur|haute gamme|qualite/.test((recap+" "+histS).toLowerCase())||history.length>=4;
 
-    // Prompt commun pour Groq et Claude
-    const searchPrompt = "Agent shopping Huntify. Recherche: "+recap+"\n"
-      +(dbCtx?"Données internes: "+dbCtx+"\n":"")
+    const searchSys = "Agent shopping Huntify. Recherche: "+recap+"\n"
+      +(dbCtx?"Donnees internes: "+dbCtx+"\n":"")
       +"Trouve 2 produits sur amazon.fr + 1 sur fr.shopping.rakuten.com.\n"
-      +"Pour Amazon: cherche la vraie page produit et copie l URL exacte (https://www.amazon.fr/dp/BASIN).\n"
-      +"Si ASIN introuvable → url:null.\n"
+      +"Pour Amazon: cherche la vraie page produit et copie l URL exacte (https://www.amazon.fr/dp/ASIN).\n"
+      +"Si ASIN introuvable : url:null.\n"
       +"JSON: summary, products[name, price, store, keywords, url, badge], promoCodes.\n"
       +"JSON uniquement.";
 
-    // ── STRATÉGIE DE RECHERCHE ────────────────────────────────────────────────
-    // 1. Groq DeepSearch (gratuit) — cherche produits + ASINs sur le web
-    let raw = await groqSearch(searchPrompt, 1000);
+    let raw = await groqSearch(searchSys, 1000);
     let products = parseJSON(raw||"").products||[];
 
-    // 2. Vérifie si les ASINs Amazon retournés sont valides
-    const hasValidAsin = products.some(p =>
-      p.store==="amazon" && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url)
-    );
+    const hasValidAsin = products.some(function(p){
+      return p.store==="amazon" && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url);
+    });
 
-    // 3. Si pas d ASIN valide → Claude + web_search pour trouver les vrais ASINs
     if (!hasValidAsin) {
       const claudeRaw = await claude(
-        searchPrompt,
+        searchSys,
         "Cherche sur amazon.fr: "+recap+". Trouve les vrais ASINs.",
         800,
         [{type:"web_search_20250305",name:"web_search",max_uses:3}]
       );
       if (claudeRaw) {
         const claudeProducts = parseJSON(claudeRaw).products||[];
-        // Merge : garde les produits Claude si meilleurs ASINs
-        if (claudeProducts.some(p=>p.store==="amazon"&&p.url&&/\/dp\/B[A-Z0-9]{9}/.test(p.url))) {
+        if (claudeProducts.some(function(p){return p.store==="amazon"&&p.url&&/\/dp\/B[A-Z0-9]{9}/.test(p.url);})) {
           products = claudeProducts;
           raw = claudeRaw;
         }
       }
     }
 
-    // 4. Fallback final si tout échoue
     if (!products.length) {
-      const fallbackRaw = await gemini(searchPrompt, 800) || await freeAI("Reponds en JSON.", searchPrompt, 700);
+      const fallbackRaw = await gemini(searchSys, 800) || await freeAI("Reponds en JSON.", searchSys, 700);
       products = parseJSON(fallbackRaw||"").products||[];
       if (!raw) raw = fallbackRaw;
     }
 
     const parsed = parseJSON(raw||"");
     if (!products.length) products = parsed.products||[];
-    const summary = parsed.summary||'Voici mes sélections pour "'+message+'" :';
+    const summary = parsed.summary||'Voici mes selections pour "'+message+'" :';
     const promos  = parsed.promoCodes||[];
 
-    // Garantit Amazon + Rakuten
-    if (!products.some(p=>(p.store||"").includes("amazon"))) {
+    if (!products.some(function(p){return (p.store||"").includes("amazon");})) {
       products.unshift({name:recap,price:"Voir prix",store:"amazon",keywords:recap,url:null,badge:"Bestseller"});
     }
-    if (!products.some(p=>(p.store||"").includes("rakuten"))) {
+    if (!products.some(function(p){return (p.store||"").includes("rakuten");})) {
       products.push({name:recap,price:"Voir prix",store:"rakuten",keywords:recap,url:null,badge:"Bon plan"});
     }
 
@@ -751,8 +687,8 @@ export default async function handler(req) {
       if (!pr.name) continue;
       let adv = findAdv(advertisers, pr.store);
       if (!adv) {
-        if ((pr.store||"").includes("amazon"))  adv={slug:"amazon", name:"Amazon", emoji:"🛒",color:"#e47911",active:true};
-        else if ((pr.store||"").includes("rakuten")) adv={slug:"rakuten",name:"Rakuten",emoji:"🛍️",color:"#bf0000",active:true,awin_mid:RAKUTEN_MID};
+        if ((pr.store||"").includes("amazon"))  adv={slug:"amazon", name:"Amazon", emoji:"\uD83D\uDED2",color:"#e47911",active:true};
+        else if ((pr.store||"").includes("rakuten")) adv={slug:"rakuten",name:"Rakuten",emoji:"\uD83D\uDECD\uFE0F",color:"#bf0000",active:true,awin_mid:RAKUTEN_MID};
         else continue;
       }
       const rawUrl = (pr.url&&pr.url!=="null"&&pr.url.length>15)?pr.url:null;
@@ -762,17 +698,17 @@ export default async function handler(req) {
     }
 
     let promoHtml = "";
-    for (const c of promos.filter(c=>c.code).sort((a,b)=>(b.best?1:0)-(a.best?1:0)).slice(0,2)) {
-      promoHtml += promoBox(c.code,c.store||"boutique",c.discount||"Réduction",c.best||false);
+    for (const c of promos.filter(function(c){return c.code;}).sort(function(a,b){return (b.best?1:0)-(a.best?1:0);}).slice(0,2)) {
+      promoHtml += promoBox(c.code,c.store||"boutique",c.discount||"Reduction",c.best||false);
     }
 
-    const first = products.find(p=>(p.store||"").includes("amazon"))||products[0];
+    const first = products.find(function(p){return (p.store||"").includes("amazon");})||products[0];
     let wishHtml = "";
     if (first) {
       const adv0 = findAdv(advertisers,first.store)||{slug:"amazon",name:"Amazon",color:"#e47911",active:true};
       const wUrl = buildLink(adv0,first.keywords||first.name,first.url||null)||"";
       const wD = JSON.stringify({type:"product",name:first.name,price:first.price,store:first.store,url:wUrl}).replace(/"/g,"&quot;");
-      wishHtml = '<button onclick="addToWishlist('+wD+')" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">♡ Ajouter à ma wishlist</button>';
+      wishHtml = '<button onclick="addToWishlist('+wD+')" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">\u2661 Ajouter a ma wishlist</button>';
     }
 
     return new Response(JSON.stringify({
@@ -783,6 +719,6 @@ export default async function handler(req) {
 
   } catch(err) {
     console.error("Huntify error:", err&&err.message);
-    return new Response(JSON.stringify({reply:'<div style="font-size:13px;color:#1e293b">Désolé, problème momentané. Réessayez !</div>'}),{status:200,headers:{"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"}});
+    return new Response(JSON.stringify({reply:'<div style="font-size:13px;color:#1e293b">Desole, probleme momentane. Reessayez !</div>'}),{status:200,headers:{"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"}});
   }
 }
