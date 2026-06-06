@@ -1,23 +1,19 @@
 export const config = { runtime: 'edge' };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HUNTIFY — Agent IA shopping + voyage v3
-// Cascade IA intelligente : Groq DeepSearch → Gemini → Mistral → DeepSeek → Claude
-// Affiliation : Amazon · Rakuten · Booking (TP) · Expedia (TP) · GetTransfer · Skyscanner
+// HUNTIFY v4 — Agent IA shopping + voyage
+// Architecture : Groq DeepSearch (gratuit) → Claude web_search (si ASIN invalide)
+// Voyage : Groq → DeepSeek → Mistral → Claude
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
-const SUPABASE_KEY = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
-const AMAZON_TAG   = "huntify21-21";
-const AWIN_PUB     = "2920215";
-const RAKUTEN_MID  = "55615";
-const TP_MARKER    = "536663";
-const MODEL        = "claude-haiku-4-5";
-
-// ── Travelpayouts programme IDs (a remplacer quand approuves) ──────────────
-// En attendant : redirect Travelpayouts universel avec marker
-// Format final : "https://tp.media/r?marker=536663&trs=XXX&p=PROGRAMME_ID&u=URL"
-// Booking programme ID TP = 257 (global), Expedia = 2041
+const SUPABASE_URL  = "https://enocxbrqyybendertytl.supabase.co";
+const SUPABASE_KEY  = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
+const AMAZON_TAG    = "huntify21-21";
+const AWIN_PUB      = "2920215";
+const RAKUTEN_MID   = "55615";
+const TP_MARKER     = "536663";
+const MODEL         = "claude-haiku-4-5";
+const BOOKING_AID   = process.env.BOOKING_AID || "2311236";
 
 const IATA = {
   paris:"CDG",lyon:"LYS",marseille:"MRS",nice:"NCE",bordeaux:"BOD",toulouse:"TLS",
@@ -36,112 +32,85 @@ const IATA = {
   tokyo:"NRT",osaka:"KIX",bangkok:"BKK",singapour:"SIN",bali:"DPS",
   "kuala lumpur":"KUL","new york":"JFK","los angeles":"LAX",miami:"MIA",
   montreal:"YUL",cancun:"CUN",maldives:"MLE",maurice:"MRU",reunion:"RUN",
-  phuket:"HKT",hongkong:"HKG",seoul:"ICN",pekin:"PEK",shanghai:"PVG",
-  sydney:"SYD",melbourne:"MEL"
+  phuket:"HKT",hongkong:"HKG",seoul:"ICN",sydney:"SYD",dubrovnik:"DBV"
 };
 
-function toIATA(str) {
-  if (!str) return null;
-  const code = (str||"").match(/\b([A-Z]{3})\b/);
-  if (code) return code[1];
-  const s = str.toLowerCase().trim();
-  for (const [k,v] of Object.entries(IATA)) { if (s.includes(k)) return v; }
+function toIATA(s) {
+  if (!s) return null;
+  const c = (s||"").match(/\b([A-Z]{3})\b/);
+  if (c) return c[1];
+  const k = s.toLowerCase().trim();
+  for (const [n,v] of Object.entries(IATA)) { if (k.includes(n)) return v; }
   return null;
 }
 
 // ── SUPABASE ──────────────────────────────────────────────────────────────────
 async function sbFetch(path, method, body) {
-  method = method||"GET";
   const opts = {
-    method,
+    method:method||"GET",
     headers:{"Content-Type":"application/json","apikey":SUPABASE_KEY,"Authorization":"Bearer "+SUPABASE_KEY}
   };
   if (body) opts.body = JSON.stringify(body);
-  try {
-    const r = await fetch(SUPABASE_URL+"/rest/v1/"+path, opts);
-    return await r.json();
-  } catch(e) { return null; }
+  try { const r = await fetch(SUPABASE_URL+"/rest/v1/"+path,opts); return await r.json(); } catch(e){return null;}
 }
 
 async function getAdvertisers() {
   try {
-    const r = await fetch(SUPABASE_URL+"/rest/v1/advertisers?active=eq.true", {
+    const r = await fetch(SUPABASE_URL+"/rest/v1/advertisers?active=eq.true",{
       headers:{"apikey":SUPABASE_KEY,"Authorization":"Bearer "+SUPABASE_KEY}
     });
     const d = await r.json();
     return Array.isArray(d)?d:[];
-  } catch(e) { return []; }
+  } catch(e){return [];}
 }
 
-// ── LIENS AFFILIATION ─────────────────────────────────────────────────────────
-function cleanKw(kw) {
-  if (!kw) return "";
-  const stop = new Set(["la","le","les","un","une","des","avec","et","en","du","au","aux","pour","sur","de"]);
-  return kw.replace(/,/g," ").replace(/\s+/g," ").trim()
-    .split(" ").filter(function(w){return w.length>1&&!stop.has(w.toLowerCase());}).slice(0,7).join(" ");
+// ── LIENS ─────────────────────────────────────────────────────────────────────
+function amazonLink(keywords, asin) {
+  const validAsin = asin && /^B[A-Z0-9]{9}$/.test(asin);
+  const base = validAsin
+    ? "https://www.amazon.fr/dp/"+asin
+    : "https://www.amazon.fr/s?k="+encodeURIComponent((keywords||"").replace(/\s+/g," ").trim().slice(0,80));
+  return base+"?tag="+AMAZON_TAG;
 }
 
-function buildLink(adv, keywords, directUrl) {
-  if (!adv||!adv.active) return null;
-  const kw = cleanKw(keywords);
-  if (adv.slug==="amazon") {
-    const tag = adv.amazon_tag||AMAZON_TAG;
-    const asinMatch = directUrl&&directUrl.match(/\/dp\/([A-Z0-9]{10})(?:[/?]|$)/);
-    const isRealAsin = asinMatch&&/^B[A-Z0-9]{9}$/.test(asinMatch[1]);
-    const base = isRealAsin
-      ? "https://www.amazon.fr/dp/"+asinMatch[1]
-      : "https://www.amazon.fr/s?k="+encodeURIComponent(kw);
-    return base+"?tag="+tag;
-  }
-  if (adv.slug==="rakuten") {
-    const mid = adv.awin_mid||RAKUTEN_MID;
-    const aff = adv.awin_affid||adv.awin_aff||AWIN_PUB;
-    const searchUrl = "https://fr.shopping.rakuten.com/s/"+encodeURIComponent(kw.replace(/\s+/g,"+"));
-    return "https://www.awin1.com/cread.php?awinmid="+mid+"&awinaffid="+aff+"&clickref=huntify&ued="+encodeURIComponent(searchUrl);
-  }
-  if (adv.awin_mid) {
-    const aff = adv.awin_affid||adv.awin_aff||AWIN_PUB;
-    const dest = (adv.search_url||"https://www."+adv.slug+".fr/search?q={kw}").replace("{kw}",encodeURIComponent(kw));
-    return "https://www.awin1.com/cread.php?awinmid="+adv.awin_mid+"&awinaffid="+aff+"&ued="+encodeURIComponent(dest);
-  }
-  return null;
+function rakutenLink(keywords) {
+  const kw = (keywords||"").replace(/\s+/g,"+").trim().slice(0,80);
+  const dest = "https://fr.shopping.rakuten.com/s/"+encodeURIComponent(kw);
+  return "https://www.awin1.com/cread.php?awinmid="+RAKUTEN_MID+"&awinaffid="+AWIN_PUB+"&clickref=huntify&ued="+encodeURIComponent(dest);
 }
 
-function findAdv(advertisers, slug) {
-  return (advertisers||[]).find(function(a){return a.slug===(slug||"").toLowerCase();})||null;
-}
-
-// ── TRAVELPAYOUTS — LIENS AFFILIES CORRECTS ───────────────────────────────────
-// Booking.com lien affilie direct
-// AID a recuperer : dashboard Travelpayouts → Booking.com → Get link → parametre aid=XXXXXXX
-// Ajouter BOOKING_AID dans les variables Vercel
-const BOOKING_AID = process.env.BOOKING_AID||"2311236";
-
-function bookingTPLink(dest, ci, co, adults, cat) {
+function bookingLink(dest, ci, co, adults, cat) {
   const rooms = Math.ceil((adults||2)/2);
   let url = "https://www.booking.com/searchresults.html"
     +"?ss="+encodeURIComponent(dest||"")
-    +"&group_adults="+(adults||2)
-    +"&no_rooms="+rooms
-    +"&lang=fr&selected_currency=EUR"
-    +"&aid="+BOOKING_AID;
+    +"&group_adults="+(adults||2)+"&no_rooms="+rooms
+    +"&lang=fr&selected_currency=EUR&aid="+BOOKING_AID;
   if (ci) url += "&checkin="+ci;
   if (co) url += "&checkout="+co;
   if (cat==="budget")  url += "&nflt=class%3D2%3Bclass%3D3";
   if (cat==="confort") url += "&nflt=class%3D3%3Bclass%3D4";
   if (cat==="luxe")    url += "&nflt=class%3D4%3Bclass%3D5";
-  url += "&order=popularity";
-  return url;
+  return url+"&order=popularity";
 }
 
-function expediaTPLink(dest, ci, co, adults) {
-  const aid = process.env.EXPEDIA_AID||"";
+function bookingHotelLink(hotelName, dest, ci, co, adults) {
+  // Lien vers un hotel specifique sur Booking
+  const url = "https://www.booking.com/search.html"
+    +"?ss="+encodeURIComponent((hotelName||dest||"")+" "+( dest||""))
+    +"&group_adults="+(adults||2)+"&no_rooms="+Math.ceil((adults||2)/2)
+    +"&lang=fr&selected_currency=EUR&aid="+BOOKING_AID;
+  var r = url;
+  if (ci) r += "&checkin="+ci;
+  if (co) r += "&checkout="+co;
+  return r;
+}
+
+function expediaLink(dest, ci, co, adults) {
   let url = "https://www.expedia.fr/Hotel-Search"
-    +"?destination="+encodeURIComponent(dest||"")
-    +"&adults="+(adults||2)
-    +"&sort=RECOMMENDED";
+    +"?destination="+encodeURIComponent(dest||"")+"&adults="+(adults||2)+"&sort=RECOMMENDED";
   if (ci) url += "&startDate="+ci;
   if (co) url += "&endDate="+co;
+  const aid = process.env.EXPEDIA_AID||"";
   if (aid) url += "&affcid="+aid;
   return url;
 }
@@ -159,32 +128,28 @@ function skyscannerLink(from, to, ci, co, adults) {
 
 function getTransferLink(dest, ci) {
   const base = "https://gettransfer.tpk.mx/vMnVrFfO";
-  if (dest) return base+"?to="+encodeURIComponent(dest)+(ci?"&date="+ci:"");
-  return base;
+  return dest ? base+"?to="+encodeURIComponent(dest)+(ci?"&date="+ci:"") : base;
 }
 
-// ── TRAVELPAYOUTS API PRIX HOTELS ─────────────────────────────────────────────
+// ── HOTELLOOK API ─────────────────────────────────────────────────────────────
 async function fetchHotelPrices(dest, ci, co, adults) {
   const token = process.env.TRAVELPAYOUTS_TOKEN;
-  if (!token||!ci||!co||!dest) return null;
+  if (!token||!dest||!ci||!co) return null;
   try {
     const url = "https://engine.hotellook.com/api/v2/cache.json"
       +"?location="+encodeURIComponent(dest)
       +"&checkIn="+ci+"&checkOut="+co
-      +"&adultsCount="+(adults||2)
-      +"&currency=EUR&token="+token+"&limit=30";
-    const r = await fetch(url, {headers:{"Accept":"application/json"}});
+      +"&adultsCount="+(adults||2)+"&currency=EUR&token="+token+"&limit=30";
+    const r = await fetch(url,{headers:{"Accept":"application/json"}});
     if (!r.ok) return null;
     const data = await r.json();
     if (!Array.isArray(data)||data.length<2) return null;
     const valid = data
-      .filter(function(h){return h.priceFrom&&(h.hotelName||h.name)&&h.id;})
+      .filter(function(h){return h.priceFrom&&(h.hotelName||h.name);})
       .map(function(h){return {
-        name:  h.hotelName||h.name,
-        stars: Math.round(h.stars||3),
-        price: Math.round(h.priceFrom),
-        loc:   (h.location&&h.location.name)||dest,
-        url:   bookingTPLink(h.hotelName||h.name, ci, co, adults, null)
+        name:h.hotelName||h.name, stars:Math.round(h.stars||3),
+        price:Math.round(h.priceFrom), loc:(h.location&&h.location.name)||dest,
+        id:h.id
       };})
       .sort(function(a,b){return a.price-b.price;});
     if (valid.length<2) return null;
@@ -195,352 +160,271 @@ async function fetchHotelPrices(dest, ci, co, adults) {
       Object.assign({},mid(valid.slice(t,t*2)), {cat:"confort", hl:"Confort et emplacement ideal"}),
       Object.assign({},mid(valid.slice(-t)),    {cat:"luxe",    hl:"Experience premium"}),
     ];
-  } catch(e) { return null; }
-}
-
-// ── DEEPSEEK : prix hotels si Hotellook vide ──────────────────────────────────
-// DeepSeek V3 = excellent pour extraire des prix structures depuis le web
-// Appele uniquement quand l API Hotellook ne retourne rien (destination peu couverte)
-async function fetchHotelPricesDeepSeek(dest, ci, co, adults) {
-  if (!dest||!ci||!co) return null;
-  const nights = Math.max(1,(new Date(co)-new Date(ci))/(1000*60*60*24));
-  const sys = "Tu es un agent de recherche de prix d hotels. Reponds en JSON uniquement.";
-  const user = "Trouve 3 vrais hotels a "+dest+" disponibles du "+ci+" au "+co
-    +" pour "+adults+" adultes. Prix en EUR par nuit.\n"
-    +"JSON: {hotels:[{name:string, stars:number, price:number, loc:string, cat:'budget'|'confort'|'luxe'}]}\n"
-    +"Utilise tes connaissances sur les prix reels de ces etablissements. JSON uniquement.";
-  try {
-    const raw = await deepseek(sys, user, 600);
-    const d = parseJSON(raw||"");
-    if (!d.hotels||!d.hotels.length) return null;
-    return d.hotels.slice(0,3).map(function(h,i){
-      return {
-        name:h.name, stars:h.stars||3, price:h.price||null,
-        loc:h.loc||dest, hl:["Meilleur rapport qualite/prix","Confort ideal","Experience premium"][i],
-        cat:h.cat||["budget","confort","luxe"][i]
-      };
-    });
-  } catch(e){ return null; }
+  } catch(e){return null;}
 }
 
 // ── DATE PARSER ───────────────────────────────────────────────────────────────
-function parseDate(str) {
-  if (!str) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+function parseDate(s) {
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const now = new Date();
-  const addDays = function(n){const d=new Date(now);d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);};
-  const s = str.toLowerCase().trim();
-  if (s==="demain") return addDays(1);
-  if (/apres.?demain/.test(s)) return addDays(2);
-  if (/semaine prochaine/.test(s)) return addDays(7);
-  const slash = str.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-  if (slash) {
-    const y = slash[3].length===2?"20"+slash[3]:slash[3];
-    return y+"-"+slash[2].padStart(2,"0")+"-"+slash[1].padStart(2,"0");
-  }
-  const MONTHS = {
-    jan:1,janv:1,fev:2,fevr:2,mar:3,mars:3,avr:4,avril:4,
-    mai:5,juin:6,juil:7,juillet:7,aout:8,sep:9,sept:9,oct:10,nov:11,dec:12
-  };
-  const mn = s.match(/(\d{1,2})\s+([a-z\u00e9\u00fb\u00f4\u00e0]+)(?:\s+(\d{4}))?/);
-  if (mn) {
-    const mo = Object.entries(MONTHS).find(function(e){return mn[2].startsWith(e[0]);});
-    if (mo) {
-      let y = mn[3]||String(now.getFullYear());
-      const d = new Date(y+"-"+String(mo[1]).padStart(2,"0")+"-"+mn[1].padStart(2,"0"));
-      if (!mn[3]&&d<now) y = String(now.getFullYear()+1);
-      return y+"-"+String(mo[1]).padStart(2,"0")+"-"+mn[1].padStart(2,"0");
-    }
+  const add = function(n){const d=new Date(now);d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);};
+  const l = s.toLowerCase().trim();
+  if (l==="demain") return add(1);
+  const slash = s.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (slash){const y=slash[3].length===2?"20"+slash[3]:slash[3];return y+"-"+slash[2].padStart(2,"0")+"-"+slash[1].padStart(2,"0");}
+  const MO={jan:1,janv:1,fev:2,mars:3,avr:4,avril:4,mai:5,juin:6,juil:7,juillet:7,aout:8,sep:9,sept:9,oct:10,nov:11,dec:12};
+  const mn=l.match(/(\d{1,2})\s+([a-z\u00e9\u00fb\u00f4\u00e0]+)(?:\s+(\d{4}))?/);
+  if (mn){
+    const mo=Object.entries(MO).find(function(e){return mn[2].startsWith(e[0]);});
+    if (mo){let y=mn[3]||String(now.getFullYear());return y+"-"+String(mo[1]).padStart(2,"0")+"-"+mn[1].padStart(2,"0");}
   }
   return null;
 }
 
 // ── HISTORIQUE ────────────────────────────────────────────────────────────────
-function formatHistory(history, maxLen) {
+function fmtHist(history, max) {
   return ((history||[]).map(function(m){
     const who = m.role==="user"?"Vous":"Huntify";
-    const text = (m.content||"").replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim().slice(0,400);
-    return text?who+" : "+text:null;
-  }).filter(Boolean).join("\n")).slice(0,maxLen||2500);
+    const txt = (m.content||"").replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim().slice(0,400);
+    return txt?who+": "+txt:null;
+  }).filter(Boolean).join("\n")).slice(0,max||2500);
 }
 
-// ── APPELS IA — CASCADE COMPLETE ──────────────────────────────────────────────
+// ── IA CASCADE ────────────────────────────────────────────────────────────────
 async function groq(sys, user, maxTok) {
-  const key = process.env.GROQ_API_KEY;
-  if (!key) return null;
+  const k=process.env.GROQ_API_KEY; if(!k) return null;
   try {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({
-        model:"llama-3.3-70b-versatile",
-        max_tokens:maxTok||600,
-        temperature:0.3,
-        messages:[{role:"system",content:sys},{role:"user",content:user}]
-      })
+    const r=await fetch("https://api.groq.com/openai/v1/chat/completions",{
+      method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},
+      body:JSON.stringify({model:"llama-3.3-70b-versatile",max_tokens:maxTok||500,temperature:0.2,
+        messages:[{role:"system",content:sys},{role:"user",content:user}]})
     });
-    if (!r.ok) return null;
-    const d = await r.json();
-    return d.choices&&d.choices[0]?d.choices[0].message.content:null;
+    if(!r.ok) return null;
+    const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
 
 async function groqSearch(prompt, maxTok) {
-  const key = process.env.GROQ_API_KEY;
-  if (!key) return null;
+  const k=process.env.GROQ_API_KEY; if(!k) return null;
   try {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({
-        model:"compound-beta",
-        max_tokens:maxTok||1500,
-        messages:[{role:"user",content:prompt}]
-      })
+    const r=await fetch("https://api.groq.com/openai/v1/chat/completions",{
+      method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},
+      body:JSON.stringify({model:"compound-beta",max_tokens:maxTok||1500,
+        messages:[{role:"user",content:prompt}]})
     });
-    if (!r.ok) return await groq("Tu es un expert. Reponds en JSON valide uniquement.",prompt,maxTok||1500);
-    const d = await r.json();
-    return d.choices&&d.choices[0]?d.choices[0].message.content:null;
-  } catch(e){
-    return await groq("Tu es un expert. Reponds en JSON valide uniquement.",prompt,maxTok||1500);
-  }
+    if(!r.ok) return await groq("Reponds en JSON.",prompt,maxTok||1500);
+    const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
+  } catch(e){return await groq("Reponds en JSON.",prompt,maxTok||1500);}
 }
 
 async function gemini(prompt, maxTok) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return null;
+  const k=process.env.GEMINI_API_KEY; if(!k) return null;
   try {
-    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+key,{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        contents:[{parts:[{text:prompt}]}],
-        generationConfig:{maxOutputTokens:maxTok||600,temperature:0.3}
-      })
+    const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+k,{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:maxTok||500,temperature:0.2}})
     });
-    if (!r.ok) return null;
-    const d = await r.json();
-    return d.candidates&&d.candidates[0]&&d.candidates[0].content?d.candidates[0].content.parts[0].text:null;
+    if(!r.ok) return null;
+    const d=await r.json(); return d.candidates&&d.candidates[0]?d.candidates[0].content.parts[0].text:null;
   } catch(e){return null;}
 }
 
 async function mistral(sys, user, maxTok) {
-  const key = process.env.MISTRAL_API_KEY;
-  if (!key) return null;
+  const k=process.env.MISTRAL_API_KEY; if(!k) return null;
   try {
-    const r = await fetch("https://api.mistral.ai/v1/chat/completions",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({
-        model:"mistral-small-latest",
-        max_tokens:maxTok||600,
-        temperature:0.3,
-        messages:[{role:"system",content:sys},{role:"user",content:user}]
-      })
+    const r=await fetch("https://api.mistral.ai/v1/chat/completions",{
+      method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},
+      body:JSON.stringify({model:"mistral-small-latest",max_tokens:maxTok||500,temperature:0.2,
+        messages:[{role:"system",content:sys},{role:"user",content:user}]})
     });
-    if (!r.ok) return null;
-    const d = await r.json();
-    return d.choices&&d.choices[0]?d.choices[0].message.content:null;
+    if(!r.ok) return null;
+    const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
 
 async function deepseek(sys, user, maxTok) {
-  const key = process.env.DEEPSEEK_API_KEY;
-  if (!key) return null;
+  const k=process.env.DEEPSEEK_API_KEY; if(!k) return null;
   try {
-    const r = await fetch("https://api.deepseek.com/v1/chat/completions",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({
-        model:"deepseek-chat",
-        max_tokens:maxTok||600,
-        temperature:0.3,
-        messages:[{role:"system",content:sys},{role:"user",content:user}]
-      })
+    const r=await fetch("https://api.deepseek.com/v1/chat/completions",{
+      method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},
+      body:JSON.stringify({model:"deepseek-chat",max_tokens:maxTok||500,temperature:0.2,
+        messages:[{role:"system",content:sys},{role:"user",content:user}]})
     });
-    if (!r.ok) return null;
-    const d = await r.json();
-    return d.choices&&d.choices[0]?d.choices[0].message.content:null;
+    if(!r.ok) return null;
+    const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
 
-async function freeAI(sys, user, maxTok) {
-  // Cascade complete par cout croissant
-  return await groq(sys,user,maxTok)
-      || await gemini(sys+"\n\n"+user, maxTok)
-      || await mistral(sys,user,maxTok)
-      || await deepseek(sys,user,maxTok);
-}
-
-async function claude(sys, user, maxTok, tools) {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return null;
+async function claudeAI(sys, user, maxTok, tools) {
+  const k=process.env.ANTHROPIC_API_KEY; if(!k) return null;
   try {
-    const payload = {
-      model:MODEL,
-      max_tokens:maxTok||1000,
-      system:sys,
-      messages:[{role:"user",content:user}]
-    };
-    if (tools&&tools.length) payload.tools = tools;
-    const r = await fetch("https://api.anthropic.com/v1/messages",{
+    const payload={model:MODEL,max_tokens:maxTok||800,system:sys,messages:[{role:"user",content:user}]};
+    if(tools&&tools.length) payload.tools=tools;
+    const r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
-      headers:{
-        "Content-Type":"application/json; charset=utf-8",
-        "x-api-key":key,
-        "anthropic-version":"2023-06-01"
-      },
+      headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01"},
       body:JSON.stringify(payload)
     });
-    const d = await r.json();
-    if (!r.ok) return null;
-    let t="";
-    for(const b of (d.content||[])){if(b.type==="text")t+=b.text;}
-    return t||null;
+    const d=await r.json(); if(!r.ok) return null;
+    let t=""; for(const b of (d.content||[])){if(b.type==="text")t+=b.text;} return t||null;
   } catch(e){return null;}
+}
+
+// Cascade gratuite : Groq → Gemini → Mistral → DeepSeek
+async function freeAI(sys, user, maxTok) {
+  return await groq(sys,user,maxTok)
+    || await gemini(sys+"\n\n"+user,maxTok)
+    || await mistral(sys,user,maxTok)
+    || await deepseek(sys,user,maxTok);
 }
 
 function parseJSON(raw) {
   if (!raw) return {};
-  try {
-    const m = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if(m) return JSON.parse(m[1].trim());
-  } catch(e){}
-  try {
-    const m = raw.match(/\{[\s\S]*\}/);
-    if(m) return JSON.parse(m[0]);
-  } catch(e){}
+  try { const m=raw.match(/```(?:json)?\s*([\s\S]*?)```/); if(m) return JSON.parse(m[1].trim()); } catch(e){}
+  try { const m=raw.match(/\{[\s\S]*\}/); if(m) return JSON.parse(m[0]); } catch(e){}
   return {};
 }
 
 async function dbLookup(kw) {
-  const k = (kw||"").toLowerCase().split(" ")[0];
+  const k=(kw||"").toLowerCase().split(" ")[0];
   try {
-    const [deals,prices,promos] = await Promise.all([
+    const [deals,promos]=await Promise.all([
       sbFetch("daily_deals?name=ilike.*"+encodeURIComponent(k)+"*&limit=3"),
-      sbFetch("price_history?product_name=ilike.*"+encodeURIComponent(k)+"*&order=checked_at.desc&limit=5"),
       sbFetch("promo_codes?valid=eq.true&order=found_at.desc&limit=2")
     ]);
-    const parts = [];
-    if(deals&&deals.length)  parts.push("Deals: "+deals.map(function(x){return x.name+" "+x.price+"EUR";}).join(" | "));
-    if(prices&&prices.length) parts.push("Prix: "+prices.map(function(x){return x.product_name+" "+x.price+"EUR";}).join(" | "));
-    if(promos&&promos.length) parts.push("Codes: "+promos.map(function(x){return x.code+" ("+x.store+")";}).join(" | "));
+    const parts=[];
+    if(deals&&deals.length) parts.push("Deals: "+deals.map(function(x){return x.name+" "+x.price+"EUR";}).join("|"));
+    if(promos&&promos.length) parts.push("Codes: "+promos.map(function(x){return x.code+"("+x.store+")";}).join("|"));
     return parts.join("\n");
   } catch(e){return "";}
 }
 
 // ── COMPOSANTS HTML ───────────────────────────────────────────────────────────
-function cardProduct(name, price, url, adv, img, badge) {
-  const imgH = img?'<img src="'+img+'" style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0" onerror="this.style.display=\'none\'">':'';
-  const pill = '<span style="background:rgba(255,255,255,.2);border-radius:100px;padding:2px 10px;font-size:10px;font-weight:800">'+(adv.emoji||"\uD83D\uDECD\uFE0F")+" "+adv.name+"</span>";
-  return '<a href="'+url+'" target="_blank" rel="sponsored noopener" style="display:flex;align-items:center;gap:12px;background:'+(adv.color||"#2f54ff")+';color:#fff;text-decoration:none;border-radius:14px;padding:12px 14px;margin-top:8px">'
-    +imgH+'<div style="flex:1;min-width:0">'
+function cardProduct(name, price, url, storeName, storeColor, storeEmoji, badge) {
+  const pill = '<span style="background:rgba(255,255,255,.22);border-radius:100px;padding:2px 9px;font-size:10px;font-weight:800">'+storeEmoji+" "+storeName+"</span>";
+  const priceTag = price && price!=="null" && price!=="undefined" && price!=="Voir prix"
+    ? price : "Voir prix";
+  return '<a href="'+url+'" target="_blank" rel="sponsored noopener" '
+    +'style="display:flex;align-items:center;gap:12px;background:'+storeColor+';color:#fff;'
+    +'text-decoration:none;border-radius:14px;padding:13px 14px;margin-top:8px">'
+    +'<div style="flex:1;min-width:0">'
     +'<div style="font-size:10px;margin-bottom:4px;opacity:.85">'+pill+(badge?" \u00B7 "+badge:"")+"</div>"
-    +'<div style="font-size:13px;font-weight:800;line-height:1.3;word-break:break-word">'+name+"</div></div>"
-    +'<span style="background:rgba(255,255,255,.22);border-radius:8px;padding:5px 10px;white-space:nowrap;font-size:14px;font-weight:900;flex-shrink:0">'+(price||"Voir prix")+"</span></a>";
+    +'<div style="font-size:13.5px;font-weight:800;line-height:1.3;word-break:break-word">'+name+"</div></div>"
+    +'<div style="background:rgba(255,255,255,.22);border-radius:9px;padding:6px 11px;'
+    +'white-space:nowrap;font-size:14px;font-weight:900;flex-shrink:0">'+priceTag+"</div></a>";
 }
 
 function promoBox(code, store, desc, best) {
   return '<div style="background:'+(best?"#dcfce7":"#f0fdf4")+';border:'+(best?"2px solid #16a34a":"1.5px solid #86efac")+';border-radius:12px;padding:10px 14px;margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:8px">'
     +'<div><span style="font-size:11px;color:#16a34a;font-weight:700">'+(best?"\u2B50 MEILLEUR \u2014 ":"")+"\uD83C\uDFF7\uFE0F "+store+"</span>"
     +'<div style="font-size:12px;color:#166534;font-weight:600">'+desc+"</div></div>"
-    +'<div onclick="navigator.clipboard.writeText(\''+code+'\');this.innerHTML=\'&#10003;\';setTimeout(()=>this.innerHTML=\''+code+'\',2000)" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0">'+code+"</div></div>";
+    +'<div onclick="navigator.clipboard.writeText(\''+code+'\');this.textContent=\'\\u2713 Copie\';setTimeout(()=>this.textContent=\''+code+'\',2000)" '
+    +'style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap">'+code+"</div></div>";
 }
 
-function cardHotel(h, link) {
-  const stars = "\u2B50".repeat(Math.min(h.stars||3,5));
-  const cc = {budget:"#16a34a",confort:"#2f54ff",luxe:"#7c3aed"}[h.cat]||"#2f54ff";
-  const cl = {budget:"\uD83D\uDC9A Budget",confort:"\uD83D\uDC99 Confort",luxe:"\uD83D\uDC8E Luxe"}[h.cat]||"";
-  const hasPrice = h.price&&h.priceReal;
-  const priceDiv = hasPrice
-    ? '<div style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border-radius:10px;padding:7px 11px;text-align:center;flex-shrink:0;margin-left:8px"><div style="font-size:9px;opacity:.85">Prix reel</div><div style="font-size:15px;font-weight:900">'+h.price+"EUR</div><div style='font-size:9px;opacity:.75'>/nuit</div></div>"
-    : '<div style="background:linear-gradient(135deg,'+cc+','+cc+'cc);color:#fff;border-radius:10px;padding:8px 12px;text-align:center;flex-shrink:0;margin-left:8px;min-width:60px"><div style="font-size:10px">Voir prix</div><div style="font-size:12px;font-weight:800">\u2192</div></div>';
-  return '<a href="'+link+'" target="_blank" rel="sponsored noopener" style="display:flex;flex-direction:column;background:#fff;border:1.5px solid '+(hasPrice?"#bbf7d0":"#e6ebf7")+';border-radius:14px;padding:13px;margin-top:8px;text-decoration:none;gap:5px">'
+function cardHotel(h, hotelUrl, destUrl, hasRealPrice) {
+  const cc={budget:"#16a34a",confort:"#2f54ff",luxe:"#7c3aed"}[h.cat]||"#2f54ff";
+  const cl={budget:"\uD83D\uDC9A Budget",confort:"\uD83D\uDC99 Confort",luxe:"\uD83D\uDC8E Luxe"}[h.cat]||"";
+  const stars="\u2B50".repeat(Math.min(h.stars||3,5));
+  const hasP = h.price && hasRealPrice;
+  const priceDiv = hasP
+    ? '<div style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border-radius:10px;padding:7px 12px;text-align:center;flex-shrink:0;margin-left:8px"><div style="font-size:9px;opacity:.8">par nuit</div><div style="font-size:16px;font-weight:900">'+h.price+'\u20AC</div></div>'
+    : '<div style="background:linear-gradient(135deg,'+cc+','+cc+'cc);color:#fff;border-radius:10px;padding:8px 12px;text-align:center;flex-shrink:0;margin-left:8px;min-width:64px"><div style="font-size:10px;opacity:.9">Voir prix</div><div style="font-size:13px;font-weight:800">\u2192</div></div>';
+  return '<a href="'+hotelUrl+'" target="_blank" rel="sponsored noopener" '
+    +'style="display:flex;flex-direction:column;background:#fff;border:1.5px solid '+(hasP?"#bbf7d0":"#e6ebf7")+';border-radius:14px;padding:13px;margin-top:8px;text-decoration:none;gap:6px">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
     +'<div style="flex:1">'+(cl?'<span style="background:#eff6ff;color:'+cc+';border-radius:100px;padding:2px 9px;font-size:10px;font-weight:800">'+cl+"</span>":"")
-    +'<div style="font-size:13px;font-weight:800;color:#0e1430;margin-top:3px">'+h.name+"</div>"
-    +'<div style="font-size:11px;color:#7c89a8">'+stars+" \u00B7 "+(h.loc||"")+"</div></div>"+priceDiv+"</div>"
+    +'<div style="font-size:13.5px;font-weight:800;color:#0e1430;margin-top:4px">'+h.name+"</div>"
+    +'<div style="font-size:11px;color:#7c89a8;margin-top:2px">'+stars+" \u00B7 "+(h.loc||"")+"</div></div>"
+    +priceDiv+"</div>"
     +(h.hl?'<div style="font-size:11px;color:'+cc+';font-weight:600;background:#eff6ff;border-radius:8px;padding:4px 10px">\u2728 '+h.hl+"</div>":"")
-    +'<div style="background:'+(hasPrice?"#f0fdf4":"#f0f9ff")+';border-radius:8px;padding:6px 10px;font-size:11px;color:'+(hasPrice?"#15803d":"#0369a1")+';font-weight:600">'
-    +(hasPrice?"\uD83D\uDFE2 Prix verifie \u00B7 Reserver sur Booking.com \u2192":"\uD83C\uDFE8 Voir disponibilites et prix \u2192")
+    +'<div style="background:'+(hasP?"#f0fdf4":"#f0f9ff")+';border-radius:8px;padding:6px 10px;font-size:11px;'
+    +'color:'+(hasP?"#15803d":"#0369a1")+';font-weight:600">'
+    +(hasP?"\uD83D\uDFE2 Prix verifie \u00B7 Reserver sur Booking.com \u2192":"\uD83C\uDFE8 Voir disponibilites et prix sur Booking.com \u2192")
     +"</div></a>";
 }
 
 function cardDay(d) {
   return '<div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;padding:14px;margin-top:9px">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
-    +'<div style="background:linear-gradient(135deg,#2f54ff,#4a6bff);color:#fff;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:800">Jour '+d.n+"</div>"
-    +'<div style="font-size:12px;font-weight:700;color:#0e1430;flex:1;margin-left:8px">'+(d.title||"")+"</div>"
-    +(d.budget?'<div style="font-size:11px;color:#16a34a;font-weight:700">~'+d.budget+"EUR</div>":"")
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'
+    +'<div style="background:linear-gradient(135deg,#2f54ff,#4a6bff);color:#fff;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:800;flex-shrink:0">Jour '+d.n+"</div>"
+    +'<div style="font-size:13px;font-weight:700;color:#0e1430;flex:1">'+(d.title||"")+"</div>"
+    +(d.budget?'<div style="font-size:11px;color:#16a34a;font-weight:700;flex-shrink:0">~'+d.budget+"\u20AC</div>":"")
     +"</div>"
-    +(d.am?'<div style="display:flex;gap:9px;margin-bottom:8px"><span>\uD83C\uDF05</span><div><div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase">Matin</div><div style="font-size:12px;color:#374151">'+d.am+"</div></div></div>":"")
-    +(d.pm?'<div style="display:flex;gap:9px;margin-bottom:8px"><span>\u2600\uFE0F</span><div><div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase">Apres-midi</div><div style="font-size:12px;color:#374151">'+d.pm+"</div></div></div>":"")
-    +(d.eve?'<div style="display:flex;gap:9px;margin-bottom:4px"><span>\uD83C\uDF19</span><div><div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase">Soiree</div><div style="font-size:12px;color:#374151">'+d.eve+"</div></div></div>":"")
-    +(d.resto?'<div style="background:#f0fdf4;border-radius:9px;padding:7px 11px;margin-top:6px;display:flex;justify-content:space-between;align-items:center">'
+    +(d.am?'<div style="display:flex;gap:8px;margin-bottom:8px"><span style="flex-shrink:0">\uD83C\uDF05</span><div><div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase">Matin</div><div style="font-size:12px;color:#374151;line-height:1.5">'+d.am+"</div></div></div>":"")
+    +(d.pm?'<div style="display:flex;gap:8px;margin-bottom:8px"><span style="flex-shrink:0">\u2600\uFE0F</span><div><div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase">Apres-midi</div><div style="font-size:12px;color:#374151;line-height:1.5">'+d.pm+"</div></div></div>":"")
+    +(d.eve?'<div style="display:flex;gap:8px;margin-bottom:4px"><span style="flex-shrink:0">\uD83C\uDF19</span><div><div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase">Soiree</div><div style="font-size:12px;color:#374151;line-height:1.5">'+d.eve+"</div></div></div>":"")
+    +(d.resto?'<div style="background:#f0fdf4;border-radius:9px;padding:8px 11px;margin-top:6px;display:flex;justify-content:space-between;align-items:center">'
       +'<div><div style="font-size:11px;color:#16a34a;font-weight:700">\uD83C\uDF7D\uFE0F '+d.resto.name+"</div>"
-      +(d.resto.spec?'<div style="font-size:10px;color:#86efac">'+d.resto.spec+"</div>":"")
-      +"</div>"+'<div style="font-size:12px;color:#16a34a;font-weight:800">'+d.resto.price+"</div></div>":"")
-    +(d.acts&&d.acts.length?'<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px">'
-      +d.acts.map(function(a){return '<span style="background:#eff6ff;color:#2f54ff;border-radius:100px;padding:2px 9px;font-size:10.5px;font-weight:600">'+a+"</span>";}).join("")
-      +"</div>":"")
+      +(d.resto.spec?'<div style="font-size:10px;color:#4ade80">'+d.resto.spec+"</div>":"")
+      +"</div>"+'<div style="font-size:12px;color:#16a34a;font-weight:800;flex-shrink:0;margin-left:8px">'+d.resto.price+"</div></div>":"")
+    +(d.acts&&d.acts.length?'<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">'
+      +d.acts.map(function(a){return '<span style="background:#eff6ff;color:#2f54ff;border-radius:100px;padding:3px 10px;font-size:10.5px;font-weight:600">'+a+"</span>";}).join("")+"</div>":"")
     +"</div>";
 }
 
 function cardBudget(b) {
-  const rows = [
-    ["\u2708\uFE0F Vols A/R", b.vols],
-    ["\uD83C\uDFE8 Hebergement", b.hotel],
-    ["\uD83C\uDFAF Activites", b.acts],
-    ["\uD83C\uDF7D\uFE0F Restaurants", b.resto],
-    ["\uD83D\uDE87 Transport local", b.transport]
+  const rows=[
+    ["\u2708\uFE0F Vols A/R",b.vols],["\uD83C\uDFE8 Hebergement",b.hotel],
+    ["\uD83C\uDFAF Activites",b.acts],["\uD83C\uDF7D\uFE0F Restaurants",b.resto],
+    ["\uD83D\uDE87 Transport",b.transport]
   ].filter(function(r){return r[1]!=null;});
   return '<div style="background:linear-gradient(135deg,#0e1430,#1f2da0);border-radius:16px;padding:16px;margin-top:12px">'
     +'<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:12px">\uD83D\uDCB0 Budget total estime</div>'
-    +rows.map(function(r){
-      return '<div style="display:flex;justify-content:space-between;margin-bottom:7px">'
-        +'<span style="font-size:12px;color:rgba(255,255,255,.75)">'+r[0]+"</span>"
-        +'<span style="font-size:12px;font-weight:700;color:#fff">~'+r[1]+"EUR</span></div>";
-    }).join("")
+    +rows.map(function(r){return '<div style="display:flex;justify-content:space-between;margin-bottom:7px">'
+      +'<span style="font-size:12px;color:rgba(255,255,255,.75)">'+r[0]+"</span>"
+      +'<span style="font-size:12px;font-weight:700;color:#fff">~'+r[1]+"\u20AC</span></div>";}).join("")
     +'<div style="border-top:1px solid rgba(255,255,255,.2);margin-top:10px;padding-top:10px;display:flex;justify-content:space-between">'
     +'<span style="font-size:13px;font-weight:800;color:#fff">TOTAL</span>'
-    +'<span style="font-size:16px;font-weight:900;color:#bcd0ff">~'+(b.total||"")+"EUR</span></div>"
-    +(b.pp?'<div style="font-size:11px;color:rgba(255,255,255,.6);text-align:right;margin-top:3px">soit ~'+b.pp+"EUR / personne</div>":"")
-    +'<div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:8px">Estimations basees sur les prix actuels du web. Cliquez les liens pour reserver.</div>'
-    +"</div>";
+    +'<span style="font-size:16px;font-weight:900;color:#bcd0ff">~'+(b.total||"")+"\u20AC</span></div>"
+    +(b.pp?'<div style="font-size:11px;color:rgba(255,255,255,.5);text-align:right;margin-top:4px">soit ~'+b.pp+"\u20AC / personne</div>":"")
+    +'<div style="font-size:10px;color:rgba(255,255,255,.35);margin-top:8px">Estimations basees sur les prix web actuels</div></div>';
 }
 
 function cardTips(tips) {
   if (!tips||!tips.length) return "";
   return '<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:14px;padding:14px;margin-top:10px">'
     +'<div style="font-size:12px;font-weight:800;color:#5b21b6;margin-bottom:8px">\uD83D\uDCA1 Conseils du guide local</div>'
-    +tips.map(function(t){
-      return '<div style="font-size:12px;color:#374151;margin-bottom:6px;padding-left:10px;border-left:3px solid #c4b5fd">'
-        +t+"</div>";
-    }).join("")+"</div>";
+    +tips.map(function(t){return '<div style="font-size:12px;color:#374151;margin-bottom:6px;padding-left:10px;border-left:3px solid #c4b5fd;line-height:1.5">'+t+"</div>";}).join("")+"</div>";
 }
 
-// ── HANDLER PRINCIPAL ─────────────────────────────────────────────────────────
-export default async function handler(req) {
-  if (req.method==="OPTIONS") return new Response(null,{
-    status:204,
-    headers:{
-      "Access-Control-Allow-Origin":"*",
-      "Access-Control-Allow-Methods":"POST,OPTIONS",
-      "Access-Control-Allow-Headers":"Content-Type"
-    }
-  });
-  if (req.method!=="POST") return new Response("Method not allowed",{status:405});
+// ── BOUTON PLANIFIER — auto-envoie le message dans le chat ───────────────────
+// Utilise data-attributes + onclick inline : fonctionne sans script global
+function planButton(msg) {
+  // msg encode en base64 pour eviter les conflits de quotes
+  const encoded = btoa(unescape(encodeURIComponent(msg)));
+  return '<button onclick="(function(){'
+    +'var m=decodeURIComponent(escape(atob(\\''+encoded+'\\''+')));'
+    +'var t=document.querySelector(\\'textarea,input[type=text]\\');'
+    +'if(t){t.value=m;t.dispatchEvent(new Event(\\'input\\',{bubbles:true}));'
+    +'setTimeout(function(){var f=t.closest(\\'form\\');'
+    +'var b=f?f.querySelector(\\'button[type=submit]\\'):document.querySelector(\\'[data-send],button[type=submit]\\');'
+    +'if(b)b.click();else t.dispatchEvent(new KeyboardEvent(\\'keydown\\',{key:\\'Enter\\',keyCode:13,bubbles:true}));},80);}'
+    +'else if(window.sendPrompt)window.sendPrompt(m);'
+    +'else window.dispatchEvent(new CustomEvent(\\'huntify_send\\',{detail:{message:m,mode:\\'travel\\'}}));'
+    +'})()" '
+    +'style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);'
+    +'border:none;color:#fff;border-radius:10px;padding:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">'
+    +'\uD83D\uDDFA\uFE0F Planifier</button>';
+}
 
-  const H = {"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"};
+// ── HANDLER ───────────────────────────────────────────────────────────────────
+export default async function handler(req) {
+  if (req.method==="OPTIONS") return new Response(null,{status:204,headers:{"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"POST,OPTIONS","Access-Control-Allow-Headers":"Content-Type"}});
+  if (req.method!=="POST") return new Response("Method not allowed",{status:405});
+  const H={"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"};
 
   try {
-    const body = await req.json();
-    const message    = body.message||"";
-    const history    = body.history||[];
-    const sid        = body.sessionId||("anon_"+Date.now());
-    const isTravel   = body.mode==="travel";
-    const today      = new Date().toISOString().slice(0,10);
-    const advertisers = await getAdvertisers();
+    const body     = await req.json();
+    const message  = body.message||"";
+    const history  = body.history||[];
+    const sid      = body.sessionId||("anon_"+Date.now());
+    const isTravel = body.mode==="travel";
+    const today    = new Date().toISOString().slice(0,10);
+    const adv      = await getAdvertisers();
+    const hist     = fmtHist(history,2500);
+    const histS    = fmtHist(history,1000);
 
     if (body.trackingEnabled) {
       Promise.all([
@@ -549,373 +433,258 @@ export default async function handler(req) {
       ]).catch(function(){});
     }
 
-    const hist  = formatHistory(history, 2500);
-    const histS = formatHistory(history, 1200);
-
     // ══════════════════════════════════════════════════════════════════════════
     //  MODE VOYAGE
     // ══════════════════════════════════════════════════════════════════════════
     if (isTravel) {
 
-      // ── DETECTION : l utilisateur veut des propositions ? ─────────────────
-      const wantsSuggestions = /je ne sais pas|pas d.id[eé]e|propose[sz]?|suggestion|id[eé]e|surprise|tu choisis|choisis pour|qu est.ce que tu|recommande/i.test(message);
-      const msgLower = (hist+" "+message).toLowerCase();
+      const wantsSuggestions = /je ne sais pas|pas d.id|propose|suggestion|surprise|tu choisis|recommande|quoi visiter/i.test(message);
 
-      // Extrait les infos deja connues de la conversation
-      const knownInfos = parseJSON(
-        await groq(
-          "Lis cette conversation et extrais les infos voyage connues en JSON.\n"
-          +"Reponds UNIQUEMENT en JSON : {ville_depart:string|null, checkin:string|null, checkout:string|null, duree:string|null, nb_adultes:number|null, budget:string|null, style:string|null, destination:string|null}\n"
-          +"Si une info n est pas mentionnee, mets null. Dates au format YYYY-MM-DD si possible.",
-          "Conversation :\n"+hist+"\nMessage : "+message,
-          400
-        ) || "{}"
-      );
+      // Extrait infos deja connues dans la conversation
+      const extractRaw = await groq(
+        "Lis cette conversation et extrais les informations voyage en JSON. "
+        +"Reponds UNIQUEMENT en JSON : {destination:string|null,ville_depart:string|null,"
+        +"checkin:string|null,checkout:string|null,duree:string|null,nb_adultes:number|null,"
+        +"budget:string|null,style:string|null}. "
+        +"Dates au format YYYY-MM-DD. Si info absente : null.",
+        "Conversation:\n"+hist+"\nMessage: "+message,
+        400
+      ) || "{}";
+      const known = parseJSON(extractRaw);
 
-            // ── CAS 1 : l utilisateur veut des propositions ou pas de destination → 3 DESTINATIONS ──
-      if (wantsSuggestions || !knownInfos.destination) {
-        const dep    = knownInfos.ville_depart||"France";
-        const budget = knownInfos.budget||"2000EUR";
-        const ciK    = knownInfos.checkin||ci;
-        const coK    = knownInfos.checkout||co;
-        const dureeK = knownInfos.duree||"4 nuits";
-        const styleK = knownInfos.style||"romantique en amoureux";
-        const adultK = knownInfos.nb_adultes||2;
+      const dep    = known.ville_depart||"France";
+      const budget = known.budget||"2000EUR";
+      const ciK    = parseDate(known.checkin)||null;
+      const coRaw  = parseDate(known.checkout)||null;
+      const nights = parseInt(((known.duree||"4 jours").match(/\d+/)||["4"])[0])||4;
+      const coK    = coRaw||(ciK?(function(){const d=new Date(ciK);d.setDate(d.getDate()+nights);return d.toISOString().slice(0,10);}()):null);
+      const adultK = known.nb_adultes||2;
+      const styleK = known.style||"romantique";
 
-        // L IA genere 3 destinations differentes avec vrais prix
-        const multiPropPrompt = "Tu es le conseiller voyage Huntify, passionne et expert.\n"
-          +"Un couple part depuis "+dep+" du "+(ciK||"17 juin")+" au "+(coK||"21 juin")+"\n"
-          +"Budget total max : "+budget+" pour 2 personnes. Style : "+styleK+".\n\n"
-          +"Utilise tes capacites de recherche web pour trouver des VRAIS prix de vols et hotels.\n\n"
-          +"Genere EXACTEMENT 3 propositions de destinations differentes et complementaires.\n"
-          +"Pour chaque destination : vols depuis "+dep+", hotels avec vrais prix, programme.\n\n"
-          +"JSON :\n"
-          +"{\n"
-          +"  proposals: [\n"
-          +"    {\n"
-          +"      dest:string, country:string, flag:string,\n"
-          +"      pitch: 'une phrase percutante qui donne envie (2 lignes max)',\n"
-          +"      vibe: 'mot cle : Romantique | Culturel | Soleil | Aventure | Gastronomie',\n"
-          +"      flight_price: number, flight_co: string, flight_dur: string,\n"
-          +"      hotel_budget_name: string, hotel_budget_price: number,\n"
-          +"      hotel_luxe_name: string, hotel_luxe_price: number,\n"
-          +"      total_est: number,\n"
-          +"      checkin: 'YYYY-MM-DD', checkout: 'YYYY-MM-DD',\n"
-          +"      from_iata: string, to_iata: string,\n"
-          +"      top3: ['activite 1', 'activite 2', 'activite 3'],\n"
-          +"      why: 'pourquoi cette destination depuis "+dep+" pour ce profil'\n"
-          +"    }\n"
-          +"  ]\n"
-          +"}\n"
-          +"Les 3 destinations doivent etre TRES differentes (ex: une ville culturelle, une destination soleil, une ville romantique proche).\n"
-          +"Toutes accessibles depuis "+dep+" dans le budget "+budget+".\n"
-          +"JSON uniquement.";
+      // ── CAS 1 : Propositions multi-destinations ──────────────────────────
+      if (wantsSuggestions || !known.destination) {
+        const propPrompt = "Tu es expert voyage. Un couple part depuis "+dep
+          +", dates: "+(ciK||"bientot")+" au "+(coK||""), budget+", style: "+styleK+".\n"
+          +"Cherche sur le web les vrais prix de vols et hotels.\n"
+          +"Propose EXACTEMENT 3 destinations differentes et complementaires depuis "+dep+".\n"
+          +"JSON uniquement:\n"
+          +"{ proposals:[ { dest:string, country:string, flag:string, "
+          +"pitch:string, vibe:'Romantique'|'Culturel'|'Soleil'|'Aventure', "
+          +"flight_price:number, flight_co:string, flight_dur:string, "
+          +"hotel_budget_name:string, hotel_budget_price:number, "
+          +"hotel_confort_name:string, hotel_confort_price:number, "
+          +"total_est:number, checkin:string, checkout:string, "
+          +"from_iata:string, to_iata:string, "
+          +"top3:[string,string,string], why:string } ] }";
 
-        // Cascade pour les propositions
-        let propRaw = await groqSearch(multiPropPrompt, 3000);
+        let propRaw = await groqSearch(propPrompt, 3000);
         let propData = parseJSON(propRaw||"");
         if (!propData.proposals||!propData.proposals.length) {
-          propRaw = await deepseek("Expert voyage. JSON uniquement.", multiPropPrompt, 2800);
+          propRaw = await deepseek("Expert voyage. JSON uniquement.", propPrompt, 2800);
           propData = parseJSON(propRaw||"");
         }
         if (!propData.proposals||!propData.proposals.length) {
-          propRaw = await mistral("Expert voyage. JSON uniquement.", multiPropPrompt, 2500);
+          propRaw = await mistral("Expert voyage. JSON uniquement.", propPrompt, 2500);
           propData = parseJSON(propRaw||"");
         }
         if (!propData.proposals||!propData.proposals.length) {
-          propRaw = await gemini("Expert voyage. JSON uniquement.\n\n"+multiPropPrompt, 2500);
-          propData = parseJSON(propRaw||"");
-        }
-        if (!propData.proposals||!propData.proposals.length) {
-          propRaw = await claude("Expert voyage. JSON uniquement.", multiPropPrompt, 2500, []);
+          propRaw = await claudeAI("Expert voyage. JSON uniquement.", propPrompt, 2500, []);
           propData = parseJSON(propRaw||"");
         }
 
-        // Rendu cartes destinations multiples
         if (propData.proposals&&propData.proposals.length) {
-          const vibeColor = {
-            "Romantique":"#e83e8c","Culturel":"#6f42c1","Soleil":"#fd7e14",
-            "Aventure":"#20c997","Gastronomie":"#e63946"
-          };
-          let html3 = '<div style="font-size:14px;font-weight:700;color:#0e1430;margin-bottom:12px">'            +'\uD83C\uDF1F Voici mes 3 coups de coeur pour vous depuis '+dep+' :</div>';
+          const vibeColor={"Romantique":"#e83e8c","Culturel":"#6f42c1","Soleil":"#fd7e14","Aventure":"#20c997"};
+          let html = '<div style="font-size:14px;font-weight:700;color:#0e1430;margin-bottom:12px">'
+            +'\uD83C\uDF1F Mes 3 coups de coeur depuis '+dep+' :</div>';
 
           for (const p of propData.proposals.slice(0,3)) {
             const vc = vibeColor[p.vibe]||"#2f54ff";
-            const skyP = skyscannerLink(p.from_iata||dep, p.to_iata||p.dest||"", p.checkin||ciK, p.checkout||coK, adultK);
-            const bkgP = bookingTPLink(p.dest||"", p.checkin||ciK, p.checkout||coK, adultK, null);
+            const skyUrl = skyscannerLink(p.from_iata||dep, p.to_iata||p.dest, p.checkin||ciK, p.checkout||coK, adultK);
+            const bkgUrl = bookingLink(p.dest, p.checkin||ciK, p.checkout||coK, adultK, null);
+            const planMsg = "Planifie un itineraire complet pour "+p.dest+" depuis "+dep
+              +" du "+(p.checkin||ciK||today)+" au "+(p.checkout||coK||today)
+              +" pour "+adultK+" adultes budget "+budget;
 
-            html3 += '<div style="background:#fff;border:2px solid #e6ebf7;border-radius:16px;padding:16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
-              // Header destination
+            html += '<div style="background:#fff;border:2px solid #e6ebf7;border-radius:16px;padding:16px;margin-bottom:12px">'
+              // Header
               +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">'
-              +'<div style="font-size:36px">'+(p.flag||"\u2708\uFE0F")+"</div>"
+              +'<div style="font-size:34px">'+(p.flag||"\u2708\uFE0F")+"</div>"
               +'<div style="flex:1">'
               +'<div style="font-size:16px;font-weight:900;color:#0e1430">'+(p.dest||"")+(p.country?", "+p.country:"")+"</div>"
-              +'<span style="background:'+vc+';color:#fff;border-radius:100px;padding:2px 10px;font-size:10px;font-weight:800">'+(p.vibe||"Voyage")+"</span>"
-              +"</div>"
-              +'<div style="text-align:right"><div style="font-size:11px;color:#7c89a8">Budget estim\u00e9</div>'
-              +'<div style="font-size:18px;font-weight:900;color:#2f54ff">~'+(p.total_est||"?")+"EUR</div>"
-              +'<div style="font-size:10px;color:#7c89a8">/ 2 pers.</div></div>'
-              +"</div>"
+              +'<span style="background:'+vc+';color:#fff;border-radius:100px;padding:2px 10px;font-size:10px;font-weight:800">'+(p.vibe||"Voyage")+"</span></div>"
+              +'<div style="text-align:right">'
+              +'<div style="font-size:10px;color:#7c89a8">Budget total</div>'
+              +'<div style="font-size:19px;font-weight:900;color:#2f54ff">~'+(p.total_est||"?")+'<span style="font-size:13px">\u20AC</span></div>'
+              +'<div style="font-size:10px;color:#7c89a8">/ 2 pers.</div></div></div>'
               // Pitch
-              +'<div style="font-size:13px;color:#374151;font-style:italic;background:#f8f9ff;border-radius:10px;padding:8px 12px;margin-bottom:10px;line-height:1.5">'
-              +"\u201C"+(p.pitch||"")+"\u201D</div>"
-              // Vols + hotels
+              +'<div style="font-size:12.5px;color:#374151;font-style:italic;background:#f8f9ff;border-radius:10px;'
+              +'padding:9px 12px;margin-bottom:10px;line-height:1.6">\u201C'+(p.pitch||"")+'\u201D</div>'
+              // Vols + Hotels cote a cote
               +'<div style="display:flex;gap:8px;margin-bottom:8px">'
-              +'<div style="flex:1;background:#eff6ff;border-radius:10px;padding:8px 10px">'
-              +'<div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">\u2708\uFE0F Vol aller</div>'
-              +'<div style="font-size:13px;font-weight:800;color:#2f54ff">~'+(p.flight_price||"?")+"EUR</div>"
-              +'<div style="font-size:10px;color:#7c89a8">'+(p.flight_co||"")+" \u00B7 "+(p.flight_dur||"")+"</div>"
-              +"</div>"
-              +'<div style="flex:1;background:#f0fdf4;border-radius:10px;padding:8px 10px">'
-              +'<div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">\uD83C\uDFE8 H\u00f4tel budget</div>'
-              +'<div style="font-size:13px;font-weight:800;color:#16a34a">~'+(p.hotel_budget_price||"?")+"EUR/nuit</div>"
-              +'<div style="font-size:10px;color:#7c89a8">'+(p.hotel_budget_name||"")+"</div>"
-              +"</div></div>"
+              +'<div style="flex:1;background:#eff6ff;border-radius:10px;padding:9px 11px">'
+              +'<div style="font-size:10px;font-weight:700;color:#7c89a8;text-transform:uppercase">\u2708\uFE0F Vol A/R</div>'
+              +'<div style="font-size:15px;font-weight:900;color:#2f54ff">~'+(p.flight_price||"?")+'<span style="font-size:11px">\u20AC</span></div>'
+              +'<div style="font-size:10px;color:#7c89a8">'+(p.flight_co||"")+" \u00B7 "+(p.flight_dur||"")+"</div></div>"
+              +'<div style="flex:1;background:#f0fdf4;border-radius:10px;padding:9px 11px">'
+              +'<div style="font-size:10px;font-weight:700;color:#7c89a8;text-transform:uppercase">\uD83C\uDFE8 Hotel confort</div>'
+              +'<div style="font-size:15px;font-weight:900;color:#16a34a">~'+(p.hotel_confort_price||p.hotel_budget_price||"?")+'<span style="font-size:11px">\u20AC/nuit</span></div>'
+              +'<div style="font-size:10px;color:#7c89a8">'+(p.hotel_confort_name||p.hotel_budget_name||"")+"</div></div></div>"
               // Top 3 activites
               +(p.top3&&p.top3.length?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">'
                 +p.top3.map(function(a){return '<span style="background:#f5f3ff;color:#6f42c1;border-radius:100px;padding:3px 10px;font-size:11px;font-weight:600">'+a+"</span>";}).join("")
                 +"</div>":"")
-              // Pourquoi ce choix
+              // Pourquoi
               +'<div style="font-size:11px;color:#64748b;background:#f8fafc;border-radius:8px;padding:6px 10px;margin-bottom:10px">'
-              +"\uD83D\uDCA1 "+(p.why||"")+"</div>"
+              +'\uD83D\uDCA1 '+(p.why||"")+"</div>"
               // Boutons
-              +'<div style="display:flex;gap:8px">'
-              +'<a href="'+skyP+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\u2708\uFE0F Vols</a>'
-              +'<a href="'+bkgP+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\uD83C\uDFE8 H\u00f4tels</a>'
-              +'<button data-huntify-plan="Planifie un itineraire complet pour '+p.dest+' depuis '+dep+' du '+(p.checkin||ciK)+' au '+(p.checkout||coK)+' pour '+adultK+' adultes budget '+budget+'" data-mode="travel" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit" onclick="(function(b){var m=b.getAttribute(\'data-huntify-plan\');if(window.sendPrompt){window.sendPrompt(m);}else{var i=document.querySelector(\'textarea,input[type=text]\');if(i){i.value=m;i.dispatchEvent(new Event(\'input\',{bubbles:true}));var s=i.closest(\'form\');if(s)s.querySelector(\'button[type=submit],button:last-of-type\').click();else i.dispatchEvent(new KeyboardEvent(\'keydown\',{key:\'Enter\',keyCode:13,bubbles:true}));}else{window.dispatchEvent(new CustomEvent(\'huntify_send\',{detail:{message:m,mode:\'travel\'}}));}}})(this)">\uD83D\uDDFA\uFE0F Planifier</button>'
+              +'<div style="display:flex;gap:7px">'
+              +'<a href="'+skyUrl+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;'
+              +'background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;'
+              +'border-radius:10px;padding:10px;font-size:11px;font-weight:700">\u2708\uFE0F Vols</a>'
+              +'<a href="'+bkgUrl+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;'
+              +'background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;'
+              +'border-radius:10px;padding:10px;font-size:11px;font-weight:700">\uD83C\uDFE8 Hotels</a>'
+              +planButton(planMsg)
               +"</div></div>";
           }
 
-          html3 += '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:8px">'
-            +'Cliquez "Planifier" sur la destination de votre choix pour l itineraire complet jour par jour</div>';
+          html += '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:6px">'
+            +'Cliquez Planifier pour l itineraire complet jour par jour</div>';
 
-          return new Response(JSON.stringify({reply:html3,sessionId:sid}),{headers:H});
+          return new Response(JSON.stringify({reply:html,sessionId:sid}),{headers:H});
         }
-
-        // Si l IA n a pas pu generer → on force une destination par defaut
-        if (!knownInfos.destination) knownInfos.destination = "Lisbonne";
+        if (!known.destination) known.destination = "Lisbonne";
       }
 
-      // ── CAS 2 : destination connue → extraction et generation standard ──
-      const groqDecidePrompt = "Tu es l assistant voyage de Huntify, expert et chaleureux.\n"
-        +"Aujourd hui : "+today+". Conversation :\n"+hist+"\nMessage : "+message+"\n\n"
-        +"Extrais les infos et genere IMMEDIATEMENT (la destination est connue : "+(knownInfos.destination||"")+")\n"
-        +"Reponds en JSON : {action:'generate', infos:{destination:string, ville_depart:string, nb_adultes:number, "
-        +"checkin:string, checkout:string, duree:string, budget:string, style:string}}";
+      // ── CAS 2 : Generation itineraire complet ────────────────────────────
+      const dest = known.destination||"Lisbonne";
 
-      const decision = parseJSON(
-        await groq("Reponds en JSON uniquement.", groqDecidePrompt, 500)
-        || JSON.stringify({action:"generate", infos:knownInfos})
-      );
+      const itinPrompt = "Tu es expert voyage Huntify avec acces au web en temps reel.\n"
+        +"VOYAGE: "+dest+" depuis "+dep
+        +", "+(ciK||today)+" au "+(coK||today)+" ("+nights+" nuits)"
+        +", "+adultK+" adulte"+(adultK>1?"s":"")
+        +", budget "+budget+", style "+styleK+".\n\n"
+        +"Recherche sur le web:\n"
+        +"1. Vrais prix vols "+dep+" vers "+dest+" pour ces dates\n"
+        +"2. Vrais hotels existants avec vrais prix par nuit\n"
+        +"3. Restaurants locaux authentiques avec prix repas\n"
+        +"4. Activites avec tarifs reels\n\n"
+        +"JSON UNIQUEMENT (pas de texte autour):\n"
+        +"{ t:'i', recap:string, itin:{ dest, country, flag, dur, trav, style, dep,"
+        +" checkin:'YYYY-MM-DD', checkout:'YYYY-MM-DD', adults,"
+        +" flights:{ out:{from,to,price,co,dur}, ret:{from,to,price,co,dur} },"
+        +" hotels:[ {name,stars,price,loc,hl,cat:'budget'|'confort'|'luxe'} x3 ],"
+        +" days:[ {n,title,am,pm,eve,resto:{name,price,spec},acts:[],budget} ],"
+        +" budget:{vols,hotel,acts,resto,transport,total,pp},"
+        +" tips:[4 conseils] } }\n"
+        +"IATA: MRS=Marseille,NCE=Nice,CDG=Paris,BCN=Barcelone,FCO=Rome,LIS=Lisbonne,"
+        +"LHR=Londres,AMS=Amsterdam,PRG=Prague,BUD=Budapest,DBV=Dubrovnik,JTR=Santorin.";
 
-      // Fallback solide : si pas de decision claire on force la generation avec ce qu on a
-      if (decision.action!=="generate") {
-        decision.action = "generate";
-        decision.infos  = knownInfos;
-      }
-
-      // Generation itineraire
-      const infos = decision.infos||knownInfos;
-      const adults = parseInt(infos.nb_adultes)||2;
-      const ci = parseDate(infos.checkin||null);
-      const nightsRaw = (infos.duree||"3 jours").match(/\d+/);
-      const nights = parseInt(nightsRaw?nightsRaw[0]:"3")||3;
-      const coCalc = ci?(function(){
-        const d = new Date(ci);
-        d.setDate(d.getDate()+nights);
-        return d.toISOString().slice(0,10);
-      }()):"";
-      const co = parseDate(infos.checkout||null)||coCalc;
-
-      // Prompt generation : l IA cherche les vrais prix sur le web et genere un itineraire complet
-      // Ton : expert, passionné, pas robotique
-      const itinPrompt = "Tu es le conseiller voyage expert de Huntify. Tu aimes voyager, tu connais les bonnes adresses, "
-        +"tu parles comme un ami qui a vraiment ete sur place.\n\n"
-        +"VOYAGE A PLANIFIER :\n"
-        +"- Destination : "+infos.destination+"\n"
-        +"- Depart depuis : "+(infos.ville_depart||"France")+"\n"
-        +"- Voyageurs : "+adults+" adulte"+(adults>1?"s":"")+"\n"
-        +"- Dates : "+(ci||"bientot")+" au "+(co||"")+" ("+nights+" nuit"+(nights>1?"s":"")+") \n"
-        +"- Budget : "+(infos.budget||"flexible")+"\n"
-        +"- Style : "+(infos.style||"equilibre entre culture et detente")+"\n\n"
-        +"Utilise tes capacites de recherche web pour trouver :\n"
-        +"1. Les vrais prix de vols pour ces dates (compagnie, prix approximatif, duree)\n"
-        +"2. De vrais hotels existants avec leurs vrais prix (pas inventes)\n"
-        +"3. Les restaurants locaux authentiques que les habitants recommandent\n"
-        +"4. Les activites avec leurs tarifs reels\n\n"
-        +"Genere un JSON complet et detaille. Les hotels, restaurants et activites doivent etre REELS.\n"
-        +"Format JSON :\n"
-        +"{\n"
-        +"  t: 'i',\n"
-        +"  recap: 'phrase de synthese naturelle et enthousiaste de ce voyage',\n"
-        +"  itin: {\n"
-        +"    dest: string, country: string, flag: emoji, dur: string, trav: string, style: string, dep: string,\n"
-        +"    checkin: 'YYYY-MM-DD', checkout: 'YYYY-MM-DD', adults: number,\n"
-        +"    flights: { out: {from:'IATA',to:'IATA',price:number,co:string,dur:string}, ret: {from,to,price,co,dur} },\n"
-        +"    hotels: [ 3 objets avec name:string, stars:number, price:number, loc:string, hl:string, cat:'budget'|'confort'|'luxe' ],\n"
-        +"    days: [ pour chaque jour: {n:number, title:string, am:string, pm:string, eve:string, "
-        +"resto:{name:string,price:string,spec:string}, acts:[string], budget:number} ],\n"
-        +"    budget: { vols:number, hotel:number, acts:number, resto:number, transport:number, total:number, pp:number },\n"
-        +"    tips: [ 4 conseils pratiques specifiques et utiles, pas generiques ]\n"
-        +"  }\n"
-        +"}\n"
-        +"IATA : Paris=CDG, Marseille=MRS, Nice=NCE, Lyon=LYS, Rome=FCO, Barcelone=BCN, Madrid=MAD, Lisbonne=LIS, Londres=LHR, Barcelone=BCN.\n"
-        +"JSON uniquement, sans texte autour.";
-
-      // Cascade complete : Groq DeepSearch → Mistral → DeepSeek → Claude
       let itinRaw = await groqSearch(itinPrompt, 3500);
-      if (!itinRaw || !parseJSON(itinRaw).itin) {
-        itinRaw = await mistral(
-          "Tu es un expert voyage. Reponds en JSON uniquement.",
-          itinPrompt, 3000
-        );
-      }
-      if (!itinRaw || !parseJSON(itinRaw).itin) {
-        itinRaw = await deepseek(
-          "Tu es un expert voyage. Reponds en JSON uniquement.",
-          itinPrompt, 3000
-        );
-      }
-      if (!itinRaw || !parseJSON(itinRaw).itin) {
-        itinRaw = await claude(
-          "Tu es un expert voyage. Reponds en JSON uniquement.",
-          itinPrompt, 3000, []
-        );
-      }
+      if (!itinRaw||!parseJSON(itinRaw).itin) itinRaw = await deepseek("Expert voyage JSON.", itinPrompt, 3000);
+      if (!itinRaw||!parseJSON(itinRaw).itin) itinRaw = await mistral("Expert voyage JSON.", itinPrompt, 2800);
+      if (!itinRaw||!parseJSON(itinRaw).itin) itinRaw = await claudeAI("Expert voyage JSON.", itinPrompt, 2800, []);
 
-      const tP = parseJSON(itinRaw||"");
+      const tP   = parseJSON(itinRaw||"");
       const itin = tP.itin;
 
-      // Fallback minimal
       if (!itin) {
-        const sky = skyscannerLink(infos.ville_depart||"",infos.destination||"",ci,co,adults);
-        const bkg = bookingTPLink(infos.destination||"",ci,co,adults,null);
-        const exp = expediaTPLink(infos.destination||"",ci,co,adults);
-        const gtf = getTransferLink(infos.destination||"",ci);
         return new Response(JSON.stringify({reply:
-          '<div style="font-size:13.5px;color:#1e293b;line-height:1.6;margin-bottom:12px">'
-          +'Super voyage en preparation ! Voici les liens pour commencer :'
-          +"</div>"
-          +'<a href="'+sky+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">\u2708\uFE0F Vols sur Skyscanner \u2192</a>'
-          +'<a href="'+bkg+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">\uD83C\uDFE8 Hotels sur Booking.com \u2192</a>'
-          +'<a href="'+exp+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#00355f,#00a0e3);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">\uD83D\uDED2 Comparer sur Expedia \u2192</a>'
-          +'<a href="'+gtf+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">\uD83D\uDE97 Transfert aeroport GetTransfer \u2192</a>',
+          '<div style="font-size:13px;color:#1e293b;margin-bottom:10px">Voici les liens directs pour votre voyage a '+dest+' :</div>'
+          +'<a href="'+skyscannerLink(dep,dest,ciK,coK,adultK)+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">\u2708\uFE0F Vols sur Skyscanner \u2192</a>'
+          +'<a href="'+bookingLink(dest,ciK,coK,adultK,null)+'" target="_blank" rel="sponsored" style="display:flex;justify-content:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">\uD83C\uDFE8 Hotels sur Booking.com \u2192</a>'
+          +'<a href="'+getTransferLink(dest,ciK)+'" target="_blank" rel="sponsored" style="display:flex;justify-content:center;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">\uD83D\uDE97 Transfert aeroport GetTransfer \u2192</a>',
           sessionId:sid}),{headers:H});
       }
 
-      // Rendu itineraire complet
-      const finalCi = (/^\d{4}-\d{2}-\d{2}$/.test(itin.checkin||""))?itin.checkin:(ci||"");
-      const finalCo = (/^\d{4}-\d{2}-\d{2}$/.test(itin.checkout||""))?itin.checkout:(co||"");
-      const finalAdults = itin.adults||adults;
+      const fCi = itin.checkin||ciK||today;
+      const fCo = itin.checkout||coK||today;
+      const fAd = itin.adults||adultK;
       const itinId = "itin_"+Date.now();
       let html = "";
 
       // Header
-      html += '<div id="'+itinId+'" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:18px;margin-bottom:4px;text-align:center">'
-        +'<div style="font-size:32px;margin-bottom:6px">'+(itin.flag||"\u2708\uFE0F")+"</div>"
-        +'<div style="font-family:sans-serif;font-size:20px;font-weight:800;color:#fff">'
-        +(itin.dest||"")+(itin.country?", "+itin.country:"")+"</div>"
+      html += '<div id="'+itinId+'" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:18px;text-align:center;margin-bottom:6px">'
+        +'<div style="font-size:34px;margin-bottom:6px">'+(itin.flag||"\u2708\uFE0F")+"</div>"
+        +'<div style="font-size:20px;font-weight:800;color:#fff">'+(itin.dest||"")+(itin.country?", "+itin.country:"")+"</div>"
         +'<div style="font-size:12px;color:rgba(255,255,255,.75);margin-top:6px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap">'
         +"<span>\uD83D\uDCC5 "+(itin.dur||nights+" nuits")+"</span>"
-        +"<span>\uD83D\uDC65 "+(itin.trav||finalAdults+" pers.")+"</span>"
-        +(itin.dep?"<span>\uD83D\uDEEB Depuis "+itin.dep+"</span>":"")
-        +(itin.budget&&itin.budget.total?"<span>\uD83D\uDCB0 ~"+itin.budget.total+"EUR</span>":"")
+        +"<span>\uD83D\uDC65 "+(itin.trav||fAd+" pers.")+"</span>"
+        +(itin.dep?"<span>\uD83D\uDEEB "+itin.dep+"</span>":"")
+        +(itin.budget&&itin.budget.total?"<span>\uD83D\uDCB0 ~"+itin.budget.total+"\u20AC</span>":"")
         +"</div></div>";
 
-      if (tP.recap) {
-        html += '<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:10px 14px;margin-top:8px;font-size:12.5px;color:#5b21b6;font-weight:600;line-height:1.5">'
-          +tP.recap+"</div>";
-      }
+      if (tP.recap) html += '<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:10px 14px;margin-top:6px;font-size:12.5px;color:#5b21b6;font-weight:600;line-height:1.5">'+tP.recap+"</div>";
 
       // Vols
       if (itin.flights&&itin.flights.out) {
-        const f = itin.flights;
-        const skyFrom = f.out.from||toIATA(itin.dep||infos.ville_depart||"")||"par";
-        const skyTo   = f.out.to||toIATA(itin.dest||infos.destination||"")||"xxx";
-        const sky = skyscannerLink(skyFrom, skyTo, finalCi, finalCo, finalAdults);
-        html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">\u2708\uFE0F Vols recommandes</div>'
+        const f  = itin.flights;
+        const sky = skyscannerLink(f.out.from||dep, f.out.to||dest, fCi, fCo, fAd);
+        html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">\u2708\uFE0F Vols</div>'
           +'<div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;overflow:hidden">'
-          +'<div style="padding:12px 14px;border-bottom:1px solid #f0f4ff">'
-          +'<div style="display:flex;justify-content:space-between;align-items:center">'
-          +'<div><div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">'
-          +"Aller"+(finalCi?" \u00B7 "+finalCi:"")+"</div>"
-          +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'
-          +f.out.from+" \u2192 "+f.out.to+"</div>"
+          +'<div style="padding:12px 14px;border-bottom:1px solid #f0f4ff;display:flex;justify-content:space-between;align-items:center">'
+          +'<div><div style="font-size:10px;font-weight:700;color:#7c89a8;text-transform:uppercase">Aller'+(fCi?" \u00B7 "+fCi:"")+"</div>"
+          +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'+(f.out.from||"")+" \u2192 "+(f.out.to||"")+"</div>"
           +'<div style="font-size:11px;color:#7c89a8">'+(f.out.co||"")+" \u00B7 "+(f.out.dur||"")+"</div></div>"
-          +'<div style="text-align:right">'
-          +'<div style="font-size:16px;font-weight:900;color:#2f54ff">~'+f.out.price+"EUR</div>"
-          +'<div style="font-size:10px;color:#7c89a8">/pers.</div></div></div></div>"';
-        if (f.ret) {
-          html += '<div style="padding:12px 14px">'
-            +'<div style="display:flex;justify-content:space-between;align-items:center">'
-            +'<div><div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">'
-            +"Retour"+(finalCo?" \u00B7 "+finalCo:"")+"</div>"
-            +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'
-            +f.ret.from+" \u2192 "+f.ret.to+"</div>"
+          +'<div style="text-align:right"><div style="font-size:17px;font-weight:900;color:#2f54ff">~'+(f.out.price||"?")+'\u20AC</div><div style="font-size:10px;color:#7c89a8">/pers.</div></div></div>'
+          +(f.ret?'<div style="padding:12px 14px;display:flex;justify-content:space-between;align-items:center">'
+            +'<div><div style="font-size:10px;font-weight:700;color:#7c89a8;text-transform:uppercase">Retour'+(fCo?" \u00B7 "+fCo:"")+"</div>"
+            +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'+(f.ret.from||"")+" \u2192 "+(f.ret.to||"")+"</div>"
             +'<div style="font-size:11px;color:#7c89a8">'+(f.ret.co||"")+" \u00B7 "+(f.ret.dur||"")+"</div></div>"
-            +'<div style="text-align:right">'
-            +'<div style="font-size:16px;font-weight:900;color:#2f54ff">~'+f.ret.price+"EUR</div>"
-            +'<div style="font-size:10px;color:#7c89a8">/pers.</div></div></div></div>';
-        }
-        html += "</div>";
-        html += '<a href="'+sky+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:12px;font-size:13px;font-weight:700;margin-top:6px">\uD83D\uDD0D Voir et reserver ces vols sur Skyscanner \u2192</a>';
+            +'<div style="text-align:right"><div style="font-size:17px;font-weight:900;color:#2f54ff">~'+(f.ret.price||"?")+'\u20AC</div><div style="font-size:10px;color:#7c89a8">/pers.</div></div></div>':"")
+          +"</div>"
+          +'<a href="'+sky+'" target="_blank" style="display:flex;justify-content:center;align-items:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:12px;font-size:13px;font-weight:700;margin-top:6px">\uD83D\uDD0D Voir et reserver sur Skyscanner \u2192</a>';
       }
 
-      // Hotels — Hotellook API (vrais prix affilies TP) ou fallback IA
-      // Hotellook API (vrais prix) → DeepSeek si vide → fallback IA itin
-      const realHotels = await fetchHotelPrices(itin.dest||"",finalCi,finalCo,finalAdults);
-      const dsHotels   = (!realHotels||!realHotels.length)
-        ? await fetchHotelPricesDeepSeek(itin.dest||"",finalCi,finalCo,finalAdults)
-        : null;
-      const hasReal = !!(realHotels&&realHotels.length);
-      const hasDS   = !hasReal&&!!(dsHotels&&dsHotels.length);
-      const hotelsShow = hasReal ? realHotels
-        : hasDS ? dsHotels
-        : (itin.hotels||[]).map(function(h,i){
-        return {
-          name:h.name, stars:h.stars||3, price:null,
-          loc:h.loc||itin.dest, hl:h.hl,
-          cat:["budget","confort","luxe"][i]||h.cat||"confort",
-          url:bookingTPLink(itin.dest||"",finalCi,finalCo,finalAdults, ["budget","confort","luxe"][i]||"confort")
-        };
-      });
+      // Hotels — Hotellook API → DeepSeek fallback → donnees IA
+      const rlHotels = await fetchHotelPrices(itin.dest||dest, fCi, fCo, fAd);
+      let hasReal = !!(rlHotels&&rlHotels.length);
+      let hotelsData = rlHotels;
+
+      // Si Hotellook vide → DeepSeek cherche les vrais prix
+      if (!hasReal && process.env.DEEPSEEK_API_KEY) {
+        const dsRaw = await deepseek(
+          "Tu es expert hotels. Donne les vrais prix d hotels pour : "+itin.dest+". JSON uniquement.",
+          "Hotels a "+(itin.dest||dest)+" du "+fCi+" au "+fCo+" pour "+fAd+" adultes. "
+          +"JSON: {hotels:[{name,stars,price,loc,cat:'budget'|'confort'|'luxe'}]}",
+          500
+        );
+        const dsData = parseJSON(dsRaw||"").hotels||[];
+        if (dsData.length>=2) {
+          hotelsData = dsData.slice(0,3).map(function(h,i){
+            return Object.assign({},h,{cat:h.cat||["budget","confort","luxe"][i],hl:["Meilleur prix","Confort ideal","Premium"][i]});
+          });
+        }
+      }
+
+      // Fallback : donnees IA de l itineraire
+      if (!hotelsData||!hotelsData.length) {
+        hotelsData = (itin.hotels||[]).map(function(h,i){
+          return Object.assign({},h,{cat:["budget","confort","luxe"][i]||h.cat||"confort"});
+        });
+      }
 
       html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">'
         +'\uD83C\uDFE8 Hebergements \u00B7 '
-        +(hasReal
-          ?'<span style="color:#16a34a;font-size:11px">Prix Booking \u2713</span>'
-          :hasDS
-          ?'<span style="color:#2f54ff;font-size:11px">Prix estimes IA</span>'
-          :'<span style="color:#7c89a8;font-size:11px">Selections IA</span>')
+        +(hasReal?'<span style="color:#16a34a;font-size:11px">Prix Booking verifies \u2713</span>'
+          :'<span style="color:#7c89a8;font-size:11px">Prix estimes</span>')
         +"</div>";
 
-      const htPrices = [];
-      for (const h of hotelsShow) {
-        if (h.price) htPrices.push(h.price);
-        const hLink = h.url||bookingTPLink(itin.dest||"",finalCi,finalCo,finalAdults,null);
-        html += cardHotel({
-          name:h.name, stars:h.stars,
-          price:h.price?String(h.price):null,
-          priceReal:hasReal&&!!h.price,
-          loc:h.loc||itin.dest, hl:h.hl, cat:h.cat
-        }, hLink);
+      for (const h of hotelsData.slice(0,3)) {
+        // Lien vers l hotel specifique, pas la destination generale
+        const hotelUrl = bookingHotelLink(h.name, itin.dest||dest, fCi, fCo, fAd);
+        html += cardHotel(h, hotelUrl, bookingLink(itin.dest||dest,fCi,fCo,fAd,null), hasReal);
       }
 
-      // Boutons Booking + Expedia — DEUX liens affilies TP
-      html += '<div style="font-size:11px;color:#7c89a8;font-weight:600;margin:10px 0 4px">\uD83D\uDD0D Voir plus de disponibilites :</div>'
-        +'<div style="display:flex;gap:8px">'
-        +'<a href="'+bookingTPLink(itin.dest||"",finalCi,finalCo,finalAdults,null)+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;gap:6px;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\uD83C\uDFE8 Booking.com</a>'
-        +'<a href="'+expediaTPLink(itin.dest||"",finalCi,finalCo,finalAdults)+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;gap:6px;background:linear-gradient(135deg,#00355f,#00a0e3);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\u2708\uFE0F Expedia.fr</a>'
+      html += '<div style="display:flex;gap:8px;margin-top:8px">'
+        +'<a href="'+bookingLink(itin.dest||dest,fCi,fCo,fAd,null)+'" target="_blank" rel="sponsored" '
+        +'style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\uD83C\uDFE8 Booking.com</a>'
+        +'<a href="'+expediaLink(itin.dest||dest,fCi,fCo,fAd)+'" target="_blank" rel="sponsored" '
+        +'style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#00355f,#00a0e3);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\u2708\uFE0F Expedia.fr</a>'
         +"</div>";
 
-      // GetTransfer
-      if (finalCi) {
-        html += '<a href="'+getTransferLink(itin.dest||"",finalCi)+'" target="_blank" rel="sponsored" '
-          +'style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:11px;margin-top:8px;font-size:12px;font-weight:700">'
-          +'\uD83D\uDE97 Transfert aeroport sans stress \u00B7 GetTransfer \u2192</a>';
-      }
+      if (fCi) html += '<a href="'+getTransferLink(itin.dest||dest,fCi)+'" target="_blank" rel="sponsored" style="display:flex;justify-content:center;align-items:center;gap:8px;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:11px;margin-top:8px;font-size:12px;font-weight:700">\uD83D\uDE97 Transfert aeroport \u00B7 GetTransfer \u2192</a>';
 
-      // Programme jour par jour
       if (itin.days&&itin.days.length) {
         html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">\uD83D\uDCC5 Programme jour par jour</div>';
         for (const d of itin.days) html += cardDay(d);
@@ -924,35 +693,14 @@ export default async function handler(req) {
       if (itin.budget) html += cardBudget(itin.budget);
       if (itin.tips&&itin.tips.length) html += cardTips(itin.tips);
 
-      // Wishlist + Export
-      const wData = JSON.stringify({
-        type:"voyage",
-        name:(itin.flag||"\u2708\uFE0F")+" "+(itin.dest||"")+(itin.country?", "+itin.country:""),
-        subtitle:(itin.dur||"")+" \u00B7 "+(itin.trav||finalAdults+" pers.")+" \u00B7 "+(itin.style||""),
-        price:itin.budget&&itin.budget.total?String(itin.budget.total)+"EUR":"",
-        store:"booking",
-        url:bookingTPLink(itin.dest||"",finalCi,finalCo,finalAdults,null),
-        flightUrl:itin.flights&&itin.flights.out?skyscannerLink(
-          itin.flights.out.from||"", itin.flights.out.to||"", finalCi, finalCo, finalAdults
-        ):"",
-        hotels:(itin.hotels||[]).slice(0,3).map(function(h,i){
-          return {
-            name:h.name||"",
-            cat:["budget","confort","luxe"][i]||"confort",
-            url:bookingTPLink(itin.dest||"",finalCi,finalCo,finalAdults,["budget","confort","luxe"][i])
-          };
-        }),
-        budget:itin.budget||null
-      }).replace(/"/g,"&quot;");
-
+      const wD = JSON.stringify({type:"voyage",name:(itin.flag||"\u2708\uFE0F")+" "+(itin.dest||""),
+        price:itin.budget&&itin.budget.total?itin.budget.total+"\u20AC":"",
+        url:bookingLink(itin.dest||dest,fCi,fCo,fAd,null)}).replace(/"/g,"&quot;");
       html += '<div style="display:flex;gap:8px;margin-top:12px">'
-        +'<button onclick="addToWishlist('+wData+')" style="flex:1;background:linear-gradient(135deg,#1f2da0,#2f54ff);border:none;color:#fff;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">\u2661 Sauvegarder ce voyage</button>'
-        +'<button onclick="exportItinerary(\''+itinId+'\')" style="background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">\u2B07\uFE0F Exporter PDF</button>'
+        +'<button onclick="addToWishlist('+wD+')" style="flex:1;background:linear-gradient(135deg,#1f2da0,#2f54ff);border:none;color:#fff;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">\u2661 Sauvegarder</button>'
+        +'<button onclick="exportItinerary(\''+itinId+'\')" style="background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">\u2B07\uFE0F PDF</button>'
         +"</div>";
 
-      if (body.trackingEnabled) {
-        sbFetch("searches","POST",{query:"[VOYAGE] "+message,session_id:sid,user_id:body.userId||null}).catch(function(){});
-      }
       return new Response(JSON.stringify({reply:html,sessionId:sid}),{headers:H});
     }
 
@@ -960,180 +708,146 @@ export default async function handler(req) {
     //  MODE PRODUIT
     // ══════════════════════════════════════════════════════════════════════════
 
-    // L IA reflechit comme un vrai conseiller, pas comme un formulaire
-    const prodSys = "Tu es le conseiller shopping de Huntify. Tu analyses ce que veut vraiment l utilisateur "
-      +"en lisant tout le contexte, et tu agis immediatement sans poser de questions inutiles.\n"
-      +"Si tu comprends le produit cherche (meme vaguement), tu generes direct : ready:true.\n"
-      +"Un seul mot suffit : mascara, casque, lampe, iphone... tu cherches sans demander.\n"
-      +"Tu ne demandes JAMAIS la couleur, la marque exacte, ou des details techniques.\n"
-      +"Tu poses UNE question seulement si la demande est vraiment incomprehensible.\n"
-      +"Si une question a deja ete posee dans l historique : ready:true obligatoirement.\n"
-      +"Reponds en JSON : {ready:true, recap:'description concise du produit + budget si mentionne'} "
-      +"ou {ready:false, msg:'question courte et naturelle'}";
+    // Etape 1 : Groq comprend la demande en lisant toute la conversation
+    const ctxMsg = hist
+      ? "Conversation:\n"+hist+"\n\nNouveau message: "+message
+      : "Demande: "+message;
 
-    const prodUser = "Historique :\n"+histS+"\n\nMessage : "+message;
+    const intentRaw = await groq(
+      "Tu es conseiller shopping Huntify. Lis toute la conversation et deduis le produit exact cherche "
+      +"avec TOUS les criteres mentionnes (type, caracteristiques, budget). "
+      +"ready:true si tu comprends (meme vaguement). "
+      +"JSON: {ready:bool, recap:'produit exact avec tous les criteres', msg:'question si vraiment incomprehensible'}",
+      ctxMsg, 300
+    ) || await gemini("Shopping conseiller. JSON: {ready:bool,recap:string,msg:string}\n\n"+ctxMsg, 300);
 
-    const prodDecision = parseJSON(
-      await groq(prodSys, prodUser, 300)
-      || await gemini(prodSys+"\n\n"+prodUser, 300)
-      || await mistral(prodSys, prodUser, 300)
-      || "{}"
-    );
+    const intent = parseJSON(intentRaw||"");
 
-    if (!prodDecision.ready && prodDecision.msg && history.length < 3) {
+    if (!intent.ready && intent.msg && history.length < 2) {
       return new Response(JSON.stringify({
-        reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+prodDecision.msg+"</div>",
+        reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+intent.msg+"</div>",
         sessionId:sid
       }),{headers:H});
     }
 
-    const recap = (prodDecision.ready&&prodDecision.recap)
-      ? prodDecision.recap
-      : (formatHistory(history,300)+" "+message).trim();
-
+    const recap = intent.recap || (histS+" "+message).trim().slice(0,200);
     const dbCtx = await dbLookup(recap);
-    const budgetNum = parseInt(((recap+" "+histS).match(/(\d+)\s*(?:EUR|euros?)/i)||[0,"0"])[1])||0;
-    const isPremium = budgetNum>=100
-      ||/cadeau|premium|luxe|meilleur|haute gamme|qualite/.test((recap+" "+histS).toLowerCase())
-      ||history.length>=4;
 
-    // ── RECHERCHE PRODUIT — Strategie intelligente low-cost ────────────────
-    // 1. Groq DeepSearch cherche les produits (gratuit)
-    // 2. On valide : ASIN reel ? Prix coherent ? Pas invente ?
-    // 3. Claude web_search SEULEMENT si Groq echoue la validation
-    //    = Claude appele ~20% du temps seulement, pas systematiquement
+    // Etape 2 : Groq DeepSearch cherche les vrais produits avec ASINs
+    const searchPrompt = "Recherche sur amazon.fr les meilleurs produits pour : "+recap+".\n"
+      +(dbCtx?"Donnees: "+dbCtx+"\n":"")
+      +"IMPORTANT: ne retourne un ASIN (URL /dp/B+9chars) que si tu es CERTAIN qu il existe.\n"
+      +"Si incertain : url:null (le systeme fera une recherche a la place, c est ok).\n"
+      +"Prix : vrai prix amazon.fr. Si inconnu : null.\n"
+      +"Rakuten : 1 produit, url:null est ok.\n"
+      +"JSON: {summary:string, "
+      +"products:[{name,price:string|null,store:'amazon'|'rakuten',keywords,url:string|null,badge}], "
+      +"promoCodes:[{code,store,discount,best:bool}]}";
 
-    // Contexte complet de la conversation pour que l IA comprenne l evolution de la demande
-    const convContext = hist ? "Conversation precedente :\n"+hist+"\n\n" : "";
+    const groqRaw  = await groqSearch(searchPrompt, 1200);
+    const groqData = parseJSON(groqRaw||"");
+    let products   = groqData.products||[];
+    let summary    = groqData.summary||"";
+    let promos     = groqData.promoCodes||[];
 
-    const groqProdPrompt = convContext
-      +"Demande actuelle : "+recap+"\n"
-      +(dbCtx?"Donnees internes : "+dbCtx+"\n":"")
-      +"Tu dois tenir compte de TOUS les criteres mentionnes dans la conversation.\n"
-      +"Exemple : si l utilisateur a dit 'couvrant et lumineux' puis 'budget 40 euros', cherche un fond de teint couvrant lumineux a moins de 40 euros.\n\n"
-      +"Cherche sur amazon.fr des produits correspondant exactement a ces criteres.\n"
-      +"ASIN : B + 9 caracteres alphanumeriques EXACTS. Si tu n es pas certain, mets url:null.\n"
-      +"Prix : le vrai prix amazon.fr en EUR. Si inconnu : null.\n"
-      +"Trouve aussi 1 produit rakuten adapte aux criteres.\n"
-      +"JSON: {summary:'phrase qui resume bien la recherche avec les criteres', products:[{name:string, price:string|null, store:'amazon'|'rakuten', keywords:string, url:string|null, badge:string}], promoCodes:[{code,store,discount,best}]}\n"
-      +"JSON uniquement.";
-
-    const groqRaw = await groqSearch(groqProdPrompt, 1200);
-    const groqParsed = parseJSON(groqRaw||"");
-    let products = groqParsed.products||[];
-    let summary  = groqParsed.summary||"";
-    let promos   = groqParsed.promoCodes||[];
-
-    // ── VALIDATION Groq : detecte les inventions ──────────────────────────────
-    // Groq invente quand : ASIN inexistant, prix aberrant, URL mal formee
-    const amazonFromGroq = products.filter(function(p){
-      return (p.store||"").toLowerCase().includes("amazon");
-    });
-
-    const validAsinGroq = amazonFromGroq.filter(function(p){
-      // ASIN valide : B + exactement 9 chars alphanumeriques
-      if (!p.url) return false;
-      const m = p.url.match(/\/dp\/(B[A-Z0-9]{9})(?:[/?]|$)/);
-      if (!m) return false;
-      // Prix coherent : nombre entre 1 et 9999
-      const pNum = parseFloat((p.price||"0").replace(/[^0-9,.]/g,"").replace(",","."));
-      return pNum > 0.5 && pNum < 9999;
-    });
-
-    // Groq a invente = il a retourne une URL non-null avec un ASIN invalide
-    // Groq honnete = il a mis url:null quand il ne savait pas (on garde ses produits + lien search)
-    const groqLiedAsin = amazonFromGroq.some(function(p){
-      return p.url && p.url !== "null" && p.url.length > 10
+    // Etape 3 : Detecte si Groq a invente un ASIN
+    // Invente = URL non-null mais format ASIN invalide
+    // Honnete = URL null (on utilise /s?k= → pas de pb)
+    const groqLied = products.some(function(p){
+      return (p.store||"").includes("amazon")
+        && p.url && p.url!=="null" && p.url.length>5
         && !/\/dp\/B[A-Z0-9]{9}/.test(p.url);
     });
-    // Prix invente = Groq a mis un prix mais url:null (prix hallucine sans source)
-    // Dans ce cas on garde le nom mais on efface le prix
-    for (const p of amazonFromGroq) {
-      if (!p.url || p.url === "null") p.price = null; // prix sans ASIN = invente
-    }
 
-    // ── Claude web_search : UNIQUEMENT si Groq a menti sur les ASINs ─────────
-    // Si Groq a mis url:null honnêtement → on n appelle PAS Claude, on fait juste un lien /s?k=
-    let claudeProds = [];
-    if (groqLiedAsin) {
-      const claudeRaw = await claude(
-        "Cherche sur amazon.fr : "+recap
-        +". JSON uniquement: {products:[{name,price,store:'amazon',keywords,url,badge}]}",
-        "Trouve les vrais ASINs. URL: https://www.amazon.fr/dp/B0XXXXXXXXX",
-        500,
-        [{type:"web_search_20250305", name:"web_search", max_uses:2}]
-      );
-      claudeProds = parseJSON(claudeRaw||"").products||[];
-    }
-
-    // ── FUSION : meilleur de Groq + correctif Claude ──────────────────────────
-    // Amazon : ASINs valides de Claude en priorite, puis Groq valides, puis Groq sans ASIN
-    const claudeAmazon = claudeProds.filter(function(p){
-      return (p.store||"").toLowerCase().includes("amazon")
-        && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url);
+    // Efface les prix sur produits sans ASIN (prix sans source = invente)
+    products.forEach(function(p){
+      if ((p.store||"").includes("amazon") && (!p.url||p.url==="null")) {
+        p.price = null;
+      }
     });
 
-    const finalAmazon = claudeAmazon.length ? claudeAmazon.slice(0,2)
-      : validAsinGroq.length ? validAsinGroq.slice(0,2)
-      : amazonFromGroq.slice(0,2);  // Garde quand meme pour afficher avec lien search
+    // Etape 4 : Claude web_search SEULEMENT si Groq a invente
+    if (groqLied) {
+      const cRaw = await claudeAI(
+        "Agent shopping. Cherche sur amazon.fr : "+recap+". JSON: {products:[{name,price,store:'amazon',keywords,url,badge}]}",
+        "Trouve les vrais ASINs (URL: https://www.amazon.fr/dp/B0XXXXXXXXX). JSON uniquement.",
+        500,
+        [{type:"web_search_20250305",name:"web_search",max_uses:2}]
+      );
+      const cProds = parseJSON(cRaw||"").products||[];
+      const validC = cProds.filter(function(p){return p.url&&/\/dp\/B[A-Z0-9]{9}/.test(p.url);});
+      if (validC.length) {
+        // Remplace seulement les produits Amazon par ceux de Claude
+        products = products.filter(function(p){return !(p.store||"").includes("amazon");});
+        products = validC.concat(products);
+        if (!summary && parseJSON(cRaw||"").summary) summary = parseJSON(cRaw||"").summary;
+      }
+    }
 
-    // Rakuten : Groq puis Claude (Groq est generalement bon pour Rakuten)
-    const finalRakuten = products.filter(function(p){
-      return (p.store||"").toLowerCase().includes("rakuten");
-    }).slice(0,1);
+    // Garantit Amazon + Rakuten
+    if (!products.some(function(p){return (p.store||"").includes("amazon");})) {
+      products.unshift({name:recap,price:null,store:"amazon",keywords:recap,url:null,badge:"Meilleure vente"});
+    }
+    if (!products.some(function(p){return (p.store||"").includes("rakuten");})) {
+      products.push({name:recap,price:null,store:"rakuten",keywords:recap,url:null,badge:"Bon plan"});
+    }
 
-    products = finalAmazon.concat(finalRakuten);
-
+    // Etape 5 : Rendu cartes produits
     let buttons = "";
     for (const pr of products.slice(0,4)) {
       if (!pr.name) continue;
-      let adv = findAdv(advertisers, pr.store);
-      if (!adv) {
-        if ((pr.store||"").toLowerCase().includes("amazon")) {
-          adv = {slug:"amazon", name:"Amazon", emoji:"\uD83D\uDED2", color:"#e47911", active:true};
-        } else if ((pr.store||"").toLowerCase().includes("rakuten")) {
-          adv = {slug:"rakuten", name:"Rakuten", emoji:"\uD83D\uDECD\uFE0F", color:"#bf0000", active:true, awin_mid:RAKUTEN_MID};
-        } else {
-          continue;
-        }
+      const isAmazon  = (pr.store||"").includes("amazon");
+      const isRakuten = (pr.store||"").includes("rakuten");
+      if (!isAmazon && !isRakuten) continue;
+
+      // Extrait ASIN si present
+      const asinMatch = pr.url&&pr.url.match(/\/dp\/(B[A-Z0-9]{9})/);
+      const asin = asinMatch?asinMatch[1]:null;
+      const kw   = pr.keywords||pr.name;
+
+      let url, color, emoji, storeName;
+      if (isAmazon) {
+        url = amazonLink(kw, asin);
+        color="#e47911"; emoji="\uD83D\uDED2"; storeName="Amazon";
+        // Verif depuis Supabase advertisers
+        const advA = adv.find(function(a){return a.slug==="amazon";});
+        if (advA&&advA.amazon_tag) url = amazonLink(kw,asin).replace(AMAZON_TAG,advA.amazon_tag);
+      } else {
+        url = rakutenLink(kw);
+        color="#bf0000"; emoji="\uD83D\uDECD\uFE0F"; storeName="Rakuten";
       }
-      const rawUrl = (pr.url && pr.url !== "null" && pr.url.length > 15) ? pr.url : null;
-      const kw = pr.name.length > 5 ? pr.name : (pr.keywords || pr.name);
-      const url = buildLink(adv, kw, rawUrl);
-      if (!url) continue;
-      // Affiche le vrai prix si dispo, sinon "Voir prix"
-      const displayPrice = (pr.price && pr.price !== "null" && pr.price !== "undefined" && pr.price.length > 0)
-        ? pr.price : "Voir prix";
-      buttons += cardProduct(pr.name, displayPrice, url, adv, pr.img||null, pr.badge||null);
+
+      const price = pr.price&&pr.price!=="null"&&pr.price!=="undefined"&&pr.price!=="0"
+        ? pr.price : null;
+      buttons += cardProduct(pr.name, price, url, storeName, color, emoji, pr.badge||null);
     }
 
     let promoHtml = "";
-    for (const c of promos.sort(function(a,b){return (b.best?1:0)-(a.best?1:0);}).slice(0,2)) {
-      promoHtml += promoBox(c.code, c.store||"boutique", c.discount||"Reduction exclusive", c.best||false);
+    for (const c of (promos||[]).filter(function(c){return c&&c.code;}).sort(function(a,b){return (b.best?1:0)-(a.best?1:0);}).slice(0,2)) {
+      promoHtml += promoBox(c.code, c.store||"boutique", c.discount||"Reduction", c.best||false);
     }
 
-    const first = products.find(function(p){return (p.store||"").toLowerCase().includes("amazon");})||products[0];
+    if (!summary) summary = "Voici ma selection pour "+recap+" :";
+
+    const firstAmazon = products.find(function(p){return (p.store||"").includes("amazon");});
     let wishHtml = "";
-    if (first) {
-      const adv0 = findAdv(advertisers, first.store)||{slug:"amazon", name:"Amazon", color:"#e47911", active:true};
-      const wUrl = buildLink(adv0, first.keywords||first.name, first.url||null)||"";
-      const wD = JSON.stringify({type:"product", name:first.name, price:first.price, store:first.store, url:wUrl}).replace(/"/g,"&quot;");
-      wishHtml = '<button onclick="addToWishlist('+wD+')" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">\u2661 Ajouter a ma wishlist</button>';
+    if (firstAmazon) {
+      const asinM = firstAmazon.url&&firstAmazon.url.match(/\/dp\/(B[A-Z0-9]{9})/);
+      const wUrl  = amazonLink(firstAmazon.keywords||firstAmazon.name, asinM?asinM[1]:null);
+      const wD    = JSON.stringify({type:"product",name:firstAmazon.name,price:firstAmazon.price,store:"amazon",url:wUrl}).replace(/"/g,"&quot;");
+      wishHtml = '<button onclick="addToWishlist('+wD+')" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:9px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">\u2661 Ajouter a ma wishlist</button>';
     }
 
     return new Response(JSON.stringify({
-      reply:'<div style="font-size:13.5px;color:#1e293b;margin-bottom:8px;font-weight:500;line-height:1.5">'
-        +summary+"</div>"
-        +buttons
-        +(promoHtml?'<div style="margin-top:4px">'+promoHtml+"</div>":"")
-        +wishHtml,
+      reply:'<div style="font-size:13.5px;color:#1e293b;margin-bottom:8px;font-weight:500;line-height:1.5">'+summary+"</div>"
+        +buttons+(promoHtml?'<div style="margin-top:4px">'+promoHtml+"</div>":"")+wishHtml,
       sessionId:sid
     }),{headers:H});
 
   } catch(err) {
-    console.error("Huntify error:", err&&err.message);
+    console.error("Huntify error:", err&&err.message, err&&err.stack);
     return new Response(JSON.stringify({
-      reply:'<div style="font-size:13px;color:#1e293b">Desole, un probleme momentane. Reessayez dans quelques secondes !</div>'
-    }),{status:200,headers:{"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"}});
+      reply:'<div style="font-size:13px;color:#1e293b">Une erreur est survenue, reessayez !</div>'
+    }),{status:200,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
   }
 }
