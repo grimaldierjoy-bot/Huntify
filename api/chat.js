@@ -538,38 +538,193 @@ export default async function handler(req) {
     // ══════════════════════════════════════════════════════════════════════════
     if (isTravel) {
 
-      // Groq DeepSearch lit tout et decide en une seule passe intelligente
-      // Prompts naturels — pas de liste rigide, l IA reflechit vraiment
-      const groqDecidePrompt = "Tu es l assistant voyage de Huntify, expert et chaleureux.\n"
-        +"Aujourd hui nous sommes le "+today+".\n\n"
-        +"Voici toute la conversation jusqu ici :\n"+hist+"\n\n"
-        +"Nouveau message : "+message+"\n\n"
-        +"Reflechis comme un vrai conseiller voyage. Tu dois comprendre le contexte : destination demandee, "
-        +"d ou la personne part (ex: marseille, depuis nice, je suis a lyon...), les dates ou la duree souhaitee, "
-        +"le nombre de voyageurs, le budget si donne, le style de voyage.\n\n"
-        +"Les fautes de frappe sont normales : marseilel = Marseille, rome = Rome, barcelon = Barcelone. Corrige-les.\n\n"
-        +"Si tu as assez d infos pour planifier (destination + depart + duree/dates), reponds avec action generate.\n"
-        +"S il manque une info vraiment essentielle et qu elle n a pas deja ete demandee, pose UNE question courte et naturelle.\n"
-        +"Apres 3 echanges, genere quoi qu il arrive avec ce qu on a.\n\n"
-        +"Reponds en JSON uniquement :\n"
-        +"Si question : {action:'question', msg:'ta question naturelle courte'}\n"
-        +"Si generation : {action:'generate', infos:{destination:string, ville_depart:string, nb_adultes:number, checkin:string, checkout:string, duree:string, budget:string, style:string}}";
+      // ── DETECTION : l utilisateur veut des propositions ? ─────────────────
+      const wantsSuggestions = /je ne sais pas|pas d.id[eé]e|propose[sz]?|suggestion|id[eé]e|surprise|tu choisis|choisis pour|qu est.ce que tu|recommande/i.test(message);
+      const msgLower = (hist+" "+message).toLowerCase();
 
-      const decision = parseJSON(
-        await groqSearch(groqDecidePrompt, 800)
-        || await freeAI("Reponds en JSON valide.", groqDecidePrompt, 800)
-        || "{}"
+      // Extrait les infos deja connues de la conversation
+      const knownInfos = parseJSON(
+        await groq(
+          "Lis cette conversation et extrais les infos voyage connues en JSON.\n"
+          +"Reponds UNIQUEMENT en JSON : {ville_depart:string|null, checkin:string|null, checkout:string|null, duree:string|null, nb_adultes:number|null, budget:string|null, style:string|null, destination:string|null}\n"
+          +"Si une info n est pas mentionnee, mets null. Dates au format YYYY-MM-DD si possible.",
+          "Conversation :\n"+hist+"\nMessage : "+message,
+          400
+        ) || "{}"
       );
 
-      if (decision.action==="question" && decision.msg) {
-        return new Response(JSON.stringify({
-          reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+decision.msg+"</div>",
-          sessionId:sid
-        }),{headers:H});
+      // ── CAS 1 : l utilisateur veut des propositions → l IA choisit une destination ──
+      if (wantsSuggestions || !knownInfos.destination) {
+        const dep     = knownInfos.ville_depart||"France";
+        const budget  = knownInfos.budget||"2000EUR";
+        const ciK     = knownInfos.checkin||ci;
+        const coK     = knownInfos.checkout||co;
+        const dureeK  = knownInfos.duree||"4 jours";
+        const styleK  = knownInfos.style||"romantique en amoureux";
+        const adultK  = knownInfos.nb_adultes||2;
+
+        // L IA choisit la meilleure destination selon le contexte et genere directement
+        const propPrompt = "Tu es le conseiller voyage Huntify, passionne et expert.\n"
+          +"Un couple part depuis "+dep+" pour un sejour "
+          +(ciK?"du "+ciK+" au "+(coK||""):"de "+dureeK)
+          +", budget "+budget+", style : "+styleK+".\n\n"
+          +"Utilise tes capacites de recherche web pour :\n"
+          +"1. Choisir LA meilleure destination depuis "+dep+" pour ce profil (accessible, pas chere en vol, romantique)\n"
+          +"2. Verifier les vrais prix de vols depuis "+dep+" pour ces dates\n"
+          +"3. Trouver de vrais hotels avec vrais prix\n"
+          +"4. Trouver les meilleurs restaurants locaux avec vrais prix\n\n"
+          +"Destinations ideales depuis "+dep+" avec budget "+budget+" : Lisbonne, Porto, Rome, Florence, Prague, Dubrovnik, Majorque, Santorin, Marrakech...\n"
+          +"Choisis celle avec le meilleur rapport qualite/prix/romantisme pour les dates demandees.\n\n"
+          +"Genere un JSON complet :\n"
+          +"{\n"
+          +"  t: 'i',\n"
+          +"  recap: 'phrase enthousiaste expliquant pourquoi tu as choisi cette destination',\n"
+          +"  itin: {\n"
+          +"    dest:string, country:string, flag:string, dur:string, trav:string, style:string, dep:string,\n"
+          +"    checkin:'YYYY-MM-DD', checkout:'YYYY-MM-DD', adults:number,\n"
+          +"    flights:{ out:{from:string,to:string,price:number,co:string,dur:string}, ret:{from:string,to:string,price:number,co:string,dur:string} },\n"
+          +"    hotels:[ {name:string,stars:number,price:number,loc:string,hl:string,cat:'budget'|'confort'|'luxe'} x3 ],\n"
+          +"    days:[ {n:number,title:string,am:string,pm:string,eve:string,resto:{name:string,price:string,spec:string},acts:[string],budget:number} ],\n"
+          +"    budget:{vols:number,hotel:number,acts:number,resto:number,transport:number,total:number,pp:number},\n"
+          +"    tips:[4 conseils specifiques et pratiques]\n"
+          +"  }\n"
+          +"}\n"
+          +"IATA : Paris=CDG, Marseille=MRS, Nice=NCE, Lyon=LYS, Bordeaux=BOD, Barcelone=BCN, "
+          +"Rome=FCO, Florence=FLR, Lisbonne=LIS, Porto=OPO, Prague=PRG, Dubrovnik=DBV, "
+          +"Majorque=PMI, Santorin=JTR, Marrakech=RAK, Amsterdam=AMS, Budapest=BUD.\n"
+          +"JSON uniquement.";
+
+        // Cascade DeepSeek prioritaire ici car meilleur en raisonnement multi-etapes
+        let propRaw = await groqSearch(propPrompt, 4000);
+        if (!propRaw || !parseJSON(propRaw).itin) propRaw = await deepseek("Tu es expert voyage. JSON uniquement.", propPrompt, 3500);
+        if (!propRaw || !parseJSON(propRaw).itin) propRaw = await mistral("Tu es expert voyage. JSON uniquement.", propPrompt, 3000);
+        if (!propRaw || !parseJSON(propRaw).itin) propRaw = await gemini("Tu es expert voyage. Reponds en JSON uniquement.\n\n"+propPrompt, 3000);
+        if (!propRaw || !parseJSON(propRaw).itin) propRaw = await claude("Tu es expert voyage. JSON uniquement.", propPrompt, 3000, []);
+
+        const propP = parseJSON(propRaw||"");
+        if (propP.itin) {
+          // Injecte dans decision pour le rendu commun ci-dessous
+          const pi = propP.itin;
+          knownInfos.destination   = pi.dest||"";
+          knownInfos.ville_depart  = pi.dep||dep;
+          knownInfos.nb_adultes    = pi.adults||adultK;
+          knownInfos.checkin       = pi.checkin||ciK;
+          knownInfos.checkout      = pi.checkout||coK;
+          // Rendu direct — on court-circuite le bloc generation standard
+          const fCi = pi.checkin||ciK||"";
+          const fCo = pi.checkout||coK||"";
+          const fAd = pi.adults||adultK;
+          const itinId2 = "itin_"+Date.now();
+          let html2 = "";
+
+          html2 += '<div id="'+itinId2+'" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:18px;margin-bottom:4px;text-align:center">'
+            +'<div style="font-size:32px;margin-bottom:6px">'+(pi.flag||"\u2708\uFE0F")+"</div>"
+            +'<div style="font-family:sans-serif;font-size:20px;font-weight:800;color:#fff">'+(pi.dest||"")+(pi.country?", "+pi.country:"")+"</div>"
+            +'<div style="font-size:12px;color:rgba(255,255,255,.75);margin-top:6px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap">'
+            +"<span>\uD83D\uDCC5 "+(pi.dur||"")+"</span><span>\uD83D\uDC65 "+(pi.trav||fAd+" pers.")+"</span>"
+            +(pi.dep?"<span>\uD83D\uDEEB Depuis "+pi.dep+"</span>":"")
+            +(pi.budget&&pi.budget.total?"<span>\uD83D\uDCB0 ~"+pi.budget.total+"EUR / 2 pers.</span>":"")
+            +"</div></div>";
+
+          if (propP.recap) {
+            html2 += '<div style="background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:12px 14px;margin-top:8px;font-size:13px;color:#5b21b6;font-weight:600;line-height:1.6">'
+              +"\uD83D\uDCA1 "+propP.recap+"</div>";
+          }
+
+          if (pi.flights&&pi.flights.out) {
+            const f2 = pi.flights;
+            const sky2 = skyscannerLink(f2.out.from||dep,f2.out.to||pi.dest||"",fCi,fCo,fAd);
+            html2 += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:14px 0 6px">\u2708\uFE0F Vols depuis '+dep+'</div>'
+              +'<div style="background:#fff;border:1.5px solid #e6ebf7;border-radius:14px;overflow:hidden">'
+              +'<div style="padding:12px 14px;border-bottom:1px solid #f0f4ff">'
+              +'<div style="display:flex;justify-content:space-between;align-items:center">'
+              +'<div><div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Aller'+(fCi?" \u00B7 "+fCi:"")+"</div>"
+              +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'+f2.out.from+" \u2192 "+f2.out.to+"</div>"
+              +'<div style="font-size:11px;color:#7c89a8">'+(f2.out.co||"")+" \u00B7 "+(f2.out.dur||"")+"</div></div>"
+              +'<div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">~'+f2.out.price+"EUR</div>"
+              +'<div style="font-size:10px;color:#7c89a8">/pers.</div></div></div></div>"'
+              +(f2.ret?'<div style="padding:12px 14px">'
+                +'<div style="display:flex;justify-content:space-between;align-items:center">'
+                +'<div><div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">Retour'+(fCo?" \u00B7 "+fCo:"")+"</div>"
+                +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'+f2.ret.from+" \u2192 "+f2.ret.to+"</div>"
+                +'<div style="font-size:11px;color:#7c89a8">'+(f2.ret.co||"")+" \u00B7 "+(f2.ret.dur||"")+"</div></div>"
+                +'<div style="text-align:right"><div style="font-size:16px;font-weight:900;color:#2f54ff">~'+f2.ret.price+"EUR</div>"
+                +'<div style="font-size:10px;color:#7c89a8">/pers.</div></div></div></div>':"")
+              +"</div>"
+              +'<a href="'+sky2+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:12px;font-size:13px;font-weight:700;margin-top:6px">\uD83D\uDD0D Confirmer ces vols sur Skyscanner \u2192</a>';
+          }
+
+          const realH2 = await fetchHotelPrices(pi.dest||"",fCi,fCo,fAd);
+          const hasR2  = !!(realH2&&realH2.length);
+          const hotShow2 = hasR2 ? realH2 : (pi.hotels||[]).map(function(h,i){
+            return {name:h.name,stars:h.stars||3,price:null,loc:h.loc||pi.dest,hl:h.hl,
+              cat:["budget","confort","luxe"][i]||"confort",
+              url:bookingTPLink(pi.dest||"",fCi,fCo,fAd,["budget","confort","luxe"][i])};
+          });
+
+          html2 += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">\uD83C\uDFE8 Hebergements romantiques</div>';
+          for (const h of hotShow2) {
+            const hLnk = h.url||bookingTPLink(pi.dest||"",fCi,fCo,fAd,null);
+            html2 += cardHotel({name:h.name,stars:h.stars,price:h.price?String(h.price):null,priceReal:hasR2&&!!h.price,loc:h.loc||pi.dest,hl:h.hl,cat:h.cat},hLnk);
+          }
+
+          html2 += '<div style="display:flex;gap:8px;margin-top:8px">'
+            +'<a href="'+bookingTPLink(pi.dest||"",fCi,fCo,fAd,null)+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;gap:6px;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\uD83C\uDFE8 Booking.com</a>'
+            +'<a href="'+expediaTPLink(pi.dest||"",fCi,fCo,fAd)+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;gap:6px;background:linear-gradient(135deg,#00355f,#00a0e3);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\u2708\uFE0F Expedia.fr</a>'
+            +"</div>";
+
+          if (fCi) {
+            html2 += '<a href="'+getTransferLink(pi.dest||"",fCi)+'" target="_blank" rel="sponsored" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:11px;margin-top:8px;font-size:12px;font-weight:700">\uD83D\uDE97 Transfert aeroport \u00B7 GetTransfer \u2192</a>';
+          }
+
+          if (pi.days&&pi.days.length) {
+            html2 += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">\uD83D\uDCC5 Programme romantique jour par jour</div>';
+            for (const d of pi.days) html2 += cardDay(d);
+          }
+
+          if (pi.budget) html2 += cardBudget(pi.budget);
+          if (pi.tips&&pi.tips.length) html2 += cardTips(pi.tips);
+
+          const wD2 = JSON.stringify({
+            type:"voyage", name:(pi.flag||"\u2708\uFE0F")+" "+(pi.dest||"")+(pi.country?", "+pi.country:""),
+            subtitle:(pi.dur||"")+" \u00B7 en amoureux \u00B7 "+(pi.style||"romantique"),
+            price:pi.budget&&pi.budget.total?String(pi.budget.total)+"EUR":"",
+            store:"booking", url:bookingTPLink(pi.dest||"",fCi,fCo,fAd,null),
+            budget:pi.budget||null
+          }).replace(/"/g,"&quot;");
+
+          html2 += '<div style="display:flex;gap:8px;margin-top:12px">'
+            +'<button onclick="addToWishlist('+wD2+')" style="flex:1;background:linear-gradient(135deg,#1f2da0,#2f54ff);border:none;color:#fff;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">\u2661 Sauvegarder ce voyage</button>'
+            +'<button onclick="exportItinerary(\''+itinId2+'\')" style="background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">\u2B07\uFE0F Exporter PDF</button>'
+            +"</div>";
+
+          return new Response(JSON.stringify({reply:html2,sessionId:sid}),{headers:H});
+        }
+        // Si l IA n a pas pu generer un itineraire complet → on continue avec le flux normal
+        // en forcant une destination populaire par defaut
+        if (!knownInfos.destination) knownInfos.destination = "Lisbonne";
+      }
+
+      // ── CAS 2 : destination connue → extraction et generation standard ──
+      const groqDecidePrompt = "Tu es l assistant voyage de Huntify, expert et chaleureux.\n"
+        +"Aujourd hui : "+today+". Conversation :\n"+hist+"\nMessage : "+message+"\n\n"
+        +"Extrais les infos et genere IMMEDIATEMENT (la destination est connue : "+(knownInfos.destination||"")+")\n"
+        +"Reponds en JSON : {action:'generate', infos:{destination:string, ville_depart:string, nb_adultes:number, "
+        +"checkin:string, checkout:string, duree:string, budget:string, style:string}}";
+
+      const decision = parseJSON(
+        await groq("Reponds en JSON uniquement.", groqDecidePrompt, 500)
+        || JSON.stringify({action:"generate", infos:knownInfos})
+      );
+
+      // Fallback solide : si pas de decision claire on force la generation avec ce qu on a
+      if (decision.action!=="generate") {
+        decision.action = "generate";
+        decision.infos  = knownInfos;
       }
 
       // Generation itineraire
-      const infos = decision.infos||{};
+      const infos = decision.infos||knownInfos;
       const adults = parseInt(infos.nb_adultes)||2;
       const ci = parseDate(infos.checkin||null);
       const nightsRaw = (infos.duree||"3 jours").match(/\d+/);
