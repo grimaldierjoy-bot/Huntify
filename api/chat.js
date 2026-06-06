@@ -898,10 +898,179 @@ export default async function handler(req) {
       return new Response(JSON.stringify({reply:html,sessionId:sid}),{headers:H});
     }
 
-    // MODE PRODUIT (inchangé)
-    // ... (le reste du code produit reste identique)
+// ══════════════════════════════════════════════════════════════════════════
+    //  MODE PRODUIT
+    // ══════════════════════════════════════════════════════════════════════════
 
-    // (Pour éviter de dépasser la limite de tokens, je m'arrête ici. Le mode produit est identique à l'original.)
+    // L IA reflechit comme un vrai conseiller, pas comme un formulaire
+    const prodSys = "Tu es le conseiller shopping de Huntify. Tu analyses ce que veut vraiment l utilisateur "
+      +"en lisant tout le contexte, et tu agis immediatement sans poser de questions inutiles.\n"
+      +"Si tu comprends le produit cherche (meme vaguement), tu generes direct : ready:true.\n"
+      +"Un seul mot suffit : mascara, casque, lampe, iphone... tu cherches sans demander.\n"
+      +"Tu ne demandes JAMAIS la couleur, la marque exacte, ou des details techniques.\n"
+      +"Tu poses UNE question seulement si la demande est vraiment incomprehensible.\n"
+      +"Si une question a deja ete posee dans l historique : ready:true obligatoirement.\n"
+      +"Reponds en JSON : {ready:true, recap:'description concise du produit + budget si mentionne'} "
+      +"ou {ready:false, msg:'question courte et naturelle'}";
+
+    const prodUser = "Historique :\n"+histS+"\n\nMessage : "+message;
+
+    const prodDecision = parseJSON(
+      await groq(prodSys, prodUser, 300)
+      || await gemini(prodSys+"\n\n"+prodUser, 300)
+      || await mistral(prodSys, prodUser, 300)
+      || "{}"
+    );
+
+    if (!prodDecision.ready && prodDecision.msg && history.length < 3) {
+      return new Response(JSON.stringify({
+        reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+prodDecision.msg+"</div>",
+        sessionId:sid
+      }),{headers:H});
+    }
+
+    const recap = (prodDecision.ready&&prodDecision.recap)
+      ? prodDecision.recap
+      : (formatHistory(history,300)+" "+message).trim();
+
+    const dbCtx = await dbLookup(recap);
+    const budgetNum = parseInt(((recap+" "+histS).match(/(\d+)\s*(?:EUR|euros?)/i)||[0,"0"])[1])||0;
+    const isPremium = budgetNum>=100
+      ||/cadeau|premium|luxe|meilleur|haute gamme|qualite/.test((recap+" "+histS).toLowerCase())
+      ||history.length>=4;
+
+    // ── RECHERCHE PRODUIT — Strategie intelligente low-cost ────────────────
+    // 1. Groq DeepSearch cherche les produits (gratuit)
+    // 2. On valide : ASIN reel ? Prix coherent ? Pas invente ?
+    // 3. Claude web_search SEULEMENT si Groq echoue la validation
+    //    = Claude appele ~20% du temps seulement, pas systematiquement
+
+    // Contexte complet de la conversation pour que l IA comprenne l evolution de la demande
+    const convContext = hist ? "Conversation precedente :\n"+hist+"\n\n" : "";
+
+    const groqProdPrompt = convContext
+      +"Demande actuelle : "+recap+"\n"
+      +(dbCtx?"Donnees internes : "+dbCtx+"\n":"")
+      +"Tu dois tenir compte de TOUS les criteres mentionnes dans la conversation.\n"
+      +"Exemple : si l utilisateur a dit 'couvrant et lumineux' puis 'budget 40 euros', cherche un fond de teint couvrant lumineux a moins de 40 euros.\n\n"
+      +"Cherche sur amazon.fr des produits correspondant exactement a ces criteres.\n"
+      +"ASIN : B + 9 caracteres alphanumeriques EXACTS. Si tu n es pas certain, mets url:null.\n"
+      +"Prix : le vrai prix amazon.fr en EUR. Si inconnu : null.\n"
+      +"Trouve aussi 1 produit rakuten adapte aux criteres.\n"
+      +"JSON: {summary:'phrase qui resume bien la recherche avec les criteres', products:[{name:string, price:string|null, store:'amazon'|'rakuten', keywords:string, url:string|null, badge:string}], promoCodes:[{code,store,discount,best}]}\n"
+      +"JSON uniquement.";
+
+    const groqRaw = await groqSearch(groqProdPrompt, 1200);
+    const groqParsed = parseJSON(groqRaw||"");
+    let products = groqParsed.products||[];
+    let summary  = groqParsed.summary||"";
+    let promos   = groqParsed.promoCodes||[];
+
+    // ── VALIDATION Groq : detecte les inventions ──────────────────────────────
+    // Groq invente quand : ASIN inexistant, prix aberrant, URL mal formee
+    const amazonFromGroq = products.filter(function(p){
+      return (p.store||"").toLowerCase().includes("amazon");
+    });
+
+    const validAsinGroq = amazonFromGroq.filter(function(p){
+      // ASIN valide : B + exactement 9 chars alphanumeriques
+      if (!p.url) return false;
+      const m = p.url.match(/\/dp\/(B[A-Z0-9]{9})(?:[/?]|$)/);
+      if (!m) return false;
+      // Prix coherent : nombre entre 1 et 9999
+      const pNum = parseFloat((p.price||"0").replace(/[^0-9,.]/g,"").replace(",","."));
+      return pNum > 0.5 && pNum < 9999;
+    });
+
+    // Groq a invente = il a retourne une URL non-null avec un ASIN invalide
+    // Groq honnete = il a mis url:null quand il ne savait pas (on garde ses produits + lien search)
+    const groqLiedAsin = amazonFromGroq.some(function(p){
+      return p.url && p.url !== "null" && p.url.length > 10
+        && !/\/dp\/B[A-Z0-9]{9}/.test(p.url);
+    });
+    // Prix invente = Groq a mis un prix mais url:null (prix hallucine sans source)
+    // Dans ce cas on garde le nom mais on efface le prix
+    for (const p of amazonFromGroq) {
+      if (!p.url || p.url === "null") p.price = null; // prix sans ASIN = invente
+    }
+
+    // ── Claude web_search : UNIQUEMENT si Groq a menti sur les ASINs ─────────
+    // Si Groq a mis url:null honnêtement → on n appelle PAS Claude, on fait juste un lien /s?k=
+    let claudeProds = [];
+    if (groqLiedAsin) {
+      const claudeRaw = await claude(
+        "Cherche sur amazon.fr : "+recap
+        +". JSON uniquement: {products:[{name,price,store:'amazon',keywords,url,badge}]}",
+        "Trouve les vrais ASINs. URL: https://www.amazon.fr/dp/B0XXXXXXXXX",
+        500,
+        [{type:"web_search_20250305", name:"web_search", max_uses:2}]
+      );
+      claudeProds = parseJSON(claudeRaw||"").products||[];
+    }
+
+    // ── FUSION : meilleur de Groq + correctif Claude ──────────────────────────
+    // Amazon : ASINs valides de Claude en priorite, puis Groq valides, puis Groq sans ASIN
+    const claudeAmazon = claudeProds.filter(function(p){
+      return (p.store||"").toLowerCase().includes("amazon")
+        && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url);
+    });
+
+    const finalAmazon = claudeAmazon.length ? claudeAmazon.slice(0,2)
+      : validAsinGroq.length ? validAsinGroq.slice(0,2)
+      : amazonFromGroq.slice(0,2);  // Garde quand meme pour afficher avec lien search
+
+    // Rakuten : Groq puis Claude (Groq est generalement bon pour Rakuten)
+    const finalRakuten = products.filter(function(p){
+      return (p.store||"").toLowerCase().includes("rakuten");
+    }).slice(0,1);
+
+    products = finalAmazon.concat(finalRakuten);
+
+    let buttons = "";
+    for (const pr of products.slice(0,4)) {
+      if (!pr.name) continue;
+      let adv = findAdv(advertisers, pr.store);
+      if (!adv) {
+        if ((pr.store||"").toLowerCase().includes("amazon")) {
+          adv = {slug:"amazon", name:"Amazon", emoji:"\uD83D\uDED2", color:"#e47911", active:true};
+        } else if ((pr.store||"").toLowerCase().includes("rakuten")) {
+          adv = {slug:"rakuten", name:"Rakuten", emoji:"\uD83D\uDECD\uFE0F", color:"#bf0000", active:true, awin_mid:RAKUTEN_MID};
+        } else {
+          continue;
+        }
+      }
+      const rawUrl = (pr.url && pr.url !== "null" && pr.url.length > 15) ? pr.url : null;
+      const kw = pr.name.length > 5 ? pr.name : (pr.keywords || pr.name);
+      const url = buildLink(adv, kw, rawUrl);
+      if (!url) continue;
+      // Affiche le vrai prix si dispo, sinon "Voir prix"
+      const displayPrice = (pr.price && pr.price !== "null" && pr.price !== "undefined" && pr.price.length > 0)
+        ? pr.price : "Voir prix";
+      buttons += cardProduct(pr.name, displayPrice, url, adv, pr.img||null, pr.badge||null);
+    }
+
+    let promoHtml = "";
+    for (const c of promos.sort(function(a,b){return (b.best?1:0)-(a.best?1:0);}).slice(0,2)) {
+      promoHtml += promoBox(c.code, c.store||"boutique", c.discount||"Reduction exclusive", c.best||false);
+    }
+
+    const first = products.find(function(p){return (p.store||"").toLowerCase().includes("amazon");})||products[0];
+    let wishHtml = "";
+    if (first) {
+      const adv0 = findAdv(advertisers, first.store)||{slug:"amazon", name:"Amazon", color:"#e47911", active:true};
+      const wUrl = buildLink(adv0, first.keywords||first.name, first.url||null)||"";
+      const wD = JSON.stringify({type:"product", name:first.name, price:first.price, store:first.store, url:wUrl}).replace(/"/g,"&quot;");
+      wishHtml = '<button onclick="addToWishlist('+wD+')" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">\u2661 Ajouter a ma wishlist</button>';
+    }
+
+    return new Response(JSON.stringify({
+      reply:'<div style="font-size:13.5px;color:#1e293b;margin-bottom:8px;font-weight:500;line-height:1.5">'
+        +summary+"</div>"
+        +buttons
+        +(promoHtml?'<div style="margin-top:4px">'+promoHtml+"</div>":"")
+        +wishHtml,
+      sessionId:sid
+    }),{headers:H});
 
   } catch(err) {
     console.error("Huntify error:", err&&err.message);
@@ -910,3 +1079,4 @@ export default async function handler(req) {
     }),{status:200,headers:{"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"}});
   }
 }
+  
