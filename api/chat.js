@@ -198,6 +198,31 @@ async function fetchHotelPrices(dest, ci, co, adults) {
   } catch(e) { return null; }
 }
 
+// ── DEEPSEEK : prix hotels si Hotellook vide ──────────────────────────────────
+// DeepSeek V3 = excellent pour extraire des prix structures depuis le web
+// Appele uniquement quand l API Hotellook ne retourne rien (destination peu couverte)
+async function fetchHotelPricesDeepSeek(dest, ci, co, adults) {
+  if (!dest||!ci||!co) return null;
+  const nights = Math.max(1,(new Date(co)-new Date(ci))/(1000*60*60*24));
+  const sys = "Tu es un agent de recherche de prix d hotels. Reponds en JSON uniquement.";
+  const user = "Trouve 3 vrais hotels a "+dest+" disponibles du "+ci+" au "+co
+    +" pour "+adults+" adultes. Prix en EUR par nuit.\n"
+    +"JSON: {hotels:[{name:string, stars:number, price:number, loc:string, cat:'budget'|'confort'|'luxe'}]}\n"
+    +"Utilise tes connaissances sur les prix reels de ces etablissements. JSON uniquement.";
+  try {
+    const raw = await deepseek(sys, user, 600);
+    const d = parseJSON(raw||"");
+    if (!d.hotels||!d.hotels.length) return null;
+    return d.hotels.slice(0,3).map(function(h,i){
+      return {
+        name:h.name, stars:h.stars||3, price:h.price||null,
+        loc:h.loc||dest, hl:["Meilleur rapport qualite/prix","Confort ideal","Experience premium"][i],
+        cat:h.cat||["budget","confort","luxe"][i]
+      };
+    });
+  } catch(e){ return null; }
+}
+
 // ── DATE PARSER ───────────────────────────────────────────────────────────────
 function parseDate(str) {
   if (!str) return null;
@@ -658,7 +683,7 @@ export default async function handler(req) {
               +'<div style="display:flex;gap:8px">'
               +'<a href="'+skyP+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\u2708\uFE0F Vols</a>'
               +'<a href="'+bkgP+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\uD83C\uDFE8 H\u00f4tels</a>'
-              +'<button onclick="this.closest(\'div[id]\') && sendPrompt(\'Planifie le voyage complet pour '+p.dest+'\');" style="flex:1;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">\uD83D\uDDFA\uFE0F Planifier</button>'
+              +'<button onclick="window.dispatchEvent(new CustomEvent(\'huntify_plan\',{detail:{dest:\''+p.dest+'\',dep:\''+dep+'\',checkin:\''+p.checkin+'\',checkout:\''+p.checkout+'\',adults:'+adultK+'}}));if(window.sendPrompt)sendPrompt(\'Planifie un itineraire complet pour '+p.dest+' depuis '+dep+' du '+p.checkin+' au '+p.checkout+' pour '+adultK+' adultes, budget '+budget+'\')" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">\uD83D\uDDFA\uFE0F Planifier</button>'
               +"</div></div>";
           }
 
@@ -838,9 +863,16 @@ export default async function handler(req) {
       }
 
       // Hotels — Hotellook API (vrais prix affilies TP) ou fallback IA
+      // Hotellook API (vrais prix) → DeepSeek si vide → fallback IA itin
       const realHotels = await fetchHotelPrices(itin.dest||"",finalCi,finalCo,finalAdults);
+      const dsHotels   = (!realHotels||!realHotels.length)
+        ? await fetchHotelPricesDeepSeek(itin.dest||"",finalCi,finalCo,finalAdults)
+        : null;
       const hasReal = !!(realHotels&&realHotels.length);
-      const hotelsShow = hasReal ? realHotels : (itin.hotels||[]).map(function(h,i){
+      const hasDS   = !hasReal&&!!(dsHotels&&dsHotels.length);
+      const hotelsShow = hasReal ? realHotels
+        : hasDS ? dsHotels
+        : (itin.hotels||[]).map(function(h,i){
         return {
           name:h.name, stars:h.stars||3, price:null,
           loc:h.loc||itin.dest, hl:h.hl,
@@ -852,7 +884,9 @@ export default async function handler(req) {
       html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">'
         +'\uD83C\uDFE8 Hebergements \u00B7 '
         +(hasReal
-          ?'<span style="color:#16a34a;font-size:11px">Prix reels \u2713</span>'
+          ?'<span style="color:#16a34a;font-size:11px">Prix Booking \u2713</span>'
+          :hasDS
+          ?'<span style="color:#2f54ff;font-size:11px">Prix estimes IA</span>'
           :'<span style="color:#7c89a8;font-size:11px">Selections IA</span>')
         +"</div>";
 
@@ -970,12 +1004,14 @@ export default async function handler(req) {
     // 3. Claude web_search SEULEMENT si Groq echoue la validation
     //    = Claude appele ~20% du temps seulement, pas systematiquement
 
-    const groqProdPrompt = "Cherche sur amazon.fr les meilleurs produits pour : "+recap+"\n"
-      +(dbCtx?"Donnees internes : "+dbCtx+"\n":"")
-      +"Trouve 2 produits Amazon avec leurs VRAIS ASINs (URL /dp/B + 9 alphanum) et leurs vrais prix actuels.\n"
-      +"Trouve aussi 1 produit sur fr.shopping.rakuten.com.\n"
-      +"Si tu n es pas sur d un ASIN, mets url:null plutot que d inventer.\n"
-      +"JSON: {summary:string, products:[{name:string, price:string, store:'amazon'|'rakuten', keywords:string, url:string|null, badge:string}], promoCodes:[{code,store,discount,best}]}\n"
+    const groqProdPrompt = "Recherche sur amazon.fr : "+recap+"\n"
+      +(dbCtx?"Contexte : "+dbCtx+"\n":"")
+      +"REGLE ABSOLUE : ne retourne un ASIN que si tu es certain qu il existe vraiment.\n"
+      +"Un ASIN reel = B suivi EXACTEMENT de 9 caracteres alphanumeriques majuscules ex: B08N5WRWNW\n"
+      +"Si tu n es pas certain : mets url:null (le systeme fera une recherche normale)\n"
+      +"Prix : retourne le vrai prix constate sur amazon.fr en EUR. Si inconnu, mets null.\n"
+      +"Trouve aussi 1 produit rakuten (url:null ok pour rakuten).\n"
+      +"JSON: {summary:string, products:[{name:string, price:string|null, store:'amazon'|'rakuten', keywords:string, url:string|null, badge:string}], promoCodes:[{code,store,discount,best}]}\n"
       +"JSON uniquement.";
 
     const groqRaw = await groqSearch(groqProdPrompt, 1200);
@@ -1000,24 +1036,30 @@ export default async function handler(req) {
       return pNum > 0.5 && pNum < 9999;
     });
 
-    const groqInvented = amazonFromGroq.length > 0 && validAsinGroq.length === 0;
-    // Groq a trouve des produits Amazon mais aucun ASIN valide = il a invente
+    // Groq a invente = il a retourne une URL non-null avec un ASIN invalide
+    // Groq honnete = il a mis url:null quand il ne savait pas (on garde ses produits + lien search)
+    const groqLiedAsin = amazonFromGroq.some(function(p){
+      return p.url && p.url !== "null" && p.url.length > 10
+        && !/\/dp\/B[A-Z0-9]{9}/.test(p.url);
+    });
+    // Prix invente = Groq a mis un prix mais url:null (prix hallucine sans source)
+    // Dans ce cas on garde le nom mais on efface le prix
+    for (const p of amazonFromGroq) {
+      if (!p.url || p.url === "null") p.price = null; // prix sans ASIN = invente
+    }
 
-    // ── Claude web_search : seulement si Groq a invente ──────────────────────
+    // ── Claude web_search : UNIQUEMENT si Groq a menti sur les ASINs ─────────
+    // Si Groq a mis url:null honnêtement → on n appelle PAS Claude, on fait juste un lien /s?k=
     let claudeProds = [];
-    if (groqInvented || amazonFromGroq.length === 0) {
-      // Claude corrige ou complete — appel cible, max_uses reduit a 3
+    if (groqLiedAsin) {
       const claudeRaw = await claude(
-        "Tu es un agent shopping. Cherche sur amazon.fr : "+recap
-        +". Retourne UNIQUEMENT un JSON : "
-        +"{products:[{name:string,price:string,store:'amazon',keywords:string,url:string,badge:string}]}",
-        "Cherche les vrais ASINs amazon.fr pour : "+recap+". URL format: https://www.amazon.fr/dp/BXXXXXXXXX",
-        600,
-        [{type:"web_search_20250305", name:"web_search", max_uses:3}]
+        "Cherche sur amazon.fr : "+recap
+        +". JSON uniquement: {products:[{name,price,store:'amazon',keywords,url,badge}]}",
+        "Trouve les vrais ASINs. URL: https://www.amazon.fr/dp/B0XXXXXXXXX",
+        500,
+        [{type:"web_search_20250305", name:"web_search", max_uses:2}]
       );
       claudeProds = parseJSON(claudeRaw||"").products||[];
-      // Met a jour summary si Claude a trouve mieux
-      if (!summary && parseJSON(claudeRaw||"").summary) summary = parseJSON(claudeRaw||"").summary;
     }
 
     // ── FUSION : meilleur de Groq + correctif Claude ──────────────────────────
