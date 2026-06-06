@@ -112,6 +112,9 @@ function findAdv(advertisers, slug) {
 }
 
 // ── TRAVELPAYOUTS — LIENS AFFILIES CORRECTS ───────────────────────────────────
+// Booking.com lien affilie direct
+// AID a recuperer : dashboard Travelpayouts → Booking.com → Get link → parametre aid=XXXXXXX
+// Ajouter BOOKING_AID dans les variables Vercel
 const BOOKING_AID = process.env.BOOKING_AID||"2311236";
 
 function bookingTPLink(dest, ci, co, adults, cat) {
@@ -196,6 +199,8 @@ async function fetchHotelPrices(dest, ci, co, adults) {
 }
 
 // ── DEEPSEEK : prix hotels si Hotellook vide ──────────────────────────────────
+// DeepSeek V3 = excellent pour extraire des prix structures depuis le web
+// Appele uniquement quand l API Hotellook ne retourne rien (destination peu couverte)
 async function fetchHotelPricesDeepSeek(dest, ci, co, adults) {
   if (!dest||!ci||!co) return null;
   const nights = Math.max(1,(new Date(co)-new Date(ci))/(1000*60*60*24));
@@ -360,6 +365,7 @@ async function deepseek(sys, user, maxTok) {
 }
 
 async function freeAI(sys, user, maxTok) {
+  // Cascade complete par cout croissant
   return await groq(sys,user,maxTok)
       || await gemini(sys+"\n\n"+user, maxTok)
       || await mistral(sys,user,maxTok)
@@ -566,16 +572,17 @@ export default async function handler(req) {
         ) || "{}"
       );
 
-      // ── CAS 1 : l utilisateur veut des propositions ou pas de destination → 3 DESTINATIONS ──
+            // ── CAS 1 : l utilisateur veut des propositions ou pas de destination → 3 DESTINATIONS ──
       if (wantsSuggestions || !knownInfos.destination) {
         const dep    = knownInfos.ville_depart||"France";
         const budget = knownInfos.budget||"2000EUR";
-        const ciK    = knownInfos.checkin;
-        const coK    = knownInfos.checkout;
+        const ciK    = knownInfos.checkin||ci;
+        const coK    = knownInfos.checkout||co;
         const dureeK = knownInfos.duree||"4 nuits";
         const styleK = knownInfos.style||"romantique en amoureux";
         const adultK = knownInfos.nb_adultes||2;
 
+        // L IA genere 3 destinations differentes avec vrais prix
         const multiPropPrompt = "Tu es le conseiller voyage Huntify, passionne et expert.\n"
           +"Un couple part depuis "+dep+" du "+(ciK||"17 juin")+" au "+(coK||"21 juin")+"\n"
           +"Budget total max : "+budget+" pour 2 personnes. Style : "+styleK+".\n\n"
@@ -600,9 +607,11 @@ export default async function handler(req) {
           +"    }\n"
           +"  ]\n"
           +"}\n"
-          +"Les 3 destinations doivent etre TRES differentes.\n"
+          +"Les 3 destinations doivent etre TRES differentes (ex: une ville culturelle, une destination soleil, une ville romantique proche).\n"
+          +"Toutes accessibles depuis "+dep+" dans le budget "+budget+".\n"
           +"JSON uniquement.";
 
+        // Cascade pour les propositions
         let propRaw = await groqSearch(multiPropPrompt, 3000);
         let propData = parseJSON(propRaw||"");
         if (!propData.proposals||!propData.proposals.length) {
@@ -622,12 +631,13 @@ export default async function handler(req) {
           propData = parseJSON(propRaw||"");
         }
 
+        // Rendu cartes destinations multiples
         if (propData.proposals&&propData.proposals.length) {
           const vibeColor = {
             "Romantique":"#e83e8c","Culturel":"#6f42c1","Soleil":"#fd7e14",
             "Aventure":"#20c997","Gastronomie":"#e63946"
           };
-          let html3 = '<div style="font-size:14px;font-weight:700;color:#0e1430;margin-bottom:12px">'+'\uD83C\uDF1F Voici mes 3 coups de coeur pour vous depuis '+dep+' :</div>';
+          let html3 = '<div style="font-size:14px;font-weight:700;color:#0e1430;margin-bottom:12px">'            +'\uD83C\uDF1F Voici mes 3 coups de coeur pour vous depuis '+dep+' :</div>';
 
           for (const p of propData.proposals.slice(0,3)) {
             const vc = vibeColor[p.vibe]||"#2f54ff";
@@ -635,6 +645,7 @@ export default async function handler(req) {
             const bkgP = bookingTPLink(p.dest||"", p.checkin||ciK, p.checkout||coK, adultK, null);
 
             html3 += '<div style="background:#fff;border:2px solid #e6ebf7;border-radius:16px;padding:16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
+              // Header destination
               +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">'
               +'<div style="font-size:36px">'+(p.flag||"\u2708\uFE0F")+"</div>"
               +'<div style="flex:1">'
@@ -645,8 +656,10 @@ export default async function handler(req) {
               +'<div style="font-size:18px;font-weight:900;color:#2f54ff">~'+(p.total_est||"?")+"EUR</div>"
               +'<div style="font-size:10px;color:#7c89a8">/ 2 pers.</div></div>'
               +"</div>"
+              // Pitch
               +'<div style="font-size:13px;color:#374151;font-style:italic;background:#f8f9ff;border-radius:10px;padding:8px 12px;margin-bottom:10px;line-height:1.5">'
               +"\u201C"+(p.pitch||"")+"\u201D</div>"
+              // Vols + hotels
               +'<div style="display:flex;gap:8px;margin-bottom:8px">'
               +'<div style="flex:1;background:#eff6ff;border-radius:10px;padding:8px 10px">'
               +'<div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase">\u2708\uFE0F Vol aller</div>'
@@ -658,27 +671,32 @@ export default async function handler(req) {
               +'<div style="font-size:13px;font-weight:800;color:#16a34a">~'+(p.hotel_budget_price||"?")+"EUR/nuit</div>"
               +'<div style="font-size:10px;color:#7c89a8">'+(p.hotel_budget_name||"")+"</div>"
               +"</div></div>"
+              // Top 3 activites
               +(p.top3&&p.top3.length?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">'
                 +p.top3.map(function(a){return '<span style="background:#f5f3ff;color:#6f42c1;border-radius:100px;padding:3px 10px;font-size:11px;font-weight:600">'+a+"</span>";}).join("")
                 +"</div>":"")
+              // Pourquoi ce choix
               +'<div style="font-size:11px;color:#64748b;background:#f8fafc;border-radius:8px;padding:6px 10px;margin-bottom:10px">'
               +"\uD83D\uDCA1 "+(p.why||"")+"</div>"
+              // Boutons
               +'<div style="display:flex;gap:8px">'
               +'<a href="'+skyP+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\u2708\uFE0F Vols</a>'
               +'<a href="'+bkgP+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:11px;font-weight:700">\uD83C\uDFE8 H\u00f4tels</a>'
-              +'<button data-huntify-plan="Planifie un itineraire complet pour '+p.dest+' depuis '+dep+' du '+(p.checkin||ciK)+' au '+(p.checkout||coK)+' pour '+adultK+' adultes budget '+budget+'" data-mode="travel" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit" onclick="handlePlanifyButton(this)">\uD83D\uDDFA\uFE0F Planifier</button>'
+              +'<button data-huntify-plan="Planifie un itineraire complet pour '+p.dest+' depuis '+dep+' du '+(p.checkin||ciK)+' au '+(p.checkout||coK)+' pour '+adultK+' adultes budget '+budget+'" data-mode="travel" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;border-radius:10px;padding:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit" onclick="(function(b){var m=b.getAttribute(\'data-huntify-plan\');if(window.sendPrompt){window.sendPrompt(m);}else{var i=document.querySelector(\'textarea,input[type=text]\');if(i){i.value=m;i.dispatchEvent(new Event(\'input\',{bubbles:true}));var s=i.closest(\'form\');if(s)s.querySelector(\'button[type=submit],button:last-of-type\').click();else i.dispatchEvent(new KeyboardEvent(\'keydown\',{key:\'Enter\',keyCode:13,bubbles:true}));}else{window.dispatchEvent(new CustomEvent(\'huntify_send\',{detail:{message:m,mode:\'travel\'}}));}}})(this)">\uD83D\uDDFA\uFE0F Planifier</button>'
               +"</div></div>";
           }
 
-          html3 += '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:8px">Cliquez "Planifier" sur la destination de votre choix pour l itineraire complet jour par jour</div>';
+          html3 += '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:8px">'
+            +'Cliquez "Planifier" sur la destination de votre choix pour l itineraire complet jour par jour</div>';
 
           return new Response(JSON.stringify({reply:html3,sessionId:sid}),{headers:H});
         }
 
+        // Si l IA n a pas pu generer → on force une destination par defaut
         if (!knownInfos.destination) knownInfos.destination = "Lisbonne";
       }
 
-      // CAS 2 : destination connue
+      // ── CAS 2 : destination connue → extraction et generation standard ──
       const groqDecidePrompt = "Tu es l assistant voyage de Huntify, expert et chaleureux.\n"
         +"Aujourd hui : "+today+". Conversation :\n"+hist+"\nMessage : "+message+"\n\n"
         +"Extrais les infos et genere IMMEDIATEMENT (la destination est connue : "+(knownInfos.destination||"")+")\n"
@@ -690,11 +708,13 @@ export default async function handler(req) {
         || JSON.stringify({action:"generate", infos:knownInfos})
       );
 
+      // Fallback solide : si pas de decision claire on force la generation avec ce qu on a
       if (decision.action!=="generate") {
         decision.action = "generate";
         decision.infos  = knownInfos;
       }
 
+      // Generation itineraire
       const infos = decision.infos||knownInfos;
       const adults = parseInt(infos.nb_adultes)||2;
       const ci = parseDate(infos.checkin||null);
@@ -707,6 +727,8 @@ export default async function handler(req) {
       }()):"";
       const co = parseDate(infos.checkout||null)||coCalc;
 
+      // Prompt generation : l IA cherche les vrais prix sur le web et genere un itineraire complet
+      // Ton : expert, passionné, pas robotique
       const itinPrompt = "Tu es le conseiller voyage expert de Huntify. Tu aimes voyager, tu connais les bonnes adresses, "
         +"tu parles comme un ami qui a vraiment ete sur place.\n\n"
         +"VOYAGE A PLANIFIER :\n"
@@ -716,27 +738,56 @@ export default async function handler(req) {
         +"- Dates : "+(ci||"bientot")+" au "+(co||"")+" ("+nights+" nuit"+(nights>1?"s":"")+") \n"
         +"- Budget : "+(infos.budget||"flexible")+"\n"
         +"- Style : "+(infos.style||"equilibre entre culture et detente")+"\n\n"
-        +"Utilise tes capacites de recherche web pour trouver des informations réelles.\n"
-        +"NE JAMAIS inventer de prix ou d'hôtels.\n"
-        +"Genere un JSON complet et detaille.\n"
+        +"Utilise tes capacites de recherche web pour trouver :\n"
+        +"1. Les vrais prix de vols pour ces dates (compagnie, prix approximatif, duree)\n"
+        +"2. De vrais hotels existants avec leurs vrais prix (pas inventes)\n"
+        +"3. Les restaurants locaux authentiques que les habitants recommandent\n"
+        +"4. Les activites avec leurs tarifs reels\n\n"
+        +"Genere un JSON complet et detaille. Les hotels, restaurants et activites doivent etre REELS.\n"
+        +"Format JSON :\n"
+        +"{\n"
+        +"  t: 'i',\n"
+        +"  recap: 'phrase de synthese naturelle et enthousiaste de ce voyage',\n"
+        +"  itin: {\n"
+        +"    dest: string, country: string, flag: emoji, dur: string, trav: string, style: string, dep: string,\n"
+        +"    checkin: 'YYYY-MM-DD', checkout: 'YYYY-MM-DD', adults: number,\n"
+        +"    flights: { out: {from:'IATA',to:'IATA',price:number,co:string,dur:string}, ret: {from,to,price,co,dur} },\n"
+        +"    hotels: [ 3 objets avec name:string, stars:number, price:number, loc:string, hl:string, cat:'budget'|'confort'|'luxe' ],\n"
+        +"    days: [ pour chaque jour: {n:number, title:string, am:string, pm:string, eve:string, "
+        +"resto:{name:string,price:string,spec:string}, acts:[string], budget:number} ],\n"
+        +"    budget: { vols:number, hotel:number, acts:number, resto:number, transport:number, total:number, pp:number },\n"
+        +"    tips: [ 4 conseils pratiques specifiques et utiles, pas generiques ]\n"
+        +"  }\n"
+        +"}\n"
+        +"IATA : Paris=CDG, Marseille=MRS, Nice=NCE, Lyon=LYS, Rome=FCO, Barcelone=BCN, Madrid=MAD, Lisbonne=LIS, Londres=LHR, Barcelone=BCN.\n"
         +"JSON uniquement, sans texte autour.";
 
+      // Cascade complete : Groq DeepSearch → Mistral → DeepSeek → Claude
       let itinRaw = await groqSearch(itinPrompt, 3500);
       if (!itinRaw || !parseJSON(itinRaw).itin) {
-        itinRaw = await mistral("Tu es un expert voyage. Reponds en JSON uniquement.", itinPrompt, 3000);
+        itinRaw = await mistral(
+          "Tu es un expert voyage. Reponds en JSON uniquement.",
+          itinPrompt, 3000
+        );
       }
       if (!itinRaw || !parseJSON(itinRaw).itin) {
-        itinRaw = await deepseek("Tu es un expert voyage. Reponds en JSON uniquement.", itinPrompt, 3000);
+        itinRaw = await deepseek(
+          "Tu es un expert voyage. Reponds en JSON uniquement.",
+          itinPrompt, 3000
+        );
       }
       if (!itinRaw || !parseJSON(itinRaw).itin) {
-        itinRaw = await claude("Tu es un expert voyage. Reponds en JSON uniquement.", itinPrompt, 3000, []);
+        itinRaw = await claude(
+          "Tu es un expert voyage. Reponds en JSON uniquement.",
+          itinPrompt, 3000, []
+        );
       }
 
       const tP = parseJSON(itinRaw||"");
       const itin = tP.itin;
 
+      // Fallback minimal
       if (!itin) {
-        // fallback minimal
         const sky = skyscannerLink(infos.ville_depart||"",infos.destination||"",ci,co,adults);
         const bkg = bookingTPLink(infos.destination||"",ci,co,adults,null);
         const exp = expediaTPLink(infos.destination||"",ci,co,adults);
@@ -752,12 +803,14 @@ export default async function handler(req) {
           sessionId:sid}),{headers:H});
       }
 
+      // Rendu itineraire complet
       const finalCi = (/^\d{4}-\d{2}-\d{2}$/.test(itin.checkin||""))?itin.checkin:(ci||"");
       const finalCo = (/^\d{4}-\d{2}-\d{2}$/.test(itin.checkout||""))?itin.checkout:(co||"");
       const finalAdults = itin.adults||adults;
       const itinId = "itin_"+Date.now();
       let html = "";
 
+      // Header
       html += '<div id="'+itinId+'" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:18px;margin-bottom:4px;text-align:center">'
         +'<div style="font-size:32px;margin-bottom:6px">'+(itin.flag||"\u2708\uFE0F")+"</div>"
         +'<div style="font-family:sans-serif;font-size:20px;font-weight:800;color:#fff">'
@@ -774,7 +827,7 @@ export default async function handler(req) {
           +tP.recap+"</div>";
       }
 
-      // Vols (code inchangé)
+      // Vols
       if (itin.flights&&itin.flights.out) {
         const f = itin.flights;
         const skyFrom = f.out.from||toIATA(itin.dep||infos.ville_depart||"")||"par";
@@ -799,7 +852,7 @@ export default async function handler(req) {
             +"Retour"+(finalCo?" \u00B7 "+finalCo:"")+"</div>"
             +'<div style="font-size:13px;font-weight:700;color:#0e1430;margin-top:2px">'
             +f.ret.from+" \u2192 "+f.ret.to+"</div>"
-            +'<div style="font-size:11px;color:#7c89a8">'+(f.ret.co||"")+" \u00B7 "+(f.ret.dur||"")+"</div></div>'
+            +'<div style="font-size:11px;color:#7c89a8">'+(f.ret.co||"")+" \u00B7 "+(f.ret.dur||"")+"</div></div>"
             +'<div style="text-align:right">'
             +'<div style="font-size:16px;font-weight:900;color:#2f54ff">~'+f.ret.price+"EUR</div>"
             +'<div style="font-size:10px;color:#7c89a8">/pers.</div></div></div></div>';
@@ -808,7 +861,8 @@ export default async function handler(req) {
         html += '<a href="'+sky+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:12px;font-size:13px;font-weight:700;margin-top:6px">\uD83D\uDD0D Voir et reserver ces vols sur Skyscanner \u2192</a>';
       }
 
-      // Hotels — Priorité prix réels
+      // Hotels — Hotellook API (vrais prix affilies TP) ou fallback IA
+      // Hotellook API (vrais prix) → DeepSeek si vide → fallback IA itin
       const realHotels = await fetchHotelPrices(itin.dest||"",finalCi,finalCo,finalAdults);
       const dsHotels   = (!realHotels||!realHotels.length)
         ? await fetchHotelPricesDeepSeek(itin.dest||"",finalCi,finalCo,finalAdults)
@@ -835,8 +889,10 @@ export default async function handler(req) {
           :'<span style="color:#7c89a8;font-size:11px">Selections IA</span>')
         +"</div>";
 
+      const htPrices = [];
       for (const h of hotelsShow) {
-        const hLink = h.url || bookingTPLink(itin.dest||"",finalCi,finalCo,finalAdults,null);
+        if (h.price) htPrices.push(h.price);
+        const hLink = h.url||bookingTPLink(itin.dest||"",finalCi,finalCo,finalAdults,null);
         html += cardHotel({
           name:h.name, stars:h.stars,
           price:h.price?String(h.price):null,
@@ -845,19 +901,21 @@ export default async function handler(req) {
         }, hLink);
       }
 
-      // Boutons globaux
+      // Boutons Booking + Expedia — DEUX liens affilies TP
       html += '<div style="font-size:11px;color:#7c89a8;font-weight:600;margin:10px 0 4px">\uD83D\uDD0D Voir plus de disponibilites :</div>'
         +'<div style="display:flex;gap:8px">'
         +'<a href="'+bookingTPLink(itin.dest||"",finalCi,finalCo,finalAdults,null)+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;gap:6px;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\uD83C\uDFE8 Booking.com</a>'
         +'<a href="'+expediaTPLink(itin.dest||"",finalCi,finalCo,finalAdults)+'" target="_blank" rel="sponsored" style="flex:1;display:flex;justify-content:center;align-items:center;gap:6px;background:linear-gradient(135deg,#00355f,#00a0e3);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">\u2708\uFE0F Expedia.fr</a>'
         +"</div>";
 
+      // GetTransfer
       if (finalCi) {
         html += '<a href="'+getTransferLink(itin.dest||"",finalCi)+'" target="_blank" rel="sponsored" '
           +'style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:11px;margin-top:8px;font-size:12px;font-weight:700">'
           +'\uD83D\uDE97 Transfert aeroport sans stress \u00B7 GetTransfer \u2192</a>';
       }
 
+      // Programme jour par jour
       if (itin.days&&itin.days.length) {
         html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">\uD83D\uDCC5 Programme jour par jour</div>';
         for (const d of itin.days) html += cardDay(d);
@@ -898,7 +956,7 @@ export default async function handler(req) {
       return new Response(JSON.stringify({reply:html,sessionId:sid}),{headers:H});
     }
 
-// ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════
     //  MODE PRODUIT
     // ══════════════════════════════════════════════════════════════════════════
 
@@ -1079,4 +1137,3 @@ export default async function handler(req) {
     }),{status:200,headers:{"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"}});
   }
 }
-  
