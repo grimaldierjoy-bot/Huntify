@@ -663,7 +663,28 @@ document.getElementById('bellBtn').onclick=openNotifs;
 document.getElementById('closeNotifBtn').onclick=()=>document.getElementById('notifBg').classList.remove('open');
 document.getElementById('sendBtn').onclick=()=>send();
 chatInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();send();}});
+// ====================== BOUTON PLANIFIER (AJOUT OBLIGATOIRE) ======================
+window.handlePlanifyButton = function(btn) {
+  const prompt = btn.getAttribute('data-huntify-plan');
+  if (!prompt) return;
 
+  const input = document.getElementById('chatInput');
+  if (input) {
+    input.value = prompt;
+    // Force le mode voyage
+    huntifyMode = 'travel';
+    // Mise à jour visuelle des boutons
+    const btnP = document.getElementById('btnProduct');
+    const btnT = document.getElementById('btnTravel');
+    if (btnP && btnT) {
+      btnT.style.background = '#fff';
+      btnT.style.color = '#2f54ff';
+      btnP.style.background = 'transparent';
+      btnP.style.color = 'rgba(255,255,255,.7)';
+    }
+    send(); // Envoi automatique
+  }
+};
 checkUser().then(loadAlerts);
 initCookieBanner();
 renderChat();
