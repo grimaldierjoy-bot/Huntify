@@ -18,8 +18,6 @@ const MODEL        = "claude-haiku-4-5";
 // En attendant : redirect Travelpayouts universel avec marker
 // Format final : "https://tp.media/r?marker=536663&trs=XXX&p=PROGRAMME_ID&u=URL"
 // Booking programme ID TP = 257 (global), Expedia = 2041
-const TP_BOOKING_PID  = "257";
-const TP_EXPEDIA_PID  = "2041";
 
 const IATA = {
   paris:"CDG",lyon:"LYS",marseille:"MRS",nice:"NCE",bordeaux:"BOD",toulouse:"TLS",
@@ -966,66 +964,95 @@ export default async function handler(req) {
       ||/cadeau|premium|luxe|meilleur|haute gamme|qualite/.test((recap+" "+histS).toLowerCase())
       ||history.length>=4;
 
-    // Prompt de recherche produit : naturel, efficace, pas robotique
-    const searchSys = "Tu es l agent shopping Huntify. Trouve les meilleurs produits pour : "+recap+".\n"
-      +(dbCtx?"Contexte interne : "+dbCtx+"\n":"")
-      +"Recherche sur amazon.fr 2 produits avec leurs vrais ASINs (URL /dp/BXXXXXXXXX), "
-      +"et 1 produit sur Rakuten.fr.\n"
-      +"Choisis des produits pertinents, bien notes, bon rapport qualite/prix.\n"
-      +"Si tu ne trouves pas un ASIN reel, mets url:null.\n"
-      +"JSON : { summary:'phrase naturelle et utile sur ta selection', "
-      +"products:[ {name, price, store:'amazon'|'rakuten', keywords, url, badge} ], "
-      +"promoCodes:[ {code,store,discount,best} ] }\n"
-      +"JSON uniquement.";
+    // ── RECHERCHE PRODUIT : Claude web_search en PREMIER pour prix reels ─────
+    // Strategie : Claude cherche les vrais prix Amazon + ASIN via web_search
+    // Groq DeepSearch en parallele pour Rakuten et codes promo
+    // On fusionne les resultats pour avoir prix reels + liens directs
 
-    // Cascade complete pour la recherche produit
-    let raw = await groqSearch(searchSys, 1200);
-    let products = parseJSON(raw||"").products||[];
+    // 1. Claude + web_search = seul capable de trouver les vrais prix Amazon en temps reel
+    const claudeSearchSys = "Tu es un agent shopping expert. Cherche sur amazon.fr les meilleurs produits "
+      +"correspondant exactement a cette demande : "+recap+"\n"
+      +"Pour chaque produit trouve :\n"
+      +"- Le vrai prix actuel en EUR (pas un prix invente)\n"
+      +"- L URL exacte amazon.fr/dp/ASIN (ASIN = B suivi de 9 caracteres alphanumeriques)\n"
+      +"- La note client si disponible\n"
+      +"Cherche aussi 1 produit sur fr.shopping.rakuten.com.\n"
+      +"Retourne un JSON valide uniquement :\n"
+      +"{ summary:'phrase naturelle et utile', products:[{name:string, price:string, store:'amazon'|'rakuten', keywords:string, url:string, badge:string, rating:string}], promoCodes:[{code,store,discount,best}] }";
 
-    // Valide les ASINs Amazon
-    const hasValidAsin = products.some(function(p){
-      return (p.store||"").includes("amazon") && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url);
+    const claudeSearchUser = "Cherche maintenant sur amazon.fr : "+recap
+      +". Trouve les vrais prix et ASINs reels. JSON uniquement.";
+
+    // Lance Claude web_search + Groq DeepSearch en parallele pour aller plus vite
+    const [claudeRaw, groqRaw] = await Promise.all([
+      claude(claudeSearchSys, claudeSearchUser, 1200,
+        [{type:"web_search_20250305", name:"web_search", max_uses:5}]
+      ),
+      groqSearch(
+        "Tu es agent shopping. Cherche sur amazon.fr et rakuten.fr : "+recap+"\n"
+        +"Trouve les vrais produits avec vrais prix et ASINs amazon.fr.\n"
+        +"JSON: {summary:string, products:[{name,price,store,keywords,url,badge}], promoCodes:[{code,store,discount,best}]}\n"
+        +"JSON uniquement.",
+        1200
+      )
+    ]);
+
+    // Parse les deux resultats
+    const claudeParsed = parseJSON(claudeRaw||"");
+    const groqParsed   = parseJSON(groqRaw||"");
+
+    // Fusion intelligente : on prend le meilleur de chaque
+    // Claude est prioritaire pour Amazon (vrais prix via web_search)
+    // Groq peut complementer avec Rakuten
+    let products = [];
+    const claudeProds = claudeParsed.products||[];
+    const groqProds   = groqParsed.products||[];
+
+    // Produits Amazon : Claude prioritaire si ASIN valide
+    const claudeAmazon = claudeProds.filter(function(p){
+      return (p.store||"").toLowerCase().includes("amazon")
+        && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url)
+        && p.price && p.price !== "Voir prix";
+    });
+    const groqAmazon = groqProds.filter(function(p){
+      return (p.store||"").toLowerCase().includes("amazon")
+        && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url)
+        && p.price && p.price !== "Voir prix";
     });
 
-    // Si pas d ASIN valide : Claude + web_search (il est meilleur pour ca)
-    if (!hasValidAsin) {
-      const claudeRaw = await claude(
-        "Tu es un agent shopping. Trouve les vrais ASINs Amazon pour : "+recap,
-        "Cherche sur amazon.fr et retourne un JSON avec les produits trouves (URL /dp/ASIN).",
-        900,
-        [{type:"web_search_20250305",name:"web_search",max_uses:3}]
-      );
-      if (claudeRaw) {
-        const cp = parseJSON(claudeRaw).products||[];
-        if (cp.some(function(p){return (p.store||"").includes("amazon")&&p.url&&/\/dp\/B[A-Z0-9]{9}/.test(p.url);})) {
-          products = cp;
-          raw = claudeRaw;
-        }
-      }
-    }
+    // Prend Claude si disponible, sinon Groq, sinon produit sans prix
+    const amazonProds = claudeAmazon.length ? claudeAmazon.slice(0,2)
+      : groqAmazon.length ? groqAmazon.slice(0,2)
+      : claudeProds.filter(function(p){return (p.store||"").toLowerCase().includes("amazon");}).slice(0,2)
+      || groqProds.filter(function(p){return (p.store||"").toLowerCase().includes("amazon");}).slice(0,2);
 
-    // Fallback final cascade complete
+    // Produits Rakuten : Groq puis Claude
+    const rakutenProds = groqProds.filter(function(p){return (p.store||"").toLowerCase().includes("rakuten");}).slice(0,1)
+      || claudeProds.filter(function(p){return (p.store||"").toLowerCase().includes("rakuten");}).slice(0,1);
+
+    products = amazonProds.concat(rakutenProds);
+
+    // Codes promo : merge les deux sources
+    const promos = (claudeParsed.promoCodes||[]).concat(groqParsed.promoCodes||[])
+      .filter(function(c){return c&&c.code;})
+      .slice(0,2);
+
+    // Summary : Claude est plus naturel
+    const summary = claudeParsed.summary || groqParsed.summary || "Voici ma selection pour vous :";
+
+    // Fallback si toujours rien de valide
     if (!products.length) {
-      const fbRaw = await gemini(searchSys+" Reponds en JSON uniquement.", 900)
-        || await mistral("Reponds en JSON uniquement.", searchSys, 900)
-        || await deepseek("Reponds en JSON uniquement.", searchSys, 900);
-      if (fbRaw) {
-        products = parseJSON(fbRaw).products||[];
-        if (!raw) raw = fbRaw;
-      }
+      const fbRaw = await deepseek("Agent shopping. JSON uniquement.", claudeSearchSys+". "+claudeSearchUser, 900)
+        || await mistral("Agent shopping. JSON uniquement.", claudeSearchSys+". "+claudeSearchUser, 900);
+      if (fbRaw) products = parseJSON(fbRaw||"").products||[];
     }
 
-    const parsed = parseJSON(raw||"");
-    if (!products.length) products = parsed.products||[];
-    const summary = parsed.summary||"Voici ma selection pour vous :";
-    const promos  = parsed.promoCodes||[];
-
-    // Garantit toujours Amazon + Rakuten
-    if (!products.some(function(p){return (p.store||"").includes("amazon");})) {
-      products.unshift({name:recap,price:"Voir prix",store:"amazon",keywords:recap,url:null,badge:"Recommande"});
+    // Garantit Amazon + Rakuten meme sans produit trouve
+    if (!products.some(function(p){return (p.store||"").toLowerCase().includes("amazon");})) {
+      products.unshift({name:recap, price:"Voir prix", store:"amazon", keywords:recap, url:null, badge:"Meilleure vente"});
     }
-    if (!products.some(function(p){return (p.store||"").includes("rakuten");})) {
-      products.push({name:recap,price:"Voir prix",store:"rakuten",keywords:recap,url:null,badge:"Bon plan"});
+    if (!products.some(function(p){return (p.store||"").toLowerCase().includes("rakuten");})) {
+      products.push({name:recap, price:"Voir prix", store:"rakuten", keywords:recap, url:null, badge:"Bon plan"});
     }
 
     let buttons = "";
@@ -1033,33 +1060,35 @@ export default async function handler(req) {
       if (!pr.name) continue;
       let adv = findAdv(advertisers, pr.store);
       if (!adv) {
-        if ((pr.store||"").includes("amazon")) {
-          adv = {slug:"amazon",name:"Amazon",emoji:"\uD83D\uDED2",color:"#e47911",active:true};
-        } else if ((pr.store||"").includes("rakuten")) {
-          adv = {slug:"rakuten",name:"Rakuten",emoji:"\uD83D\uDECD\uFE0F",color:"#bf0000",active:true,awin_mid:RAKUTEN_MID};
+        if ((pr.store||"").toLowerCase().includes("amazon")) {
+          adv = {slug:"amazon", name:"Amazon", emoji:"\uD83D\uDED2", color:"#e47911", active:true};
+        } else if ((pr.store||"").toLowerCase().includes("rakuten")) {
+          adv = {slug:"rakuten", name:"Rakuten", emoji:"\uD83D\uDECD\uFE0F", color:"#bf0000", active:true, awin_mid:RAKUTEN_MID};
         } else {
           continue;
         }
       }
-      const rawUrl = (pr.url&&pr.url!=="null"&&pr.url.length>15)?pr.url:null;
-      const kw = pr.name.length>5?pr.name:(pr.keywords||pr.name);
+      const rawUrl = (pr.url && pr.url !== "null" && pr.url.length > 15) ? pr.url : null;
+      const kw = pr.name.length > 5 ? pr.name : (pr.keywords || pr.name);
       const url = buildLink(adv, kw, rawUrl);
       if (!url) continue;
-      buttons += cardProduct(pr.name, pr.price||"Voir prix", url, adv, pr.img||null, pr.badge||null);
+      // Affiche le vrai prix si dispo, sinon "Voir prix"
+      const displayPrice = (pr.price && pr.price !== "null" && pr.price !== "undefined" && pr.price.length > 0)
+        ? pr.price : "Voir prix";
+      buttons += cardProduct(pr.name, displayPrice, url, adv, pr.img||null, pr.badge||null);
     }
 
     let promoHtml = "";
-    const sortedPromos = promos.filter(function(c){return c.code;}).sort(function(a,b){return (b.best?1:0)-(a.best?1:0);});
-    for (const c of sortedPromos.slice(0,2)) {
+    for (const c of promos.sort(function(a,b){return (b.best?1:0)-(a.best?1:0);}).slice(0,2)) {
       promoHtml += promoBox(c.code, c.store||"boutique", c.discount||"Reduction exclusive", c.best||false);
     }
 
-    const first = products.find(function(p){return (p.store||"").includes("amazon");})||products[0];
+    const first = products.find(function(p){return (p.store||"").toLowerCase().includes("amazon");})||products[0];
     let wishHtml = "";
     if (first) {
-      const adv0 = findAdv(advertisers,first.store)||{slug:"amazon",name:"Amazon",color:"#e47911",active:true};
+      const adv0 = findAdv(advertisers, first.store)||{slug:"amazon", name:"Amazon", color:"#e47911", active:true};
       const wUrl = buildLink(adv0, first.keywords||first.name, first.url||null)||"";
-      const wD = JSON.stringify({type:"product",name:first.name,price:first.price,store:first.store,url:wUrl}).replace(/"/g,"&quot;");
+      const wD = JSON.stringify({type:"product", name:first.name, price:first.price, store:first.store, url:wUrl}).replace(/"/g,"&quot;");
       wishHtml = '<button onclick="addToWishlist('+wD+')" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">\u2661 Ajouter a ma wishlist</button>';
     }
 
