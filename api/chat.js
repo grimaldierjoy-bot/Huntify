@@ -591,7 +591,7 @@ export default async function handler(req) {
       // Boutons voir plus : Booking + Expedia
       const htMin = htPrices.length?Math.max(0,Math.min.apply(null,htPrices)-20):null;
       const htMax = htPrices.length?Math.max.apply(null,htPrices)+50:null;
-      html += '<div style="font-size:11px;color:#7c89a8;font-weight:600;margin:10px 0 4px">🔍 Voir plus d'hôtels :</div>'
+      html += '<div style="font-size:11px;color:#7c89a8;font-weight:600;margin:10px 0 4px">🔍 Voir plus d\'hotels :</div>'
         +'<div style="display:flex;gap:8px">'
         +'<a href="'+bookingLink(itin.dest||"",finalCi,finalCo,finalAdults,null)+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">🏨 Booking.com</a>'
         +'<a href="'+expediaLink(itin.dest||"",finalCi,finalCo,finalAdults)+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#00355f,#00a0e3);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">✈️ Expedia.fr</a>'
