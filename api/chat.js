@@ -83,10 +83,9 @@ async function getAdvertisers() {
 // ── LIENS ─────────────────────────────────────────────────────────────────────
 function amazonLink(keywords, asin) {
   var kw = (keywords||"").replace(/\s+/g," ").trim().slice(0,100);
-  var validAsin = asin && /^B[A-Z0-9]{9}$/.test(asin);
-  if (validAsin) {
-    return "https://www.amazon.fr/dp/"+asin+"?tag="+AMAZON_TAG;
-  }
+  // On utilise TOUJOURS le lien de recherche avec le nom exact
+  // Le lien /dp/ASIN ne marche pas si l ASIN vient d amazon.com (marketplace differente)
+  // La recherche est 100% fiable et le tag affilié fonctionne pareil
   return "https://www.amazon.fr/s?k="+encodeURIComponent(kw)+"&tag="+AMAZON_TAG;
 }
 
@@ -720,8 +719,11 @@ export default async function handler(req) {
         +"Pour chaque jour : trajet etape par etape avec modes de transport, prix et durees reels.\n"
         +"Pour chaque hotel : adresse, note, description, points forts.\n"
         +"Pour chaque restaurant : nom reel, note, specialite, prix d un repas.\n\n"
-        +"Si pas de destination : propose 3 destinations (t:p).\n"
-        +"Si destination connue : itineraire complet (t:i).\n\n"
+        +"REGLE CRITIQUE - choisis le bon format :\n"
+        +"- Destination NON mentionnee dans la conversation → OBLIGATOIREMENT t:p avec 3 propositions\n"
+        +"- Destination mentionnee → t:i avec itineraire complet\n"
+        +"- Info manquante et 0 question posee → t:q avec UNE question\n"
+        +"Si l utilisateur dit je ne sais pas / propose / surprise / des idees → t:p OBLIGATOIREMENT\n\n"
         +"FORMAT t:i :\n"
         +"{t:\"i\", recap:\"phrase enthousiaste\", itin:{\n"
         +"  dest, country, flag, dur, dep, style,\n"
