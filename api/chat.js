@@ -892,7 +892,7 @@ export default async function handler(req) {
         url:bookingLink(dest,fCi,fCo,fAd,null)}).replace(/"/g,"&quot;");
       html += "<div style='display:flex;gap:8px;margin-top:8px'>"
         +"<button onclick='addToWishlist("+wD+")' style='flex:1;background:linear-gradient(135deg,#1f2da0,#2f54ff);border:none;color:#fff;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit'>\u2661 Sauvegarder</button>"
-        +"<button onclick='exportItinerary(\"" + itinId + "\")' style='background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit'>\u2B07\uFE0F PDF</button>"
+        +"<button onclick=\"(function(){var c=document.querySelector('[class*=chat],[class*=messages],[class*=response]');var w=window.open('','_blank');if(w){w.document.write('<html><head><title>Itineraire Huntify</title><meta charset=UTF-8><style>body{font-family:sans-serif;padding:20px;max-width:800px;margin:0 auto}@media print{button,a[onclick]{display:none}}</style></head><body>'+document.body.innerHTML+'</body></html>');w.document.close();setTimeout(function(){w.print();},400);}else window.print();})()\" style=\"background:#f5f7ff;border:1.5px solid #c7d2fe;color:#3b5bdb;border-radius:12px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit\">\u2B07\uFE0F PDF</button>"
         +"</div>";
 
       return new Response(JSON.stringify({reply:html,sessionId:sid}),{headers:H});
@@ -929,16 +929,27 @@ export default async function handler(req) {
     const dbCtx = await dbLookup(recap);
 
     // Etape 2 : Groq DeepSearch cherche les vrais produits avec ASINs
-    const searchPrompt = "Recherche sur amazon.fr les meilleurs produits pour : "+recap+".\n"
-      +(dbCtx?"Donnees: "+dbCtx+"\n":"")
-      +"IMPORTANT: ne retourne un ASIN (URL /dp/B+9chars) que si tu es CERTAIN qu il existe.\n"
-      +"Si incertain : url:null (le systeme fera une recherche a la place, c est ok).\n"
-      +"Prix : vrai prix amazon.fr. Si inconnu : null.\n"
-      +"Rakuten : 1 produit, url:null est ok.\n"
-      +"JSON: {summary:string, "
-      +"products:[{name,price:string|null,store:'amazon'|'rakuten',keywords,url:string|null,badge}], "
-      +"promoCodes:[{code,store,discount,best:bool}]}";
-
+    // Prompt produit : l IA est autonome, elle choisit les meilleurs produits
+    // et cherche les vraies URLs. Pas de contrainte sur les marques ou modeles.
+    const searchPrompt =
+      "Tu es un expert shopping. Cherche les MEILLEURS produits pour : "+recap+".\n"
+      +(dbCtx?"Contexte : "+dbCtx+"\n":"")
+      +"Tu es libre de choisir les marques et modeles que tu juges les meilleurs.\n"
+      +"Pour Amazon.fr : trouve les vraies pages produit avec leur ASIN (B+9 alphanum).\n"
+      +"Pour Rakuten.fr : trouve le produit le plus pertinent.\n"
+      +"Donne les vrais prix actuels. Si tu n es pas sur d un prix, donne une fourchette.\n"
+      +"Retourne exactement ce JSON :\n"
+      +"{ summary: \"phrase naturelle qui resume ta selection et pourquoi ces produits\",\n"
+      +"  products: [\n"
+      +"    { name: \"nom complet du produit\",\n"
+      +"      price: \"prix en EUR ex: 39.99 EUR\",\n"
+      +"      store: \"amazon\" ou \"rakuten\",\n"
+      +"      keywords: \"mots cles de recherche\",\n"
+      +"      url: \"https://www.amazon.fr/dp/BASIN ou null si incertain\",\n"
+      +"      badge: \"ex: Meilleure vente, Rapport qualite/prix, Top avis\" }\n"
+      +"  ],\n"
+      +"  promoCodes: [] }\n"
+      +"JSON uniquement."
     const groqRaw  = await groqSearch(searchPrompt, 1200);
     const groqData = parseJSON(groqRaw||"");
     let products   = groqData.products||[];
@@ -948,36 +959,44 @@ export default async function handler(req) {
     // Etape 3 : Detecte si Groq a invente un ASIN
     // Invente = URL non-null mais format ASIN invalide
     // Honnete = URL null (on utilise /s?k= → pas de pb)
+    // Groq a invente une URL ? (url non-null mais ASIN invalide)
     const groqLied = products.some(function(p){
       return (p.store||"").includes("amazon")
         && p.url && p.url!=="null" && p.url.length>5
         && !/\/dp\/B[A-Z0-9]{9}/.test(p.url);
     });
 
-    // Efface les prix sur produits sans ASIN (prix sans source = invente)
+    // Nettoie les urls nulles
     products.forEach(function(p){
-      if ((p.store||"").includes("amazon") && (!p.url||p.url==="null")) {
-        p.price = null;
+      if ((p.store||"").includes("amazon") && (!p.url||p.url==="null"||p.url==="undefined")) {
+        p.url = null;
       }
     });
 
-    // Etape 4 : Claude web_search SEULEMENT si Groq a invente
-    if (groqLied) {
-      const cRaw = await claudeAI(
-        "Agent shopping. Cherche sur amazon.fr : "+recap+". JSON: {products:[{name,price,store:'amazon',keywords,url,badge}]}",
-        "Trouve les vrais ASINs (URL: https://www.amazon.fr/dp/B0XXXXXXXXX). JSON uniquement.",
-        500,
-        [{type:"web_search_20250305",name:"web_search",max_uses:2}]
-      );
-      const cProds = parseJSON(cRaw||"").products||[];
-      const validC = cProds.filter(function(p){return p.url&&/\/dp\/B[A-Z0-9]{9}/.test(p.url);});
+    // Claude + web_search si pas d ASIN valide ou si Groq a invente
+    var hasValidAsin = products.some(function(p){
+      return (p.store||"").includes("amazon") && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url);
+    });
+
+    if (groqLied || !hasValidAsin) {
+      var cpSys = "Tu es expert shopping. Cherche sur amazon.fr les meilleurs produits pour : "+recap+". "
+        +"Tu es libre de choisir les meilleures marques et modeles selon ton expertise. "
+        +"Trouve les vraies pages produit avec leurs ASINs. "
+        +"JSON uniquement: {summary:string, products:[{name,price,store,keywords,url,badge}]}";
+      const cRaw = await claudeAI(cpSys, "Cherche sur amazon.fr et retourne le JSON.", 600,
+        [{type:"web_search_20250305",name:"web_search",max_uses:3}]);
+      const cParsed = parseJSON(cRaw||"");
+      const cProds  = cParsed.products||[];
+      const validC  = cProds.filter(function(p){
+        return (p.store||"").includes("amazon") && p.url && /\/dp\/B[A-Z0-9]{9}/.test(p.url);
+      });
       if (validC.length) {
-        // Remplace seulement les produits Amazon par ceux de Claude
         products = products.filter(function(p){return !(p.store||"").includes("amazon");});
-        products = validC.concat(products);
-        if (!summary && parseJSON(cRaw||"").summary) summary = parseJSON(cRaw||"").summary;
+        products  = validC.concat(products);
+        if (cParsed.summary) summary = cParsed.summary;
       }
     }
+
 
     // Garantit Amazon + Rakuten
     if (!products.some(function(p){return (p.store||"").includes("amazon");})) {
