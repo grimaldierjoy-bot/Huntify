@@ -82,11 +82,12 @@ async function getAdvertisers() {
 
 // ── LIENS ─────────────────────────────────────────────────────────────────────
 function amazonLink(keywords, asin) {
-  const validAsin = asin && /^B[A-Z0-9]{9}$/.test(asin);
-  const base = validAsin
-    ? "https://www.amazon.fr/dp/"+asin
-    : "https://www.amazon.fr/s?k="+encodeURIComponent((keywords||"").replace(/\s+/g," ").trim().slice(0,80));
-  return base+"?tag="+AMAZON_TAG;
+  var kw = (keywords||"").replace(/\s+/g," ").trim().slice(0,100);
+  var validAsin = asin && /^B[A-Z0-9]{9}$/.test(asin);
+  if (validAsin) {
+    return "https://www.amazon.fr/dp/"+asin+"?tag="+AMAZON_TAG;
+  }
+  return "https://www.amazon.fr/s?k="+encodeURIComponent(kw)+"&tag="+AMAZON_TAG;
 }
 
 function rakutenLink(keywords) {
@@ -935,7 +936,7 @@ export default async function handler(req) {
       "Tu es un expert shopping. Cherche les MEILLEURS produits pour : "+recap+".\n"
       +(dbCtx?"Contexte : "+dbCtx+"\n":"")
       +"Tu es libre de choisir les marques et modeles que tu juges les meilleurs.\n"
-      +"Pour Amazon.fr : trouve les vraies pages produit avec leur ASIN (B+9 alphanum).\n"
+      +"Pour amazon.fr : les ASINs .fr sont differents de .com, cherche sur amazon.fr specifiquement.\n"
       +"Pour Rakuten.fr : trouve le produit le plus pertinent.\n"
       +"Donne les vrais prix actuels. Si tu n es pas sur d un prix, donne une fourchette.\n"
       +"Retourne exactement ce JSON :\n"
@@ -979,10 +980,12 @@ export default async function handler(req) {
     });
 
     if (groqLied || !hasValidAsin) {
-      var cpSys = "Tu es expert shopping. Cherche sur amazon.fr les meilleurs produits pour : "+recap+". "
-        +"Tu es libre de choisir les meilleures marques et modeles selon ton expertise. "
-        +"Trouve les vraies pages produit avec leurs ASINs. "
-        +"JSON uniquement: {summary:string, products:[{name,price,store,keywords,url,badge}]}";
+      var cpSys = "Tu es expert shopping. Tu cherches sur amazon.fr uniquement. "
+        +"Produit recherche : "+recap+". "
+        +"Les ASINs amazon.fr sont differents de amazon.com - cherche specifiquement sur amazon.fr. "
+        +"Retourne les vraies URLs amazon.fr avec les bons ASINs. "
+        +"Tu choisis librement les meilleurs produits selon ton expertise. "
+        +"JSON: {summary:string, products:[{name,price,store,keywords,url,badge}]}"
       const cRaw = await claudeAI(cpSys, "Cherche sur amazon.fr et retourne le JSON.", 600,
         [{type:"web_search_20250305",name:"web_search",max_uses:3}]);
       const cParsed = parseJSON(cRaw||"");
