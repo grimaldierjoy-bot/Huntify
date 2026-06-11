@@ -281,8 +281,22 @@ async function freeAI(sys, user, maxTok) {
 
 function parseJSON(raw) {
   if (!raw) return {};
-  try { const m=raw.match(/```(?:json)?\s*([\s\S]*?)```/); if(m) return JSON.parse(m[1].trim()); } catch(e){}
-  try { const m=raw.match(/\{[\s\S]*\}/); if(m) return JSON.parse(m[0]); } catch(e){}
+  // 1. Bloc code markdown
+  try { var m=raw.match(/```(?:json)?\s*([\s\S]*?)```/); if(m) return JSON.parse(m[1].trim()); } catch(e){}
+  // 2. JSON direct
+  try { var m2=raw.match(/\{[\s\S]*\}/); if(m2) return JSON.parse(m2[0]); } catch(e){}
+  // 3. Cherche le premier { et extrait jusqu au } correspondant
+  try {
+    var start = raw.indexOf('{');
+    if (start >= 0) {
+      var depth = 0, end = -1;
+      for (var i=start; i<raw.length; i++) {
+        if (raw[i]==='{') depth++;
+        else if (raw[i]==='}') { depth--; if (depth===0) { end=i; break; } }
+      }
+      if (end > start) return JSON.parse(raw.slice(start, end+1));
+    }
+  } catch(e){}
   return {};
 }
 
@@ -610,16 +624,14 @@ export default async function handler(req) {
         +"Date : "+today+"\n"
         +"Conversation complete :\n"+hist+"\n\n"
         +"Message : "+message+"\n\n"
-        +"Questions deja posees : "+nbQ+". "
-        +(nbQ>0
-          ?"Tu as deja pose une question. GENERE maintenant, ne pose plus de question."
-          :"Si une info vraiment cruciale manque tu peux poser UNE question courte.")
-        +"\n\nReflechis librement et utilise le web pour trouver :\n"
-        +"- Vrais prix de vols avec compagnie et duree\n"
-        +"- Vrais hotels existants avec vrais prix par nuit, adresse, note\n"
-        +"- Transports locaux (train/bus/ferry) avec prix et durees reels\n"
-        +"- Restaurants locaux avec vrais prix d un repas, specialite\n"
-        +"- Activites avec tarifs reels et conseils pratiques\n\n"
+        +"Echanges precedents : "+nbQ+" question(s) posee(s) par toi.\n"
+        +"Principe : tu es un vrai conseiller voyage, pas un formulaire. "
+        +"Tu lis toute la conversation, tu comprends le contexte, et tu agis librement.\n"
+        +"Si tu as deja pose une question et que l utilisateur a repondu, GENERE.\n"
+        +"Tu peux poser UNE question seulement si vraiment aucune destination ni dates ne sont inferables.\n\n"
+        +"Sers-toi du web pour tout ce qui est prix : vols, hotels, restaurants, transports.\n"
+        +"Ne dis jamais un prix que tu n as pas verifie. Si incertain, donne une fourchette.\n"
+        +"Sois enthousiaste, precis, et donne des details utiles que l utilisateur ne connait pas.\n\n"
         +"Retourne UN JSON selon ce que tu decides :\n\n"
         +"Si tu poses une question : {\"t\":\"q\", \"msg\":\"ta question naturelle\"}\n\n"
         +"Si tu proposes des destinations (pas de destination connue) :\n"
@@ -816,10 +828,11 @@ export default async function handler(req) {
       : "Demande: "+message;
 
     const intentRaw = await groq(
-      "Tu es conseiller shopping Huntify. Lis toute la conversation et deduis le produit exact cherche "
-      +"avec TOUS les criteres mentionnes (type, caracteristiques, budget). "
-      +"ready:true si tu comprends (meme vaguement). "
-      +"JSON: {ready:bool, recap:'produit exact avec tous les criteres', msg:'question si vraiment incomprehensible'}",
+      "Tu es le conseiller shopping Huntify. Tu lis toute la conversation et tu comprends ce que l utilisateur veut vraiment. "
+      +"Tu es curieux et attentif : tu captes les criteres implicites (style de vie, budget, usage). "
+      +"ready:true si tu as compris (meme vaguement). Un mot suffit. "
+      +"recap : decris le produit ideal en integrant TOUS les criteres mentionnes dans la conversation. "
+      +"JSON: {ready:bool, recap:string, msg:string}",
       ctxMsg, 300
     ) || await gemini("Shopping conseiller. JSON: {ready:bool,recap:string,msg:string}\n\n"+ctxMsg, 300);
 
@@ -947,9 +960,11 @@ export default async function handler(req) {
     }),{headers:H});
 
   } catch(err) {
-    console.error("Huntify error:", err&&err.message, err&&err.stack);
+    var msg = err&&err.message ? err.message : String(err);
+    var stk = err&&err.stack ? err.stack.slice(0,300) : "";
+    console.error("Huntify error:", msg, stk);
     return new Response(JSON.stringify({
-      reply:'<div style="font-size:13px;color:#1e293b">Une erreur est survenue, reessayez !</div>'
+      reply:"<div style='font-size:13px;color:#1e293b;padding:8px'>"        +"<strong>Erreur technique</strong><br>"+msg.replace(/</g,"&lt;").slice(0,120)+"</div>"
     }),{status:200,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
   }
 }
