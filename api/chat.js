@@ -1,4 +1,4 @@
-export const config = { runtime: 'edge' };
+export const config = { runtime: 'edge', maxDuration: 60 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HUNTIFY v4 — Agent IA shopping + voyage
@@ -42,6 +42,22 @@ function toIATA(s) {
   const k = s.toLowerCase().trim();
   for (const [n,v] of Object.entries(IATA)) { if (k.includes(n)) return v; }
   return null;
+}
+
+// ── FETCH AVEC TIMEOUT ───────────────────────────────────────────────────────
+// Evite les 504 : chaque appel IA a un timeout strict
+async function fetchWithTimeout(url, opts, ms) {
+  ms = ms||12000;
+  var ctrl = new AbortController();
+  var timer = setTimeout(function(){ ctrl.abort(); }, ms||8000);
+  try {
+    var r = await fetch(url, Object.assign({}, opts, {signal: ctrl.signal}));
+    clearTimeout(timer);
+    return r;
+  } catch(e) {
+    clearTimeout(timer);
+    return null;
+  }
 }
 
 // ── SUPABASE ──────────────────────────────────────────────────────────────────
@@ -195,12 +211,12 @@ function fmtHist(history, max) {
 async function groq(sys, user, maxTok) {
   const k=process.env.GROQ_API_KEY; if(!k) return null;
   try {
-    const r=await fetch("https://api.groq.com/openai/v1/chat/completions",{
+    const r=await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions",{
       method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},
       body:JSON.stringify({model:"llama-3.3-70b-versatile",max_tokens:maxTok||500,temperature:0.2,
         messages:[{role:"system",content:sys},{role:"user",content:user}]})
-    });
-    if(!r.ok) return null;
+    },8000);
+    if(!r||!r.ok) return null;
     const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
@@ -208,11 +224,11 @@ async function groq(sys, user, maxTok) {
 async function groqSearch(prompt, maxTok) {
   const k=process.env.GROQ_API_KEY; if(!k) return null;
   try {
-    const r=await fetch("https://api.groq.com/openai/v1/chat/completions",{
+    const r=await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions",{
       method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},
       body:JSON.stringify({model:"compound-beta",max_tokens:maxTok||1500,
         messages:[{role:"user",content:prompt}]})
-    });
+    },18000);
     if(!r.ok) return await groq("Reponds en JSON.",prompt,maxTok||1500);
     const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return await groq("Reponds en JSON.",prompt,maxTok||1500);}
@@ -221,11 +237,11 @@ async function groqSearch(prompt, maxTok) {
 async function gemini(prompt, maxTok) {
   const k=process.env.GEMINI_API_KEY; if(!k) return null;
   try {
-    const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+k,{
+    const r=await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+k,{
       method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:maxTok||500,temperature:0.2}})
-    });
-    if(!r.ok) return null;
+    },8000);
+    if(!r||!r.ok) return null;
     const d=await r.json(); return d.candidates&&d.candidates[0]?d.candidates[0].content.parts[0].text:null;
   } catch(e){return null;}
 }
@@ -233,12 +249,12 @@ async function gemini(prompt, maxTok) {
 async function mistral(sys, user, maxTok) {
   const k=process.env.MISTRAL_API_KEY; if(!k) return null;
   try {
-    const r=await fetch("https://api.mistral.ai/v1/chat/completions",{
+    const r=await fetchWithTimeout("https://api.mistral.ai/v1/chat/completions",{
       method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},
       body:JSON.stringify({model:"mistral-small-latest",max_tokens:maxTok||500,temperature:0.2,
         messages:[{role:"system",content:sys},{role:"user",content:user}]})
-    });
-    if(!r.ok) return null;
+    },8000);
+    if(!r||!r.ok) return null;
     const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
@@ -246,12 +262,12 @@ async function mistral(sys, user, maxTok) {
 async function deepseek(sys, user, maxTok) {
   const k=process.env.DEEPSEEK_API_KEY; if(!k) return null;
   try {
-    const r=await fetch("https://api.deepseek.com/v1/chat/completions",{
+    const r=await fetchWithTimeout("https://api.deepseek.com/v1/chat/completions",{
       method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},
       body:JSON.stringify({model:"deepseek-chat",max_tokens:maxTok||500,temperature:0.2,
         messages:[{role:"system",content:sys},{role:"user",content:user}]})
-    });
-    if(!r.ok) return null;
+    },8000);
+    if(!r||!r.ok) return null;
     const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
@@ -261,11 +277,11 @@ async function claudeAI(sys, user, maxTok, tools) {
   try {
     const payload={model:MODEL,max_tokens:maxTok||800,system:sys,messages:[{role:"user",content:user}]};
     if(tools&&tools.length) payload.tools=tools;
-    const r=await fetch("https://api.anthropic.com/v1/messages",{
+    const r=await fetchWithTimeout("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01"},
       body:JSON.stringify(payload)
-    });
+    },12000);
     const d=await r.json(); if(!r.ok) return null;
     let t=""; for(const b of (d.content||[])){if(b.type==="text")t+=b.text;} return t||null;
   } catch(e){return null;}
