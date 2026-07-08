@@ -1,4 +1,3 @@
-
 export const config = { runtime: 'edge' };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -371,6 +370,3 @@ export default async function handler(req) {
     return new Response(JSON.stringify({reply:'<div style="font-size:13px;color:#1e293b">Desole, probleme momentane. Reessayez !</div>'}),{status:200,headers:{"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"}});
   }
 }
-
-
-
