@@ -1,6 +1,4 @@
-bash
 
-cat > /mnt/user-data/outputs/api/chat.js << 'ENDOFFILE'
 export const config = { runtime: 'edge' };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -373,14 +371,6 @@ export default async function handler(req) {
     return new Response(JSON.stringify({reply:'<div style="font-size:13px;color:#1e293b">Desole, probleme momentane. Reessayez !</div>'}),{status:200,headers:{"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"}});
   }
 }
-ENDOFFILE
-node --check /mnt/user-data/outputs/api/chat.js 2>&1 && echo "✅ chat.js SYNTAX OK"
-wc -l /mnt/user-data/outputs/api/chat.js
-Sortie
-
-✅ chat.js SYNTAX OK
-372 /mnt/user-data/outputs/api/chat.js
-
 
 
 
