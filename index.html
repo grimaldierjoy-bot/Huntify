@@ -63,11 +63,138 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
 </style>
 </head>
 <body>
-<!-- Tout le HTML reste IDENTIQUE à ce que tu avais (je ne l'ai pas recopié ici pour gagner de la place) -->
-<!-- ... (copie tout le HTML du hero jusqu'au modal alerte) ... -->
+<div class="wrap">
 
-<!-- COOKIES (assuré visible) -->
-<div class="cookie-banner" id="cookieBanner" style="display:none">
+<!-- NAV -->
+<header style="background:rgba(255,255,255,.85);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:14px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:200">
+  <div style="display:flex;align-items:center;gap:10px">
+    <div style="width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,var(--blue),#5b7bff);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(47,84,255,.4)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><circle cx="11" cy="11" r="7.5"/><path d="m21 21-4.3-4.3"/></svg>
+    </div>
+    <div>
+      <div style="font-family:var(--display);font-size:21px;font-weight:800;color:var(--ink)">Hunt<span style="color:var(--blue)">ify</span></div>
+      <div style="font-size:9px;color:var(--muted);font-weight:700;letter-spacing:.14em;margin-top:-2px">AI PRICE HUNTER</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:9px">
+    <div style="background:var(--green-bg);border:1px solid #b6f0c6;border-radius:100px;padding:5px 11px;display:flex;align-items:center;gap:5px">
+      <div style="width:7px;height:7px;border-radius:50%;background:var(--green);animation:shimmer 2s infinite"></div>
+      <span style="font-size:11px;color:var(--green);font-weight:700">IA Active</span>
+    </div>
+    <button id="bellBtn" style="position:relative;width:36px;height:36px;border-radius:50%;background:var(--blue-soft);border:1px solid var(--line);cursor:pointer;display:none;align-items:center;justify-content:center">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2f54ff" stroke-width="2.5" stroke-linecap="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+      <span id="bellCount" style="display:none;position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:100px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;line-height:18px;text-align:center"></span>
+    </button>
+    <button id="authBtn" style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--blue2));border:none;cursor:pointer;display:flex;align-items:center;justify-content:center">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- HERO -->
+<section style="position:relative;overflow:hidden;padding:34px 22px 46px;background:radial-gradient(120% 90% at 70% 0%,#3a5cff 0%,#1f2da0 55%,#141e6b 100%)">
+  <div style="position:absolute;inset:0;opacity:.55;background:radial-gradient(40% 30% at 85% 12%,rgba(255,255,255,.18),transparent 70%),radial-gradient(50% 40% at 8% 92%,rgba(120,160,255,.28),transparent 70%)"></div>
+  <div style="position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:34px 34px;-webkit-mask:radial-gradient(70% 60% at 50% 18%,#000,transparent 75%);mask:radial-gradient(70% 60% at 50% 18%,#000,transparent 75%)"></div>
+  <div style="position:relative;z-index:1">
+    <span class="pill reveal d1" style="background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.25);backdrop-filter:blur(6px);margin-bottom:18px">⚡ Propulsé par l'Intelligence Artificielle</span>
+    <h1 class="reveal d2" style="font-size:39px;font-weight:800;line-height:1.05;color:#fff;margin-bottom:4px">Le bon prix,</h1>
+    <h1 class="reveal d2" style="font-size:39px;font-weight:800;line-height:1.05;background:linear-gradient(100deg,#bcd0ff,#fff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px">trouvé pour vous.</h1>
+    <p class="reveal d3" style="font-size:16px;color:rgba(255,255,255,.78);font-weight:500;margin-bottom:24px">Comparez moins. Économisez plus.</p>
+    <div class="reveal d4" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px">
+      <div style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);border-radius:16px;padding:14px 8px;text-align:center;backdrop-filter:blur(6px)"><div style="font-family:var(--display);font-size:18px;font-weight:800;color:#fff">284k€</div><div style="font-size:10px;color:rgba(255,255,255,.65);font-weight:600;margin-top:2px">Économisés</div></div>
+      <div style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);border-radius:16px;padding:14px 8px;text-align:center;backdrop-filter:blur(6px)"><div style="font-family:var(--display);font-size:18px;font-weight:800;color:#fff">50+</div><div style="font-size:10px;color:rgba(255,255,255,.65);font-weight:600;margin-top:2px">Boutiques</div></div>
+      <div style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);border-radius:16px;padding:14px 8px;text-align:center;backdrop-filter:blur(6px)"><div style="font-family:var(--display);font-size:18px;font-weight:800;color:#fff">1 200+</div><div style="font-size:10px;color:rgba(255,255,255,.65);font-weight:600;margin-top:2px">Deals/jour</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- CHAT -->
+<section style="margin:-26px 14px 20px;position:relative;z-index:2">
+  <div style="background:#fff;border-radius:24px;border:1px solid var(--line);overflow:hidden;box-shadow:0 20px 50px -22px rgba(31,42,138,.45)">
+    <div style="background:linear-gradient(120deg,#1f2da0,#2f54ff);padding:15px 18px 12px;display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:42px;height:42px;border-radius:13px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:21px;animation:floaty 4s ease-in-out infinite">✨</div>
+        <div><div style="font-family:var(--display);font-weight:700;font-size:15px;color:#fff">Intelligence Artificielle Huntify</div><div style="font-size:11.5px;color:rgba(255,255,255,.72)">Recherche temps réel · Amazon · Rakuten</div></div>
+        <div style="margin-left:auto;background:rgba(255,255,255,.16);border-radius:100px;padding:4px 11px"><span style="font-size:10.5px;color:#fff;font-weight:700">EN LIGNE</span></div>
+      </div>
+      <div id="modeToggle" style="display:flex;background:rgba(255,255,255,.15);border-radius:100px;padding:4px;gap:4px">
+        <button id="btnProduct" onclick="switchMode('product')" style="flex:1;border:none;border-radius:100px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:#fff;color:#2f54ff;transition:.2s">🛍️ Comparateur</button>
+        <button id="btnTravel" onclick="switchMode('travel')" style="flex:1;border:none;border-radius:100px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:transparent;color:rgba(255,255,255,.8);transition:.2s">✈️ Voyage</button>
+      </div>
+    </div>
+    <div id="chatBox" style="height:290px;overflow-y:auto;padding:18px 16px 8px;display:flex;flex-direction:column;gap:13px;background:linear-gradient(180deg,#fbfcff,#f5f8ff)"></div>
+    <div style="padding:11px 14px 8px;display:flex;gap:8px;overflow-x:auto;background:#fff;border-top:1px solid var(--line)" id="chipRow"></div>
+    <div style="padding:12px 14px 15px;display:flex;gap:10px;background:#fff;border-top:1px solid var(--line)">
+      <input class="inp" id="chatInput" placeholder="Ex : casque, veste, vitamines..." autocomplete="off">
+      <button class="send" id="sendBtn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="m22 2-7 20-4-9-9-4 20-7z"/></svg></button>
+    </div>
+  </div>
+</section>
+
+<!-- DEALS -->
+<section style="padding:4px 0 28px">
+  <div style="padding:0 16px;margin-bottom:14px">
+    <h2 style="font-size:23px;font-weight:800;color:var(--ink)">Deals du moment</h2>
+    <p style="font-size:12.5px;color:var(--muted);font-weight:500;margin-top:3px">Renouvelés chaque matin par l'IA · <span id="dealsDate"></span></p>
+  </div>
+  <div style="position:sticky;top:67px;z-index:30;background:rgba(244,247,255,.92);backdrop-filter:blur(12px);padding:10px 0 8px">
+    <div id="catRow" style="display:flex;gap:8px;padding:0 16px;overflow-x:auto"></div>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 16px 12px">
+    <div style="font-size:12px;color:var(--muted);font-weight:600"><b id="dealsCount" style="color:var(--ink)">0</b> deals</div>
+    <div id="sortRow" style="display:flex;gap:6px"></div>
+  </div>
+  <div id="dealsBox" style="display:flex;flex-direction:column;gap:13px;padding:0 16px"></div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section style="padding:8px 22px 32px">
+  <h2 style="font-size:20px;font-weight:800;color:var(--ink);text-align:center;margin-bottom:6px">Comment ça marche ?</h2>
+  <p style="font-size:13px;color:var(--muted);font-weight:500;text-align:center;margin-bottom:24px">Simple, rapide, gratuit</p>
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;gap:14px;align-items:center"><div style="width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;flex-shrink:0;font-family:var(--display)">1</div><div><div style="font-size:14px;font-weight:700;color:var(--ink)">Dites ce que vous cherchez</div><div style="font-size:12px;color:var(--muted);font-weight:500;margin-top:2px;line-height:1.4">Posez votre question à l'IA en langage naturel.</div></div></div>
+    <div style="background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;gap:14px;align-items:center"><div style="width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;flex-shrink:0;font-family:var(--display)">2</div><div><div style="font-size:14px;font-weight:700;color:var(--ink)">L'IA compare en temps réel</div><div style="font-size:12px;color:var(--muted);font-weight:500;margin-top:2px;line-height:1.4">Amazon, Rakuten et plus encore.</div></div></div>
+    <div style="background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;gap:14px;align-items:center"><div style="width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;flex-shrink:0;font-family:var(--display)">3</div><div><div style="font-size:14px;font-weight:700;color:var(--ink)">Vous achetez au meilleur prix</div><div style="font-size:12px;color:var(--muted);font-weight:500;margin-top:2px;line-height:1.4">Lien direct vers la boutique officielle.</div></div></div>
+  </div>
+</section>
+
+<!-- ALERT CTA -->
+<section style="margin:0 14px 24px;border-radius:24px;overflow:hidden">
+  <div style="background:linear-gradient(135deg,#1f2da0 0%,#2f54ff 55%,#5b7bff 100%);padding:36px 26px;text-align:center;position:relative">
+    <div style="position:absolute;top:-30px;right:-30px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.08)"></div>
+    <div style="position:relative;z-index:1">
+      <div style="font-size:44px;margin-bottom:14px">🔔</div>
+      <h3 style="font-size:25px;font-weight:800;color:#fff;margin-bottom:10px">Alertes prix<br>personnalisées</h3>
+      <p style="color:rgba(255,255,255,.78);font-size:15px;line-height:1.6;margin-bottom:26px">On vous prévient dès qu'une meilleure offre apparaît.</p>
+      <button id="ctaAlert" style="background:#fff;border:none;color:var(--blue);font-weight:800;border-radius:14px;padding:15px 32px;font-size:15px;cursor:pointer;font-family:inherit;width:100%">Créer mon alerte gratuite</button>
+    </div>
+  </div>
+</section>
+
+<!-- SECURITY BADGES -->
+<section style="margin:0 14px 24px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+  <div style="background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 14px;display:flex;gap:11px;align-items:flex-start"><div style="font-size:22px;line-height:1">🔒</div><div><div style="font-size:13px;font-weight:700;color:var(--ink);line-height:1.25">Paiement sécurisé</div><div style="font-size:11px;color:var(--muted);font-weight:500;margin-top:3px">Vous achetez sur le site officiel</div></div></div>
+  <div style="background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 14px;display:flex;gap:11px;align-items:flex-start"><div style="font-size:22px;line-height:1">🛡️</div><div><div style="font-size:13px;font-weight:700;color:var(--ink);line-height:1.25">Données protégées</div><div style="font-size:11px;color:var(--muted);font-weight:500;margin-top:3px">Conforme RGPD · jamais revendues</div></div></div>
+  <div style="background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 14px;display:flex;gap:11px;align-items:flex-start"><div style="font-size:22px;line-height:1">✅</div><div><div style="font-size:13px;font-weight:700;color:var(--ink);line-height:1.25">Prix vérifiés</div><div style="font-size:11px;color:var(--muted);font-weight:500;margin-top:3px">Comparés sur 50+ boutiques</div></div></div>
+  <div style="background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 14px;display:flex;gap:11px;align-items:flex-start"><div style="font-size:22px;line-height:1">🎁</div><div><div style="font-size:13px;font-weight:700;color:var(--ink);line-height:1.25">100% gratuit</div><div style="font-size:11px;color:var(--muted);font-weight:500;margin-top:3px">Aucun frais caché, jamais</div></div></div>
+</section>
+
+<!-- FOOTER -->
+<footer style="background:#fff;border-top:1px solid var(--line);padding:28px 22px 80px;text-align:center">
+  <div style="font-family:var(--display);font-size:22px;font-weight:800;color:var(--ink);margin-bottom:6px">Hunt<span style="color:var(--blue)">ify</span></div>
+  <div style="font-size:12px;color:var(--muted);font-weight:500;margin-bottom:14px">huntify.shop · Le bon prix, trouvé pour vous.</div>
+  <div style="display:flex;justify-content:center;gap:18px;font-size:12px;flex-wrap:wrap;margin-bottom:14px">
+    <a href="/legal.html" style="color:var(--muted);text-decoration:none">À propos</a>
+    <a href="mailto:contact@huntify.shop" style="color:var(--muted);text-decoration:none">Contact</a>
+    <a href="/legal.html" style="color:var(--muted);text-decoration:none">CGU</a>
+    <a href="/legal.html" style="color:var(--muted);text-decoration:none">Confidentialité</a>
+  </div>
+  <div style="font-size:9px;color:#c2cce3;line-height:1.4;max-width:340px;margin:0 auto">En tant que Partenaire Amazon, Huntify réalise un bénéfice sur les achats remplissant les conditions requises.</div>
+</footer>
+</div>
+
+<!-- COOKIES -->
+<div class="cookie-banner" id="cookieBanner">
   <div class="cookie-inner">
     <div style="display:flex;align-items:flex-start;gap:12px">
       <span style="font-size:22px">🍪</span>
@@ -83,168 +210,93 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
   </div>
 </div>
 
-<!-- Le reste des modals reste identique -->
+<!-- AUTH MODAL -->
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-sheet">
+    <div style="width:40px;height:4px;background:var(--line);border-radius:100px;margin:0 auto 24px"></div>
+    <div id="authContent">
+      <div style="font-size:36px;text-align:center;margin-bottom:12px">✨</div>
+      <h3 style="font-size:22px;font-weight:800;color:var(--ink);text-align:center;margin-bottom:8px">Connexion magique</h3>
+      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:24px;line-height:1.5">Entre ton email — on t'envoie un lien instantané. Pas de mot de passe !</p>
+      <div style="background:var(--blue-soft);border:1px solid #bfdbfe;border-radius:14px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:var(--blue);line-height:1.5">
+        ✨ <b>Avantages compte :</b> historique de recherches, alertes prix sauvegardées, recommandations personnalisées
+      </div>
+      <label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:6px">Ton email</label>
+      <input class="inp" id="authEmail" type="email" placeholder="toi@email.com" style="margin-bottom:16px">
+      <button onclick="sendMagicLink()" style="background:linear-gradient(135deg,var(--blue),var(--blue2));border:none;color:#fff;font-weight:800;border-radius:16px;padding:16px;font-size:15px;width:100%;cursor:pointer;font-family:inherit">Recevoir mon lien magique 🪄</button>
+      <button onclick="closeAuth()" style="background:none;border:none;color:var(--muted);font-weight:600;font-size:13px;width:100%;margin-top:14px;cursor:pointer;font-family:inherit">Continuer sans compte</button>
+      <p style="font-size:11px;color:#cbd5e1;text-align:center;margin-top:14px">🔒 Aucun mot de passe · Données protégées RGPD</p>
+    </div>
+  </div>
+</div>
+
+<!-- NOTIFICATIONS -->
+<div class="modal-bg" id="notifBg">
+  <div class="modal" id="notifContent">
+    <div style="width:40px;height:4px;background:var(--line);border-radius:100px;margin:0 auto 22px"></div>
+    <div style="font-size:40px;text-align:center;margin-bottom:10px">🔔</div>
+    <h3 style="font-size:22px;font-weight:800;color:var(--ink);text-align:center;margin-bottom:8px">Tes alertes prix</h3>
+    <p style="font-size:13px;color:var(--muted);font-weight:500;text-align:center;margin-bottom:20px">Les baisses repérées sur tes produits suivis</p>
+    <div id="notifList"><div style="color:var(--muted);font-size:13px;text-align:center;padding:10px 0">Chargement...</div></div>
+    <button id="closeNotifBtn" style="background:none;border:none;color:var(--muted);font-weight:600;font-size:13px;width:100%;margin-top:16px;cursor:pointer;font-family:inherit">Fermer</button>
+  </div>
+</div>
+
+<!-- MON COMPTE -->
+<div class="account-panel" id="accountPanel">
+  <div style="max-width:480px;margin:0 auto;padding:0 0 40px">
+    <header style="background:#fff;border-bottom:1px solid var(--line);padding:16px 20px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10">
+      <div style="font-family:var(--display);font-size:18px;font-weight:800;color:var(--ink)">Mon compte</div>
+      <button onclick="closeAccount()" style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--muted)">✕</button>
+    </header>
+    <div style="padding:24px 16px">
+      <div style="background:linear-gradient(135deg,var(--blue),var(--blue2));border-radius:20px;padding:24px;margin-bottom:20px;text-align:center">
+        <div style="width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,.2);margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:28px">👤</div>
+        <div id="accountEmail" style="color:#fff;font-weight:700;font-size:15px"></div>
+        <div style="color:rgba(255,255,255,.7);font-size:12px;margin-top:4px">Membre Huntify</div>
+      </div>
+      <div style="display:flex;background:var(--blue-soft);border-radius:100px;padding:4px;gap:2px;margin-bottom:16px">
+        <button onclick="switchTab('searches')" id="tabSearches" style="flex:1;border:none;border-radius:100px;padding:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff">🔍 Recherches</button>
+        <button onclick="switchTab('wishlist')" id="tabWishlist" style="flex:1;border:none;border-radius:100px;padding:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:transparent;color:#6366f1">♡ Wishlist</button>
+        <button onclick="switchTab('trends')" id="tabTrends" style="flex:1;border:none;border-radius:100px;padding:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:transparent;color:#6366f1">🔥 Tendances</button>
+      </div>
+      <div id="panelSearches" style="background:#fff;border-radius:20px;border:1px solid var(--line);padding:20px;margin-bottom:16px">
+        <div id="searchHistory"><div style="color:var(--muted);font-size:13px">Chargement...</div></div>
+      </div>
+      <div id="panelWishlist" style="background:#fff;border-radius:20px;border:1px solid var(--line);padding:20px;margin-bottom:16px;display:none">
+        <div id="wishlistItems"><div style="color:var(--muted);font-size:13px">Chargement...</div></div>
+      </div>
+      <div id="panelTrends" style="background:#fff;border-radius:20px;border:1px solid var(--line);padding:20px;margin-bottom:16px;display:none">
+        <div id="globalTrends"><div style="color:var(--muted);font-size:13px">Chargement...</div></div>
+      </div>
+      <button onclick="signOut()" style="background:#fff;border:2px solid #fee2e2;color:#ef4444;font-weight:700;border-radius:14px;padding:14px;font-size:14px;width:100%;cursor:pointer;font-family:inherit">Se déconnecter</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL ALERTE -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal" id="modalContent">
+    <div style="width:40px;height:4px;background:var(--line);border-radius:100px;margin:0 auto 22px"></div>
+    <div style="font-size:40px;text-align:center;margin-bottom:10px">🔔</div>
+    <h3 style="font-size:22px;font-weight:800;color:var(--ink);text-align:center;margin-bottom:8px">Créer une alerte prix</h3>
+    <p style="font-size:13px;color:var(--muted);font-weight:500;text-align:center;margin-bottom:24px">On vous prévient dans vos notifications 🔔 dès que le prix baisse.</p>
+    <label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:6px">Produit recherché</label>
+    <input class="inp" id="alProduct" placeholder="Ex : Casque Sony" style="margin-bottom:16px">
+    <label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:6px">Prix maximum (€)</label>
+    <input class="inp" id="alPrice" type="number" placeholder="Ex : 250" style="margin-bottom:16px">
+    <label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:6px">Votre email</label>
+    <input class="inp" id="alEmail" type="email" placeholder="votre@email.com" style="margin-bottom:22px">
+    <button id="submitAlertBtn" style="background:linear-gradient(135deg,var(--blue),var(--blue2));border:none;color:#fff;font-weight:800;border-radius:16px;padding:16px;font-size:15px;width:100%;cursor:pointer;font-family:inherit">Activer mon alerte gratuite</button>
+    <button id="closeModalBtn" style="background:none;border:none;color:var(--muted);font-weight:600;font-size:13px;width:100%;margin-top:14px;cursor:pointer;font-family:inherit">Annuler</button>
+  </div>
+</div>
 
 <script>
-// data.js optionnel
+// data.js optionnel — ne bloque pas si absent
 (function(){var s=document.createElement('script');s.src='/data.js';s.onerror=function(){};document.head.appendChild(s);})();
-
-const SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
-const SUPABASE_KEY = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
-const { createClient } = supabase;
-const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
-
-const CHIPS = ["Casque audio","Sneakers","Protéines","Airfryer","Montre connectée","Legging sport"];
-
-let typing = false, chatHistory = [], currentUser = null;
-let huntifyMode = 'product';
-let travelContext = { destination:null, budget:null, duration:null, travelers:null, style:null, suggestionsShown:false };
-let cookieConsent = localStorage.getItem('hconsent');
-let sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-
-let msgs = [{from:"bot",text:"Bonjour ! Je suis l'IA Huntify. 🛍️<br><br>Je recherche en temps réel sur Amazon, Rakuten et plus — dis-moi ce que tu cherches !<br><br><small style='color:#94a3b8'>💡 <b>Crée un compte</b> pour sauvegarder ton historique et recevoir des alertes prix personnalisées.</small>"}];
-
-const chatBox = document.getElementById('chatBox');
-const chatInput = document.getElementById('chatInput');
-
-function stripHtml(s){ return s.replace(/<[^>]*>/g,''); }
-
-// ====================== GESTION TRAVEL + SHARED (compatible Edge) ======================
-function initTravelAndShared() {
-  if (typeof window.initTravel === 'function') window.initTravel();
-  if (typeof window.sharedInit === 'function') window.sharedInit();
-}
-
-async function handleChatRequest(q) {
-  if (huntifyMode === 'travel' && typeof window.handleTravelChat === 'function') {
-    return await window.handleTravelChat(q, travelContext);
-  }
-  
-  // Appel standard
-  const res = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: stripHtml(q),
-      history: chatHistory.slice(-8),
-      sessionId,
-      userId: (cookieConsent==='yes' && currentUser) ? currentUser.id : null,
-      trackingEnabled: cookieConsent === 'yes',
-      mode: huntifyMode,
-      travelContext: huntifyMode === 'travel' ? travelContext : null
-    })
-  });
-  return await res.json();
-}
-// ============================================================================
-
-function initCookieBanner() {
-  const banner = document.getElementById('cookieBanner');
-  if (cookieConsent === null) {
-    banner.style.display = 'flex';
-  } else {
-    banner.style.display = 'none';
-  }
-}
-
-function acceptCookies() {
-  localStorage.setItem('hconsent', 'yes');
-  cookieConsent = 'yes';
-  document.getElementById('cookieBanner').style.display = 'none';
-}
-
-function refuseCookies() {
-  localStorage.setItem('hconsent', 'no');
-  cookieConsent = 'no';
-  document.getElementById('cookieBanner').style.display = 'none';
-}
-
-// Le reste des fonctions (auth, account, wishlist, deals...) restent identiques à ton code original.
-// Je les ai gardées courtes ici pour la lisibilité :
-
-async function checkUser() { /* identique */ }
-function updateAuthBtn() { /* identique */ }
-function openAuth() { /* identique */ }
-function closeAuth() { /* identique */ }
-async function sendMagicLink() { /* identique */ }
-async function signOut() { /* identique */ }
-async function openAccount() { /* identique */ }
-function switchTab(tab) { /* identique */ }
-async function addToWishlist(product) { /* identique */ }
-async function loadWishlist() { /* identique */ }
-async function loadSearchHistory() { /* identique */ }
-async function loadTrends() { /* identique */ }
-function renderChat() { /* identique */ }
-
-async function send(txt){
-  const q = (txt || chatInput.value).trim();
-  if(!q || typing) return;
-
-  msgs.push({from:"user",text:q}); 
-  chatInput.value = ""; 
-  typing = true; 
-  renderChat();
-
-  try {
-    chatHistory.push({role:"user",content:stripHtml(q)});
-    const data = await handleChatRequest(q);   // ← Appel centralisé
-
-    if (data.sessionId) sessionId = data.sessionId;
-    const reply = data.reply || "Désolé, réessayez.";
-
-    chatHistory.push({role:"assistant",content:stripHtml(reply)});
-    typing = false; 
-    msgs.push({from:"bot",text:reply});
-  } catch(e) {
-    typing = false; 
-    msgs.push({from:"bot",text:"Désolé, problème technique. Réessayez."});
-  }
-  renderChat();
-}
-
-function switchMode(mode) {
-  huntifyMode = mode;
-  const btnP = document.getElementById('btnProduct'), btnT = document.getElementById('btnTravel');
-  
-  if (mode === 'product') {
-    btnP.style.background = '#fff'; btnP.style.color = '#2f54ff';
-    btnT.style.background = 'transparent'; btnT.style.color = 'rgba(255,255,255,.8)';
-    msgs = [{from:"bot",text:"Bonjour ! Je suis l'IA Huntify..."}];
-    chatHistory = []; renderChat(); renderChips();
-    document.getElementById('chatInput').placeholder = 'Ex : casque, veste, vitamines...';
-  } else {
-    btnT.style.background = '#fff'; btnT.style.color = '#2f54ff';
-    btnP.style.background = 'transparent'; btnP.style.color = 'rgba(255,255,255,.8)';
-    msgs = [{from:"bot",text:"Bonjour ! Je suis ton agent voyage IA ✈️..."}];
-    chatHistory = []; 
-    travelContext = {destination:null,budget:null,duration:null,travelers:null,style:null,suggestionsShown:false};
-    renderChat();
-    document.getElementById('chipRow').innerHTML = ['Paris 3 jours','Rome en amoureux','Barcelone famille','Weekend montagne','Séjour plage 1 semaine']
-      .map(c => `<button class="chip" onclick="send('${c}')">${c}</button>`).join('');
-    document.getElementById('chatInput').placeholder = 'Ex : Paris 5 jours budget 1000€ culture...';
-    initTravelAndShared();
-  }
-}
-
-function renderChips() { /* identique */ }
-
-// === DEALS (identique à ton code original) ===
-let DEALS_DATA = [], dealCat = "Tous", dealSort = "pct";
-// ... (toutes les fonctions loadDeals, renderCatRow, renderDeals, etc.)
-
-// Initialisation finale
-checkUser().then(loadAlerts);
-initCookieBanner();
-renderChat();
-renderChips();
-loadDeals();
-initTravelAndShared();
 </script>
-</body>
-</html>
-// data.js optionnel
-(function(){var s=document.createElement('script');s.src='/data.js';s.onerror=function(){};document.head.appendChild(s);})();
-
+<script>
 const SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
 const { createClient } = supabase;
@@ -264,24 +316,6 @@ const chatBox = document.getElementById('chatBox');
 const chatInput = document.getElementById('chatInput');
 
 function stripHtml(s){ return s.replace(/<[^>]*>/g,''); }
-
-// ====================== LIENS VERS TRAVEL / SHARED / CHAT ======================
-function initTravelAndShared() {
-  if (typeof window.initTravel === 'function') window.initTravel();
-  if (typeof window.sharedInit === 'function') window.sharedInit();
-  if (typeof window.initChat === 'function') window.initChat();
-}
-
-async function sendTravelRequest(message) {
-  if (typeof window.handleTravelChat === 'function') {
-    return await window.handleTravelChat(message, travelContext);
-  }
-  // Fallback
-  const res = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({message:stripHtml(message), history:chatHistory.slice(-8), sessionId, mode:'travel', travelContext})});
-  return await res.json();
-}
-// ============================================================================
 
 function initCookieBanner() {
   document.getElementById('cookieBanner').style.display = (cookieConsent === null) ? 'flex' : 'none';
@@ -346,12 +380,116 @@ function switchTab(tab) {
   });
 }
 
-async function addToWishlist(product) { /* inchangé */ }
-async function loadWishlist() { /* inchangé */ }
-async function removeFromWishlist(id) { /* inchangé */ }
-async function loadSearchHistory() { /* inchangé */ }
-async function loadTrends() { /* inchangé */ }
-function exportItinerary(itinId) { /* inchangé */ }
+async function addToWishlist(product) {
+  if (!currentUser) { openAuth(); return; }
+  if (cookieConsent !== 'yes') { alert('Accepte les cookies pour utiliser la wishlist !'); return; }
+  await sb.from('wishlist').insert({ user_id:currentUser.id, product_name:product.name, product_price:product.price, product_store:product.type==='voyage'?'booking':(product.store||''), product_url:product.url });
+  try {
+    const key='huntify_wishlist_enriched';
+    const list=JSON.parse(localStorage.getItem(key)||'[]');
+    const dedup=list.filter(i=>i.name!==product.name);
+    dedup.unshift({...product,addedAt:new Date().toISOString()});
+    localStorage.setItem(key,JSON.stringify(dedup.slice(0,50)));
+  } catch(e){}
+  document.dispatchEvent(new CustomEvent('wishlist-added',{detail:product.name}));
+  msgs.push({from:'bot',text:`♡ <b>${product.name}</b> ajouté à ta wishlist !`});
+  renderChat();
+}
+
+document.addEventListener('wishlist-added',()=>{
+  const btn=document.getElementById('authBtn');
+  btn.style.background='linear-gradient(135deg,#f59e0b,#d97706)';
+  setTimeout(()=>updateAuthBtn(),1500);
+});
+
+async function loadWishlist() {
+  if (!currentUser) return;
+  const { data } = await sb.from('wishlist').select('*').eq('user_id',currentUser.id).order('created_at',{ascending:false}).limit(30);
+  const el=document.getElementById('wishlistItems');
+  if (!data||!data.length) { el.innerHTML='<div style="text-align:center;padding:20px 0"><div style="font-size:32px;margin-bottom:8px">♡</div><div style="color:#7c89a8;font-size:13px">Ta wishlist est vide.</div></div>'; return; }
+  let enriched={};
+  try { JSON.parse(localStorage.getItem('huntify_wishlist_enriched')||'[]').forEach(i=>enriched[i.name]=i); } catch(e){}
+  const catColors={budget:'#16a34a',confort:'#2f54ff',luxe:'#7c3aed'};
+  const catLabels={budget:'💚 Budget',confort:'💙 Confort',luxe:'💎 Luxe'};
+  el.innerHTML=data.map(item=>{
+    const isVoyage=item.product_store==='booking'||(item.product_name||'').includes('✈️');
+    const rich=enriched[item.product_name]||{};
+    const date=new Date(item.created_at).toLocaleDateString('fr',{day:'numeric',month:'short'});
+    const gradient=isVoyage?'linear-gradient(135deg,#1f2da0,#2f54ff)':'linear-gradient(135deg,#2f54ff,#4a6bff)';
+    if (isVoyage&&rich.hotels?.length) {
+      return `<div style="background:#fff;border:1px solid #e6ebf7;border-radius:14px;padding:14px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+          <div style="flex:1"><div style="font-size:14px;font-weight:800;color:#0e1430">${item.product_name}</div>
+          <div style="font-size:11px;color:#7c89a8;margin-top:2px">${rich.subtitle||''}</div></div>
+          <div style="display:flex;align-items:center;gap:8px"><span style="font-size:10px;color:#94a3b8">${date}</span>
+          <button onclick="removeFromWishlist(${item.id})" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:18px;padding:0">×</button></div>
+        </div>
+        <div style="margin-bottom:10px">
+          <div style="font-size:10px;font-weight:800;color:#7c89a8;text-transform:uppercase;margin-bottom:5px">🏨 Hôtels</div>
+          ${rich.hotels.map(h=>`<a href="${h.url||'#'}" target="_blank" style="display:flex;justify-content:space-between;align-items:center;background:#f8faff;border-radius:9px;padding:7px 10px;margin-bottom:4px;text-decoration:none;gap:8px">
+            <span style="font-size:10px;font-weight:700;color:${catColors[h.cat]||'#2f54ff'}">${catLabels[h.cat]||'🏨'}</span>
+            <span style="flex:1;font-size:12px;font-weight:600;color:#0e1430">${h.name}</span>
+          </a>`).join('')}
+        </div>
+        <div style="display:flex;gap:8px">
+          <a href="${item.product_url||'#'}" target="_blank" style="flex:1;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1f2da0,#2f54ff);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:12px;font-weight:700">🏨 Booking</a>
+          ${rich.flightUrl?`<a href="${rich.flightUrl}" target="_blank" style="flex:1;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-size:12px;font-weight:700">✈️ Vols</a>`:''}
+        </div>
+      </div>`;
+    }
+    return `<div style="background:#fff;border:1px solid #e6ebf7;border-radius:14px;padding:12px 14px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+          <div style="width:36px;height:36px;border-radius:10px;background:${gradient};display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">${isVoyage?'✈️':'🛍️'}</div>
+          <div style="min-width:0">
+            <div style="font-size:13px;font-weight:700;color:#0e1430;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.product_name}</div>
+            <div style="font-size:11px;color:#7c89a8;margin-top:2px">${item.product_store} · ${item.product_price||'Prix à vérifier'} · ${date}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <a href="${item.product_url}" target="_blank" style="background:${gradient};color:#fff;text-decoration:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700">${isVoyage?'Réserver':'Voir'}</a>
+          <button onclick="removeFromWishlist(${item.id})" style="background:#fff;border:1.5px solid #fee2e2;color:#ef4444;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit">✕</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function removeFromWishlist(id) { await sb.from('wishlist').delete().eq('id',id); loadWishlist(); }
+
+async function loadSearchHistory() {
+  if (!currentUser) return;
+  const { data } = await sb.from('searches').select('query,created_at').eq('user_id',currentUser.id).order('created_at',{ascending:false}).limit(10);
+  const el=document.getElementById('searchHistory');
+  if (!data||!data.length) { el.innerHTML='<div style="color:#7c89a8;font-size:13px">Aucune recherche encore.</div>'; return; }
+  el.innerHTML=data.map(s=>`<div onclick="send('${s.query.replace(/'/g,"\\'")}');closeAccount();" style="background:#f8faff;border-radius:10px;padding:10px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:13px;font-weight:600;color:#374151">🔍 ${s.query}</span><span style="font-size:11px;color:#94a3b8">${new Date(s.created_at).toLocaleDateString('fr')}</span></div>`).join('');
+}
+
+async function loadTrends() {
+  const { data } = await sb.from('trends').select('query,count').order('count',{ascending:false}).limit(8);
+  const el=document.getElementById('globalTrends');
+  if (!data||!data.length) { el.innerHTML='<div style="color:#7c89a8;font-size:13px">Pas encore de tendances.</div>'; return; }
+  el.innerHTML=data.map(t=>`<button onclick="send('${t.query.replace(/'/g,"\\'")}');closeAccount();" style="background:#eef2ff;border:1px solid #bfdbfe;color:#2f54ff;border-radius:100px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;margin:3px">${t.query} <span style="opacity:.6">(${t.count})</span></button>`).join('');
+}
+
+function exportItinerary(itinId) {
+  const el=itinId?document.getElementById(itinId):null;
+  let content='';
+  if (el) {
+    let parent=el;
+    while (parent&&!parent.style.maxWidth) parent=parent.parentElement;
+    content=parent?parent.innerHTML:el.outerHTML;
+  }
+  if (!content) { alert('Aucun itinéraire à exporter. Générez d\'abord votre voyage !'); return; }
+  const win=window.open('','_blank','width=820,height=950');
+  win.document.write(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Mon Itinéraire Huntify</title>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Plus Jakarta Sans',Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px;color:#1e293b;background:#f4f7ff}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}a{color:#2f54ff}@media print{.no-print{display:none!important}body{background:#fff;padding:16px}}.top{background:#fff;border-radius:16px;padding:16px 20px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;border:1px solid #e6ebf7}.logo{font-family:'Sora',sans-serif;font-size:20px;font-weight:800;color:#0e1430}.logo span{color:#2f54ff}.btn{background:linear-gradient(135deg,#2f54ff,#4a6bff);color:#fff;border:none;border-radius:10px;padding:10px 22px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}.content{background:#fff;border-radius:16px;padding:20px;border:1px solid #e6ebf7}</style>
+</head><body>
+<div class="top no-print"><div><div class="logo">Hunt<span>ify</span> · Feuille de route</div><div style="font-size:12px;color:#7c89a8;margin-top:2px">Générée le ${new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}</div></div><button class="btn" onclick="window.print()">🖨️ Imprimer / PDF</button></div>
+<div class="content">${content}</div></body></html>`);
+  win.document.close();
+}
 
 function renderChat(){
   chatBox.innerHTML=msgs.map(m=>`<div class="up" style="display:flex;justify-content:${m.from==='user'?'flex-end':'flex-start'};align-items:flex-end;gap:8px">
@@ -367,28 +505,31 @@ async function send(txt){
   msgs.push({from:"user",text:q}); chatInput.value=""; typing=true; renderChat();
   try {
     chatHistory.push({role:"user",content:stripHtml(q)});
-    
-    let data;
-    if (huntifyMode === 'travel') {
-      data = await sendTravelRequest(q);
-    } else {
-      const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({message:stripHtml(q),history:chatHistory.slice(-8),sessionId,
-          userId:(cookieConsent==='yes'&&currentUser)?currentUser.id:null,trackingEnabled:cookieConsent==='yes',
-          mode:huntifyMode,travelContext:huntifyMode==='travel'?travelContext:null})});
-      data=await res.json();
-    }
-    
+    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:stripHtml(q),history:chatHistory.slice(-8),sessionId,
+        userId:(cookieConsent==='yes'&&currentUser)?currentUser.id:null,trackingEnabled:cookieConsent==='yes',
+        mode:huntifyMode,travelContext:huntifyMode==='travel'?travelContext:null})});
+    const data=await res.json();
     if (data.sessionId) sessionId=data.sessionId;
     const reply=data.reply||"Désolé, réessayez.";
     chatHistory.push({role:"assistant",content:stripHtml(reply)});
-    
     if (huntifyMode==='travel') {
-      // Mise à jour contexte + appel shared si besoin
-      if (typeof window.updateTravelContext === 'function') window.updateTravelContext(travelContext);
+      const msgLow=q.toLowerCase();
+      const budgetM=q.match(/(\d+)\s*(?:€|euros?)/i); if(budgetM) travelContext.budget=budgetM[0];
+      const durM=q.match(/(\d+)\s*(?:jours?|nuits?|semaines?)/i); if(durM) travelContext.duration=durM[0];
+      const travM=q.match(/(\d+)\s*(?:personnes?|adultes?|enfants?)/i); if(travM) travelContext.travelers=travM[0];
+      if(/chill|plage|repos|détente/.test(msgLow)) travelContext.style='chill';
+      if(/culture|musée|histoire|monument/.test(msgLow)) travelContext.style='culture';
+      if(/aventure|randonnée|sport|nature/.test(msgLow)) travelContext.style='aventure';
+      if(/famille|enfant|kids/.test(msgLow)) travelContext.style='famille';
+      if(/romantique|amoureux|couple/.test(msgLow)) travelContext.style='romantique';
+      if(reply.includes('Jour 1')||reply.includes('Programme jour')) travelContext.suggestionsShown=true;
+      if(travelContext.suggestionsShown&&q.trim().split(' ').length<=5&&!budgetM&&!durM) travelContext.destination=q.trim();
     }
-    
     typing=false; msgs.push({from:"bot",text:reply});
+    if (!currentUser&&msgs.filter(m=>m.from==='user').length===2) {
+      setTimeout(()=>{msgs.push({from:'bot',text:"💡 <b>Crée un compte gratuit</b> pour retrouver tes recherches et recevoir des alertes prix !"});renderChat();},1500);
+    }
   } catch(e){ typing=false; msgs.push({from:"bot",text:"Désolé, problème technique. Réessayez."}); }
   renderChat();
 }
@@ -398,19 +539,18 @@ function switchMode(mode) {
   const btnP=document.getElementById('btnProduct'), btnT=document.getElementById('btnTravel');
   if (mode==='product') {
     btnP.style.background='#fff'; btnP.style.color='#2f54ff';
-    btnT.style.background='transparent'; btnT.style.color='rgba(255,255,255,.8)';
+    btnT.style.background='transparent'; btnT.style.color='rgba(255,255,255,.7)';
     msgs=[{from:"bot",text:"Bonjour ! Je suis l'IA Huntify. 🛍️<br><br>Je recherche en temps réel sur Amazon, Rakuten et plus — dis-moi ce que tu cherches !<br><br><small style='color:#94a3b8'>💡 <b>Crée un compte</b> pour sauvegarder ton historique et recevoir des alertes prix.</small>"}];
     chatHistory=[]; renderChat(); renderChips();
     document.getElementById('chatInput').placeholder='Ex : casque, veste, vitamines...';
   } else {
     btnT.style.background='#fff'; btnT.style.color='#2f54ff';
-    btnP.style.background='transparent'; btnP.style.color='rgba(255,255,255,.8)';
+    btnP.style.background='transparent'; btnP.style.color='rgba(255,255,255,.7)';
     msgs=[{from:"bot",text:"Bonjour ! Je suis ton agent voyage IA ✈️<br><br>Je vais créer ton itinéraire personnalisé jour par jour selon tes envies et ton budget.<br><br><small style='color:#94a3b8'>🏨 Hébergements <b>Booking.com</b> · Budget estimé · Programme sur-mesure</small>"}];
     chatHistory=[]; travelContext={destination:null,budget:null,duration:null,travelers:null,style:null,suggestionsShown:false};
     renderChat();
     document.getElementById('chipRow').innerHTML=['Paris 3 jours','Rome en amoureux','Barcelone famille','Weekend montagne','Séjour plage 1 semaine'].map(c=>`<button class="chip" onclick="send('${c}')">${c}</button>`).join('');
     document.getElementById('chatInput').placeholder='Ex : Paris 5 jours budget 1000€ culture...';
-    initTravelAndShared(); // ← Lien vers tes modules
   }
 }
 
@@ -419,56 +559,116 @@ function renderChips(){
   document.querySelectorAll('#chipRow .chip').forEach((b,i)=>b.onclick=()=>send(CHIPS[i]));
 }
 
-// === Le reste (DEALS, MODALS, etc.) reste IDENTIQUE à ton code original ===
 let DEALS_DATA=[], dealCat="Tous", dealSort="pct";
 const CAT_META=[{key:"Tous",em:"✨"},{key:"Mode",em:"👕"},{key:"Électronique",em:"📱"},{key:"Maison",em:"🏠"},{key:"Santé",em:"💊"}];
 const SORT_META=[{key:"pct",label:"🔥 Réductions"},{key:"new",label:"⏱ Nouveautés"},{key:"price",label:"€ Prix bas"}];
 
-function normalizeDeal(d){ /* identique à ton code */ 
+function normalizeDeal(d){
   const toNum=v=>{if(v==null)return null;const n=parseFloat(String(v).replace(/[^0-9.,]/g,'').replace(',','.'));return isNaN(n)?null:n;};
   const price=toNum(d.price),was=toNum(d.was);
   const pct=(price!=null&&was!=null&&was>0)?Math.round((1-price/was)*100):(d.pct?Math.abs(parseInt(d.pct)):null);
-  let hoursAgo=999; if(d.generated_at){hoursAgo=(Date.now()-new Date(d.generated_at).getTime())/3600000;}
+  let hoursAgo=999;
+  if(d.generated_at){hoursAgo=(Date.now()-new Date(d.generated_at).getTime())/3600000;}
   return{name:d.name||d.product||'—',cat:d.cat||'Autres',store:d.store||'',price,was,pct,url:d.url||'#',img:d.img||'',hoursAgo};
 }
 
-async function loadDeals(){ /* identique */ }
+async function loadDeals(){
+  let rows=[];
+  try{const{data}=await sb.from('daily_deals').select('*').order('generated_at',{ascending:false}).limit(40);rows=data||[];}catch(e){rows=[];}
+  if(!rows.length&&typeof PRODUCTS!=='undefined')rows=PRODUCTS;
+  DEALS_DATA=rows.map(normalizeDeal).filter(d=>d.name&&d.name!=='—');
+  const dl=document.getElementById('dealsDate'); if(dl)dl.textContent=new Date().toLocaleDateString('fr',{day:'numeric',month:'long'});
+  renderCatRow();renderSortRow();renderDeals();
+}
 function dealCountFor(cat){return cat==="Tous"?DEALS_DATA.length:DEALS_DATA.filter(d=>d.cat===cat).length;}
-function renderCatRow(){ /* identique */ }
-function renderSortRow(){ /* identique */ }
-function renderDeals(){ /* identique */ }
+function renderCatRow(){
+  const row=document.getElementById('catRow');if(!row)return;
+  row.innerHTML=CAT_META.map(c=>{const on=c.key===dealCat;
+    return`<button data-c="${c.key}" style="display:flex;align-items:center;gap:7px;white-space:nowrap;border:1.5px solid ${on?'transparent':'#e6ebf7'};background:${on?'linear-gradient(135deg,#2f54ff,#4a6bff)':'#fff'};color:${on?'#fff':'#43507a'};border-radius:100px;padding:9px 15px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer">
+      <span style="font-size:15px">${c.em}</span>${c.key}<span style="font-size:11px;font-weight:800;background:${on?'rgba(255,255,255,.25)':'#eef2ff'};color:${on?'#fff':'#2f54ff'};border-radius:100px;padding:1px 7px">${dealCountFor(c.key)}</span></button>`;
+  }).join('');
+  row.querySelectorAll('button').forEach(b=>b.onclick=()=>{dealCat=b.dataset.c;renderCatRow();renderDeals();});
+}
+function renderSortRow(){
+  const row=document.getElementById('sortRow');if(!row)return;
+  row.innerHTML=SORT_META.map(s=>{const on=s.key===dealSort;
+    return`<button data-s="${s.key}" style="border:1.5px solid ${on?'transparent':'#e6ebf7'};background:${on?'#0e1430':'#fff'};color:${on?'#fff':'#43507a'};border-radius:100px;padding:6px 12px;font-size:11.5px;font-weight:700;font-family:inherit;cursor:pointer">${s.label}</button>`;
+  }).join('');
+  row.querySelectorAll('button').forEach(b=>b.onclick=()=>{dealSort=b.dataset.s;renderSortRow();renderDeals();});
+}
+function renderDeals(){
+  let list=dealCat==="Tous"?[...DEALS_DATA]:DEALS_DATA.filter(d=>d.cat===dealCat);
+  if(dealSort==="pct")list.sort((a,b)=>(b.pct||0)-(a.pct||0));
+  if(dealSort==="new")list.sort((a,b)=>a.hoursAgo-b.hoursAgo);
+  if(dealSort==="price")list.sort((a,b)=>(a.price||1e9)-(b.price||1e9));
+  const cnt=document.getElementById('dealsCount');if(cnt)cnt.textContent=list.length;
+  const box=document.getElementById('dealsBox');
+  if(!list.length){box.innerHTML=`<div style="text-align:center;padding:44px 20px;color:#7c89a8"><div style="font-size:38px;margin-bottom:10px">🔍</div>Aucun deal dans cette catégorie aujourd'hui.</div>`;return;}
+  box.innerHTML=list.map((d,i)=>{
+    const hot=(d.pct||0)>=20,isNew=d.hoursAgo<=24;
+    const wasHtml=d.was!=null?`<span style="font-size:13px;color:#c2cce3;text-decoration:line-through">${d.was}€</span>`:'';
+    const pctHtml=d.pct!=null?`<span style="font-size:11px;background:#e9fbef;color:#16a34a;border:1px solid #b6f0c6;padding:2px 8px;border-radius:100px;font-weight:800">-${d.pct}%</span>`:'';
+    const priceHtml=d.price!=null?`${d.price}€`:'Voir prix';
+    const imgHtml=d.img?`<img src="${d.img}" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.style.opacity=0">`:'';
+    return`<div class="card pop" data-url="${d.url}" style="display:flex;animation-delay:${i*45}ms">
+      <div style="width:114px;flex-shrink:0;position:relative;background:#eef2ff">${imgHtml}
+        <div style="position:absolute;top:8px;left:8px;display:flex;flex-direction:column;gap:5px">
+          ${hot?'<span style="font-size:9.5px;font-weight:800;background:#ef4444;color:#fff;border-radius:100px;padding:3px 8px">🔥 HOT</span>':''}
+          ${isNew?'<span style="font-size:9.5px;font-weight:800;background:#0e1430;color:#fff;border-radius:100px;padding:3px 8px">⏱ Nouveau</span>':''}
+        </div></div>
+      <div style="flex:1;padding:13px 15px;display:flex;flex-direction:column;justify-content:space-between;min-width:0">
+        <div><div style="font-size:10px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.05em">${d.cat}${d.store?' · '+d.store:''}</div>
+        <div style="font-size:14.5px;font-weight:700;color:#0e1430;line-height:1.3;margin-top:4px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${d.name}</div></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap"><span style="font-size:21px;font-weight:900;color:#2f54ff;font-family:'Sora',sans-serif">${priceHtml}</span>${wasHtml}${pctHtml}</div>
+      </div></div>`;
+  }).join('');
+  box.querySelectorAll('.card').forEach(c=>c.onclick=()=>{if(c.dataset.url&&c.dataset.url!=='#')window.open(c.dataset.url,'_blank');});
+}
 
 const modalBg=document.getElementById('modalBg');
-document.getElementById('ctaAlert').onclick=()=>{ /* identique */ };
+document.getElementById('ctaAlert').onclick=()=>{
+  if(currentUser)document.getElementById('alEmail').value=currentUser.email;
+  document.getElementById('alProduct').value='';document.getElementById('alPrice').value='';
+  modalBg.classList.add('open');
+};
 document.getElementById('closeModalBtn').onclick=()=>modalBg.classList.remove('open');
-document.getElementById('submitAlertBtn').onclick=async()=>{ /* identique */ };
+document.getElementById('submitAlertBtn').onclick=async()=>{
+  const p=document.getElementById('alProduct').value.trim(),pr=document.getElementById('alPrice').value.trim(),e=document.getElementById('alEmail').value.trim();
+  if(!p||!pr||!e){alert("Merci de remplir tous les champs.");return;}
+  if(!e.includes('@')){alert("Email invalide.");return;}
+  if(currentUser&&cookieConsent==='yes'){await sb.from('alerts').insert({user_id:currentUser.id,product:p,price_max:parseFloat(pr),email:e});}
+  document.getElementById('modalContent').innerHTML=`<div style="text-align:center;padding:30px 10px"><div style="font-size:54px;margin-bottom:16px">✅</div><h3 style="font-family:'Sora',sans-serif;font-size:22px;font-weight:800;color:#0e1430;margin-bottom:10px">Alerte activée !</h3><p style="font-size:14px;color:#64748b;line-height:1.6;margin-bottom:24px">Nous surveillons <b>${p}</b>.<br>Tu recevras une notification 🔔 dès que le prix passe sous <b>${pr}€</b>.</p><button onclick="document.getElementById('modalBg').classList.remove('open')" style="background:linear-gradient(135deg,#2f54ff,#4a6bff);border:none;color:#fff;font-weight:800;border-radius:14px;padding:14px 32px;font-size:15px;cursor:pointer;font-family:inherit;width:100%">Parfait !</button></div>`;
+};
 
 sb.auth.onAuthStateChange((event,session)=>{currentUser=session?.user||null;updateAuthBtn();loadAlerts();});
 
-async function loadAlerts(){ /* identique */ }
-async function openNotifs(){ /* identique */ }
+async function loadAlerts(){
+  const bell=document.getElementById('bellBtn'),countEl=document.getElementById('bellCount');
+  if(!currentUser||cookieConsent!=='yes'){bell.style.display='none';return;}
+  bell.style.display='flex';
+  const{data}=await sb.from('alerts').select('id,product,old_price,new_price,triggered_at').eq('user_id',currentUser.id).eq('triggered',true).eq('seen',false).order('triggered_at',{ascending:false});
+  const n=(data||[]).length;
+  if(n>0){countEl.textContent=n>9?'9+':String(n);countEl.style.display='block';}else{countEl.style.display='none';}
+}
+async function openNotifs(){
+  document.getElementById('notifBg').classList.add('open');
+  const listEl=document.getElementById('notifList');
+  const{data}=await sb.from('alerts').select('id,product,old_price,new_price,triggered_at').eq('user_id',currentUser.id).eq('triggered',true).order('triggered_at',{ascending:false}).limit(30);
+  if(!data||!data.length){listEl.innerHTML='<div style="text-align:center;padding:20px 0"><div style="font-size:32px;margin-bottom:8px">🔕</div><div style="color:#7c89a8;font-size:13px">Aucune alerte déclenchée pour le moment.</div></div>';}
+  else{listEl.innerHTML=data.map(a=>{const oldP=a.old_price!=null?`<span style="font-size:12px;color:#cbd5e1;text-decoration:line-through">${a.old_price}€</span>`:'';const newP=a.new_price!=null?`<span style="font-size:16px;font-weight:900;color:#16a34a">${a.new_price}€</span>`:'';const date=a.triggered_at?new Date(a.triggered_at).toLocaleDateString('fr'):'';return`<div style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:14px;padding:12px 14px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#0e1430;margin-bottom:4px">📉 ${a.product}</div><div style="display:flex;align-items:center;gap:8px">${newP} ${oldP}<span style="margin-left:auto;font-size:11px;color:#94a3b8">${date}</span></div></div>`;}).join('');}
+  await sb.from('alerts').update({seen:true}).eq('user_id',currentUser.id).eq('triggered',true).eq('seen',false);
+  loadAlerts();
+}
 document.getElementById('bellBtn').onclick=openNotifs;
 document.getElementById('closeNotifBtn').onclick=()=>document.getElementById('notifBg').classList.remove('open');
 document.getElementById('sendBtn').onclick=()=>send();
 chatInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();send();}});
-
-window.handlePlanifyButton = function(btn) {
-  const prompt = btn.getAttribute('data-huntify-plan');
-  if (!prompt) return;
-  const input = document.getElementById('chatInput');
-  if (input) {
-    input.value = prompt;
-    switchMode('travel');
-    send();
-  }
-};
 
 checkUser().then(loadAlerts);
 initCookieBanner();
 renderChat();
 renderChips();
 loadDeals();
-initTravelAndShared(); // Initialisation finale des modules
 </script>
 </body>
 </html>
