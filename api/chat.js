@@ -51,7 +51,14 @@ function buildLink(adv, keywords, directUrl) {
   if (adv.slug==="rakuten") {
     const mid = adv.awin_mid||RAKUTEN_MID;
     const aff = adv.awin_affid||adv.awin_aff||AWIN_PUB;
-    const dest = "https://fr.shopping.rakuten.com/s/"+encodeURIComponent(kw.replace(/\s+/g,"+"));
+    // Valide une vraie URL produit Rakuten (contient /mfp/ ou /m/ suivi d'un ID numérique)
+    const isRealProductUrl = directUrl
+      && directUrl.includes("rakuten.com")
+      && /\/(mfp|m)\/\d+/.test(directUrl)
+      && !directUrl.includes("/s/"); // /s/ = recherche générique, pas un produit
+    const dest = isRealProductUrl
+      ? directUrl.split("?")[0]
+      : "https://fr.shopping.rakuten.com/s/"+encodeURIComponent(kw.replace(/\s+/g,"+"));
     return "https://www.awin1.com/cread.php?awinmid="+mid+"&awinaffid="+aff+"&clickref=huntify&ued="+encodeURIComponent(dest);
   }
   if (adv.awin_mid) {
@@ -269,7 +276,7 @@ export default async function handler(req) {
       +'   INTERDIT: noms generiques comme "Masque de snorkeling" ou "Casque audio"\n'
       +'   CORRECT: "Cressi F1 Masque Snorkeling", "Sony WH-1000XM5", "Philips Airfryer HD9252"\n'
       +'3. Pour Amazon: copie l URL exacte /dp/ASIN si tu la trouves. Sinon url=null\n'
-      +'4. Pour Rakuten: 1 produit avec vrai nom sur fr.shopping.rakuten.com\n'
+      +'4. Pour Rakuten: cherche sur fr.shopping.rakuten.com et copie l URL EXACTE de la page produit (contient /mfp/ ou /m/ suivi d un ID). Si tu ne trouves pas d URL produit exacte, mets url:null\n'
       +'5. Prix: le vrai prix trouve sur le site\n'
       +'JSON: {summary:"1 phrase courte", products:[{name:"VRAI NOM",price:"XX EUR",store:"amazon",keywords:"VRAI NOM",url:"URL ou null",badge:"Top vente"}], promoCodes:[]}\n'
       +'MINIMUM: 2 produits Amazon + 1 Rakuten. JSON UNIQUEMENT.';
