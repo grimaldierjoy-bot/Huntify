@@ -121,12 +121,27 @@ function parseDate(str) {
 }
 
 // ── APPELS IA ─────────────────────────────────────────────────────────────────
+// Timeout de securite — evite qu un appel IA lent fasse depasser la limite
+// Vercel Edge (~25s) et plante toute la requete sans reponse JSON propre
+async function fetchT(url, opts, ms) {
+  var ctrl = new AbortController();
+  var timer = setTimeout(function(){ctrl.abort();}, ms||8000);
+  try {
+    var r = await fetch(url, Object.assign({}, opts, {signal:ctrl.signal}));
+    clearTimeout(timer);
+    return r;
+  } catch(e) {
+    clearTimeout(timer);
+    throw e;
+  }
+}
+
 async function groqDS(prompt, maxTok) {
   var key=process.env.GROQ_API_KEY; if (!key) return null;
   try {
-    var r=await fetch("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
+    var r=await fetchT("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"compound-beta",max_tokens:maxTok||1500,messages:[{role:"user",content:prompt}]})});
+      body:JSON.stringify({model:"compound-beta",max_tokens:maxTok||1500,messages:[{role:"user",content:prompt}]})},12000);
     if (!r.ok) return null; var d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
@@ -134,9 +149,9 @@ async function groqDS(prompt, maxTok) {
 async function groq70b(sys, user, maxTok) {
   var key=process.env.GROQ_API_KEY; if (!key) return null;
   try {
-    var r=await fetch("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
+    var r=await fetchT("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"llama-3.3-70b-versatile",max_tokens:maxTok||800,messages:[{role:"system",content:sys},{role:"user",content:user}]})});
+      body:JSON.stringify({model:"llama-3.3-70b-versatile",max_tokens:maxTok||800,messages:[{role:"system",content:sys},{role:"user",content:user}]})},7000);
     if (!r.ok) return null; var d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
@@ -144,9 +159,9 @@ async function groq70b(sys, user, maxTok) {
 async function claude(sys, user, maxTok) {
   var key=process.env.ANTHROPIC_API_KEY; if (!key) return null;
   try {
-    var r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
+    var r=await fetchT("https://api.anthropic.com/v1/messages",{method:"POST",
       headers:{"Content-Type":"application/json; charset=utf-8","x-api-key":key,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:MODEL,max_tokens:maxTok||2500,system:sys,messages:[{role:"user",content:user}]})});
+      body:JSON.stringify({model:MODEL,max_tokens:maxTok||2500,system:sys,messages:[{role:"user",content:user}]})},15000);
     var d=await r.json(); if (!r.ok) return null;
     var t=""; for(var i=0;i<(d.content||[]).length;i++){if(d.content[i].type==="text")t+=d.content[i].text;} return t||null;
   } catch(e){return null;}
@@ -155,8 +170,8 @@ async function claude(sys, user, maxTok) {
 async function gemini(prompt, maxTok) {
   var key=process.env.GEMINI_API_KEY; if (!key) return null;
   try {
-    var r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+key,{method:"POST",
-      headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:maxTok||1500}})});
+    var r=await fetchT("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+key,{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:maxTok||1500}})},12000);
     if (!r.ok) return null; var d=await r.json(); return d.candidates&&d.candidates[0]&&d.candidates[0].content?d.candidates[0].content.parts[0].text:null;
   } catch(e){return null;}
 }
@@ -248,22 +263,22 @@ export default async function handler(req) {
 
     // ── PIPELINE : Groq DeepSearch comprend + Claude genere ────────────────────
 
-    // Etape 1 — Groq DeepSearch analyse la conversation et decide
-    var groqPrompt = 'Tu es Huntify, agent voyage expert et chaleureux.\n'
+    // Etape 1 — Groq DeepSearch analyse la conversation et decide, en totale autonomie
+    var groqPrompt = 'Tu es Huntify, un ami expert voyage — pas un formulaire administratif.\n'
       +'Aujourd\'hui: '+today+'\n\n'
       +'CONVERSATION COMPLETE:\n'+hist+'\n'
       +'MESSAGE: '+message+'\n\n'
-      +'MISSION: analyse tout et decides.\n'
-      +'Extrais toutes les infos: destination, ville_depart, checkin (YYYY-MM-DD), checkout (YYYY-MM-DD), duree, nb_adultes, budget, style.\n'
-      +'Si l utilisateur repond a une question precedente, sa reponse EST la reponse a cette question.\n'
-      +'"marseille", "marseilel", "depuis marseille" = ville de depart.\n'
-      +'Ne pose JAMAIS deux fois la meme question. Lis l historique avant.\n\n'
-      +'DECISION:\n'
-      +'- destination + ville_depart + (duree OU dates) connus → action:generate\n'
-      +'- info vraiment manquante → action:question avec UNE question courte\n'
-      +'- deja 2+ questions posees → action:generate avec ce qu on a\n\n'
+      +'MISSION: comprends vraiment ce que la personne veut, comme le ferait un ami tres competent qui organise le voyage.\n'
+      +'Extrais toutes les infos disponibles: destination, ville_depart, checkin (YYYY-MM-DD), checkout (YYYY-MM-DD), duree, nb_adultes, budget, style.\n'
+      +'Si l utilisateur repond a une question precedente, sa reponse EST la reponse a cette question — ne la redemande jamais.\n'
+      +'"marseille", "marseilel", "depuis marseille" = ville de depart (tolere les fautes de frappe).\n\n'
+      +'DECISION — utilise ton jugement, pas une regle fixe:\n'
+      +'- Si tu as assez d infos essentielles (destination + point de depart + une notion de duree/dates) pour proposer un voyage pertinent → action:generate MAINTENANT. Ne cherche pas la perfection, un ami ne fait pas un interrogatoire.\n'
+      +'- Si une info vraiment bloquante manque (on ne sait meme pas ou la personne veut aller, ou d ou elle part) → action:question, UNE seule question naturelle et chaleureuse, jamais une liste.\n'
+      +'- Relis TOUJOURS l historique avant de decider : si la personne a deja repondu a une question, meme approximativement, on avance — on ne boucle jamais sur la meme question.\n'
+      +'- En cas de doute entre demander et generer, privilegie GENERER avec des hypotheses raisonnables (budget moyen, 2 adultes, 3-4 jours) plutot que de multiplier les questions.\n\n'
       +'JSON:\n'
-      +'question: {action:"question", msg:"question courte"}\n'
+      +'question: {action:"question", msg:"question courte et chaleureuse"}\n'
       +'generation: {action:"generate", infos:{destination, ville_depart, nb_adultes, checkin, checkout, duree, budget, style}}';
 
     var step1raw = await groqDS(groqPrompt, 700);
@@ -360,7 +375,7 @@ export default async function handler(req) {
 
     // Klook — activites et excursions sur place
     html += '<a href="'+klookLink(itin.dest||"")+'" target="_blank" style="display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#ff5722,#ff8a50);color:#fff;text-decoration:none;border-radius:14px;padding:12px 14px;margin-top:8px">'
-      +'<span style="font-size:20px">🎫</span><div style="flex:1"><div style="font-size:12px;font-weight:800">Activites et excursions</div>'
+      +'<span style="font-size:20px">🎫</span><div style="flex:1"><div style="font-size:12px;font-weight:800">Activites, tickets et transport local</div>'
       +'<div style="font-size:11px;opacity:.85">Klook · '+(itin.dest||"")+'</div></div>'
       +'<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.2);border-radius:8px;padding:5px 10px">Voir tout →</span></a>';
 
