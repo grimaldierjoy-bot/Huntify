@@ -292,203 +292,7 @@ h1,h2,h3{font-family:var(--display);letter-spacing:-.5px}
   </div>
 </div>
 
-
-  // ─────────────────────────────────────────────────────────────────────────────
-// HUNTIFY — Code JS frontend à coller dans index.html (dans <script>)
-// Gère les appels vers /api/chat (produits) et /api/travel (voyage)
-// ─────────────────────────────────────────────────────────────────────────────
-// IMPORTANT : ce code remplace la fonction sendMessage() existante
-// et ajoute les fonctions manquantes (send, exportItinerary, etc.)
-
-var huntifyMode = 'shop'; // 'shop' ou 'travel'
-var chatHistory = [];
-var sessionId = null;
-var travelContext = {};
-
-// Appelée par les onglets Comparateur / Voyage
-function setMode(mode) {
-  huntifyMode = mode;
-  chatHistory = [];
-  travelContext = {};
-}
-
-// Appelée par les chips de suggestions rapides
-function send(text) {
-  var input = document.getElementById('chatInput');
-  if (input) { input.value = text; }
-  sendMessage();
-}
-
-// ── ENVOI MESSAGE ─────────────────────────────────────────────────────────────
-async function sendMessage() {
-  var input = document.getElementById('chatInput');
-  var msg = (input ? input.value : '').trim();
-  if (!msg) return;
-  if (input) input.value = '';
-
-  // Affiche le message utilisateur
-  appendMessage('user', msg);
-  chatHistory.push({role:'user', content:msg});
-
-  // Affiche le loader
-  var loaderId = 'loader_' + Date.now();
-  appendLoader(loaderId);
-
-  try {
-    // Choisir le bon endpoint selon le mode
-    var endpoint = huntifyMode === 'travel' ? '/api/travel' : '/api/chat';
-
-    var bodyData = {
-      message: msg,
-      history: chatHistory.slice(-10), // derniers 10 messages pour le contexte
-      sessionId: sessionId,
-      userId: null,
-      trackingEnabled: true
-    };
-
-    // Ajouter le travelContext seulement pour le mode voyage
-    if (huntifyMode === 'travel') {
-      bodyData.travelContext = travelContext;
-    }
-
-    var response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(bodyData)
-    });
-
-    var data = await response.json();
-
-    // Retire le loader
-    removeLoader(loaderId);
-
-    if (data.sessionId) sessionId = data.sessionId;
-
-    if (data.reply) {
-      appendMessage('bot', data.reply);
-      chatHistory.push({role:'assistant', content:data.reply});
-    }
-
-    if (data.resetContext) {
-      chatHistory = [];
-      travelContext = {};
-    }
-
-  } catch(err) {
-    removeLoader(loaderId);
-    appendMessage('bot', '<div style="font-size:13px;color:#1e293b">Desole, probleme de connexion. Reessayez !</div>');
-  }
-}
-
-// ── AFFICHAGE MESSAGES ────────────────────────────────────────────────────────
-function appendMessage(role, html) {
-  var chat = document.getElementById('chatMessages');
-  if (!chat) return;
-
-  var wrap = document.createElement('div');
-  wrap.className = 'msg ' + role;
-
-  if (role === 'user') {
-    wrap.innerHTML = '<div class="bubble user">' + escapeHtml(html) + '</div>';
-  } else {
-    wrap.innerHTML = '<div class="avatar"><span>✨</span></div><div class="bubble bot">' + html + '</div>';
-  }
-
-  chat.appendChild(wrap);
-  chat.scrollTop = chat.scrollHeight;
-}
-
-function appendLoader(id) {
-  var chat = document.getElementById('chatMessages');
-  if (!chat) return;
-  var loader = document.createElement('div');
-  loader.id = id;
-  loader.className = 'msg bot';
-  loader.innerHTML = '<div class="avatar"><span>✨</span></div><div class="typing"><span></span><span></span><span></span></div>';
-  chat.appendChild(loader);
-  chat.scrollTop = chat.scrollHeight;
-}
-
-function removeLoader(id) {
-  var el = document.getElementById(id);
-  if (el) el.remove();
-}
-
-function escapeHtml(text) {
-  var div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-// ── WISHLIST ──────────────────────────────────────────────────────────────────
-function addToWishlist(data) {
-  var wishlist = JSON.parse(localStorage.getItem('huntify_wishlist') || '[]');
-  wishlist.push(data);
-  localStorage.setItem('huntify_wishlist', JSON.stringify(wishlist));
-  alert('Ajoute a votre wishlist !');
-}
-
-// ── EXPORT PDF ITINERAIRE ─────────────────────────────────────────────────────
-async function exportItinerary(itinId) {
-  var el = document.getElementById(itinId);
-  if (!el) return alert('Itineraire introuvable.');
-
-  // Charge jsPDF si pas encore charge
-  if (!window.jspdf) {
-    await new Promise(function(res, rej) {
-      var s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-      s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-  }
-
-  // Prend tout le contenu parent de l'itineraire
-  var container = el.parentElement;
-  var text = container ? container.innerText : el.innerText;
-
-  var doc = new window.jspdf.jsPDF();
-  var lines = doc.splitTextToSize(text, 170);
-  var y = 20;
-
-  doc.setFontSize(18);
-  doc.setTextColor(26, 31, 94);
-  doc.text('Huntify — Itineraire de voyage', 20, y);
-  y += 12;
-
-  doc.setFontSize(10);
-  doc.setTextColor(100, 100, 100);
-  doc.text(new Date().toLocaleDateString('fr-FR'), 20, y);
-  y += 10;
-
-  doc.setFontSize(11);
-  doc.setTextColor(30, 30, 30);
-
-  for (var i = 0; i < lines.length; i++) {
-    if (y > 275) { doc.addPage(); y = 20; }
-    doc.text(lines[i], 20, y);
-    y += 5.5;
-  }
-
-  doc.save('huntify-itineraire.pdf');
-}
-
-// ── INIT ──────────────────────────────────────────────────────────────────────
-// Attache l'envoi au bouton et a la touche Entree
-document.addEventListener('DOMContentLoaded', function() {
-  var input = document.getElementById('chatInput');
-  if (input) {
-    input.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') sendMessage();
-    });
-  }
-  var btn = document.getElementById('sendBtn');
-  if (btn) {
-    btn.addEventListener('click', sendMessage);
-  }
-});
 <script>
-
 const SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
 const { createClient } = supabase;
@@ -497,7 +301,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 const CHIPS = ["Casque audio","Sneakers","Protéines","Airfryer","Montre connectée","Legging sport"];
 
 let typing = false, chatHistory = [], currentUser = null;
-let huntifyMode = 'product';
+let huntifyMode = 'product'; // 'product' ou 'travel'
 let travelContext = { destination:null, budget:null, duration:null, travelers:null, style:null, suggestionsShown:false };
 let cookieConsent = localStorage.getItem('hconsent');
 let sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -572,6 +376,7 @@ function switchTab(tab) {
   });
 }
 
+// ── WISHLIST (une seule définition, celle-ci) ─────────────────────────────────
 async function addToWishlist(product) {
   if (!currentUser) { openAuth(); return; }
   if (cookieConsent !== 'yes') { alert('Accepte les cookies pour utiliser la wishlist !'); return; }
@@ -664,6 +469,7 @@ async function loadTrends() {
   el.innerHTML=data.map(t=>`<button onclick="send('${t.query.replace(/'/g,"\\'")}');closeAccount();" style="background:#eef2ff;border:1px solid #bfdbfe;color:#2f54ff;border-radius:100px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;margin:3px">${t.query} <span style="opacity:.6">(${t.count})</span></button>`).join('');
 }
 
+// ── EXPORT PDF ITINERAIRE (une seule définition) ──────────────────────────────
 function exportItinerary(itinId) {
   const el=itinId?document.getElementById(itinId):null;
   let content='';
@@ -672,7 +478,7 @@ function exportItinerary(itinId) {
     while (parent&&!parent.style.maxWidth) parent=parent.parentElement;
     content=parent?parent.innerHTML:el.outerHTML;
   }
-  if (!content) { alert('Aucun itinéraire à exporter. Générez d\'abord votre voyage !'); return; }
+  if (!content) { alert("Aucun itinéraire à exporter. Générez d'abord votre voyage !"); return; }
   const win=window.open('','_blank','width=820,height=950');
   win.document.write(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Mon Itinéraire Huntify</title>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -691,20 +497,35 @@ function renderChat(){
   chatBox.scrollTop=chatBox.scrollHeight;
 }
 
+// ── ENVOI MESSAGE — route vers /api/chat OU /api/travel selon le mode ────────
 async function send(txt){
   const q=(txt||chatInput.value).trim();
   if(!q||typing) return;
   msgs.push({from:"user",text:q}); chatInput.value=""; typing=true; renderChat();
   try {
     chatHistory.push({role:"user",content:stripHtml(q)});
-    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:stripHtml(q),history:chatHistory.slice(-8),sessionId,
-        userId:(cookieConsent==='yes'&&currentUser)?currentUser.id:null,trackingEnabled:cookieConsent==='yes',
-        mode:huntifyMode,travelContext:huntifyMode==='travel'?travelContext:null})});
+
+    // Deux endpoints distincts au lieu d'un seul avec champ "mode"
+    const endpoint = huntifyMode === 'travel' ? '/api/travel' : '/api/chat';
+    const payload = {
+      message: stripHtml(q),
+      history: chatHistory.slice(-8),
+      sessionId,
+      userId: (cookieConsent==='yes' && currentUser) ? currentUser.id : null,
+      trackingEnabled: cookieConsent==='yes'
+    };
+    if (huntifyMode === 'travel') payload.travelContext = travelContext;
+
+    const res = await fetch(endpoint, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
     const data=await res.json();
     if (data.sessionId) sessionId=data.sessionId;
     const reply=data.reply||"Désolé, réessayez.";
     chatHistory.push({role:"assistant",content:stripHtml(reply)});
+
     if (huntifyMode==='travel') {
       const msgLow=q.toLowerCase();
       const budgetM=q.match(/(\d+)\s*(?:€|euros?)/i); if(budgetM) travelContext.budget=budgetM[0];
