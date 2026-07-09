@@ -95,6 +95,13 @@ function wantsCar(dest, style) {
   return true;
 }
 
+// ── KLOOK (activites et excursions, via Travelpayouts) ────────────────────────
+// Lien affilie reel Klook — le tracking se fait via ce lien de base,
+// la recherche destination se passe cote Klook une fois sur le site
+function klookLink(dest) {
+  return "https://klook.tpk.mx/uGeFNRZq";
+}
+
 function parseDate(str) {
   if (!str) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
@@ -350,6 +357,12 @@ export default async function handler(req) {
         +'</div>'
         +'<a href="'+skyU+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:12px;font-size:13px;font-weight:700;margin-top:6px">🔍 Comparer ces vols sur Skyscanner →</a>';
     }
+
+    // Klook — activites et excursions sur place
+    html += '<a href="'+klookLink(itin.dest||"")+'" target="_blank" style="display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#ff5722,#ff8a50);color:#fff;text-decoration:none;border-radius:14px;padding:12px 14px;margin-top:8px">'
+      +'<span style="font-size:20px">🎫</span><div style="flex:1"><div style="font-size:12px;font-weight:800">Activites et excursions</div>'
+      +'<div style="font-size:11px;opacity:.85">Klook · '+(itin.dest||"")+'</div></div>'
+      +'<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.2);border-radius:8px;padding:5px 10px">Voir tout →</span></a>';
 
     // Hotels
     if (itin.hotels&&itin.hotels.length) {
