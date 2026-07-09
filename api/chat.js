@@ -72,12 +72,27 @@ function buildLink(adv, keywords, directUrl) {
 function findAdv(ads, slug) { return (ads||[]).find(a=>a.slug===(slug||"").toLowerCase())||null; }
 
 // ── APPELS IA ─────────────────────────────────────────────────────────────────
+// Timeout de securite sur chaque appel IA — evite qu un service lent
+// fasse depasser la limite Vercel Edge (~25s) et plante toute la requete
+async function fetchT(url, opts, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(()=>ctrl.abort(), ms||8000);
+  try {
+    const r = await fetch(url, {...opts, signal:ctrl.signal});
+    clearTimeout(timer);
+    return r;
+  } catch(e) {
+    clearTimeout(timer);
+    throw e;
+  }
+}
+
 async function groq(sys, user, maxTok) {
   const key = process.env.GROQ_API_KEY; if (!key) return null;
   try {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
+    const r = await fetchT("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"llama-3.3-70b-versatile",max_tokens:maxTok||500,messages:[{role:"system",content:sys},{role:"user",content:user}]})});
+      body:JSON.stringify({model:"llama-3.3-70b-versatile",max_tokens:maxTok||500,messages:[{role:"system",content:sys},{role:"user",content:user}]})},7000);
     if (!r.ok) return null; const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
@@ -85,9 +100,9 @@ async function groq(sys, user, maxTok) {
 async function groqDS(prompt, maxTok) {
   const key = process.env.GROQ_API_KEY; if (!key) return null;
   try {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
+    const r = await fetchT("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"compound-beta",max_tokens:maxTok||1200,messages:[{role:"user",content:prompt}]})});
+      body:JSON.stringify({model:"compound-beta",max_tokens:maxTok||1200,messages:[{role:"user",content:prompt}]})},12000);
     if (!r.ok) return await groq("Reponds en JSON.",prompt,maxTok||1200);
     const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return await groq("Reponds en JSON.",prompt,maxTok||1200);}
@@ -96,8 +111,8 @@ async function groqDS(prompt, maxTok) {
 async function gemini(prompt, maxTok) {
   const key = process.env.GEMINI_API_KEY; if (!key) return null;
   try {
-    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+key,{method:"POST",
-      headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:maxTok||500}})});
+    const r = await fetchT("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+key,{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:maxTok||500}})},7000);
     if (!r.ok) return null; const d=await r.json(); return d.candidates&&d.candidates[0]&&d.candidates[0].content?d.candidates[0].content.parts[0].text:null;
   } catch(e){return null;}
 }
@@ -105,9 +120,9 @@ async function gemini(prompt, maxTok) {
 async function mistral(sys, user, maxTok) {
   const key = process.env.MISTRAL_API_KEY; if (!key) return null;
   try {
-    const r = await fetch("https://api.mistral.ai/v1/chat/completions",{method:"POST",
+    const r = await fetchT("https://api.mistral.ai/v1/chat/completions",{method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"mistral-small-latest",max_tokens:maxTok||500,messages:[{role:"system",content:sys},{role:"user",content:user}]})});
+      body:JSON.stringify({model:"mistral-small-latest",max_tokens:maxTok||500,messages:[{role:"system",content:sys},{role:"user",content:user}]})},7000);
     if (!r.ok) return null; const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
@@ -115,9 +130,9 @@ async function mistral(sys, user, maxTok) {
 async function deepseek(sys, user, maxTok) {
   const key = process.env.DEEPSEEK_API_KEY; if (!key) return null;
   try {
-    const r = await fetch("https://api.deepseek.com/v1/chat/completions",{method:"POST",
+    const r = await fetchT("https://api.deepseek.com/v1/chat/completions",{method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"deepseek-chat",max_tokens:maxTok||500,messages:[{role:"system",content:sys},{role:"user",content:user}]})});
+      body:JSON.stringify({model:"deepseek-chat",max_tokens:maxTok||500,messages:[{role:"system",content:sys},{role:"user",content:user}]})},7000);
     if (!r.ok) return null; const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
@@ -129,9 +144,9 @@ async function freeAI(sys, user, maxTok) {
 async function claude(sys, user, maxTok, tools) {
   const key = process.env.ANTHROPIC_API_KEY; if (!key) return null;
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
+    const r = await fetchT("https://api.anthropic.com/v1/messages",{method:"POST",
       headers:{"Content-Type":"application/json; charset=utf-8","x-api-key":key,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:MODEL,max_tokens:maxTok||800,tools:tools||[],system:sys,messages:[{role:"user",content:user}]})});
+      body:JSON.stringify({model:MODEL,max_tokens:maxTok||800,tools:tools||[],system:sys,messages:[{role:"user",content:user}]})},12000);
     const d=await r.json(); if (!r.ok) return null;
     let t=""; for(const b of (d.content||[])){if(b.type==="text")t+=b.text;} return t||null;
   } catch(e){return null;}
@@ -230,36 +245,55 @@ export default async function handler(req) {
       sb("trends","POST",{query:message.toLowerCase().trim(),count:1,last_searched:new Date().toISOString()});
     }
 
-    // ── ÉTAPE 1 : Groq comprend le besoin et extrait les mots-cles produit ─────
-    // JAMAIS le message brut en recap. Groq traduit la phrase en mots-cles e-commerce.
+    // ── ÉTAPE 1 : L IA decide si elle a besoin de clarifier avant de chercher ──
+    // Le but du pipeline multi-IA est justement d avoir un besoin PRECIS avant
+    // de lancer la recherche — donc on laisse une vraie decision IA trancher,
+    // pas un raccourci code en dur qui saute toujours la question.
     const qAsked = countQ(history);
-    const cat    = detectCat(message+" "+hist);
-    const budget = detectBudget(message)||detectBudget(hist);
-    const hasProd= message.trim().split(/\s+/).length>=2 || cat!=="general";
 
-    // Si premiere demande vague (1 seul mot, pas de categorie reconnue) → 1 question
-    if (!hasProd && qAsked===0 && !budget && history.length===0) {
-      return new Response(JSON.stringify({reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">Dis-moi ce que tu cherches ! Par exemple: casque audio, mascara waterproof, airfryer... 🛍</div>',sessionId:sid}),{headers:H});
+    const decidePrompt = 'Tu es l assistant shopping Huntify. Decide si tu as assez d infos pour chercher un produit PRECIS,\n'
+      +'ou si une question de clarification rendrait la recherche bien meilleure.\n\n'
+      +'HISTORIQUE:\n'+(hist||'Debut')+'\n'
+      +'MESSAGE: '+message+'\n\n'
+      +'Pose UNE question si des criteres importants manquent et changeraient vraiment le resultat:\n'
+      +'- fond de teint / maquillage teint → demande la teinte ou le type de peau\n'
+      +'- mascara / cosmetique → demande waterproof ou non, budget\n'
+      +'- vetement / chaussure → demande la taille et le style\n'
+      +'- electronique cher (laptop, tv, casque premium) → demande l usage et le budget\n'
+      +'- cadeau → demande pour qui et le budget\n'
+      +'Si le produit est deja tres precis (marque + modele donnes) OU si '+qAsked+' question(s) ont deja ete posee(s),\n'
+      +'alors ready:true obligatoire — ne redemande jamais deux fois.\n\n'
+      +'JSON: {ready:false,msg:"question courte et naturelle"} ou {ready:true,recap:"mots-cles produit precis pour recherche e-commerce"}';
+
+    const decideRaw = await freeAI(decidePrompt, message, 300);
+    const decision = parseJSON(decideRaw||"{}");
+
+    if (decision.ready !== true) {
+      const q = decision.msg || "Dis-moi ce que tu cherches ! Par exemple: casque audio, mascara waterproof, airfryer... 🛍";
+      return new Response(JSON.stringify({reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+q+'</div>',sessionId:sid}),{headers:H});
     }
 
     // Groq transforme la phrase naturelle en mots-cles produit
     const allUserMsgs = history.filter(m=>m.role==="user").map(m=>m.content||"").join(" ")+" "+message;
-    let recap;
+    let recap = decision.recap || null;
 
     const extractPrompt = 'Extrait le PRODUIT recherche de ces messages. Retourne des mots-cles e-commerce concrets.\n'
       +'JAMAIS la phrase brute du client. TOUJOURS un nom de produit/categorie clair.\n'
-      +'Si un budget est mentionne, inclus-le.\n'
+      +'Si un budget, une teinte ou une preference est mentionnee, inclus-la.\n'
       +'Exemples:\n'
       +'"je veux vraiment respirer sous l eau" donne "masque snorkeling plongee"\n'
       +'"un truc pour courir" donne "chaussures running"\n'
-      +'"masque de plongee pour respirer dans l eau budget 150 euros" donne "masque snorkeling plongee 150EUR"\n'
-      +'"mascara" donne "mascara waterproof"\n'
+      +'"fond de teint peau claire" donne "fond de teint teinte claire"\n'
+      +'"mascara waterproof budget 15 euros" donne "mascara waterproof 15EUR"\n'
       +'JSON: {recap:"mots-cles produit"}';
 
-    const extractRaw = await freeAI(extractPrompt, allUserMsgs.trim(), 200);
-    const extracted = parseJSON(extractRaw||"").recap;
-    recap = extracted || cleanKw(allUserMsgs);
+    if (!recap) {
+      const extractRaw = await freeAI(extractPrompt, allUserMsgs.trim(), 200);
+      const extracted = parseJSON(extractRaw||"").recap;
+      recap = extracted || cleanKw(allUserMsgs);
+    }
 
+    const budget = detectBudget(recap) || detectBudget(message) || detectBudget(hist);
     if (budget && !(recap||"").includes("EUR") && !(recap||"").includes("€")) {
       recap = recap + " " + budget + "EUR";
     }
@@ -325,23 +359,24 @@ export default async function handler(req) {
     var buttons = "";
     for (var idx=0; idx<Math.min(products.length,4); idx++) {
       var pr = products[idx];
-      if (!pr.name) continue;
+      if (!pr || typeof pr!=="object" || !pr.name) continue;
       var adv = findAdv(ads, pr.store);
       if (!adv) {
         if ((pr.store||"").includes("amazon"))  adv={slug:"amazon",name:"Amazon",emoji:"🛒",color:"#e47911",active:true};
         else if ((pr.store||"").includes("rakuten")) adv={slug:"rakuten",name:"Rakuten",emoji:"🛍",color:"#bf0000",active:true,awin_mid:RAKUTEN_MID};
         else continue;
       }
+      var prName = String(pr.name||"");
       var rawUrl=(pr.url&&pr.url!=="null"&&(pr.url||"").length>15)?pr.url:null;
-      var url=buildLink(adv, pr.name.length>5?pr.name:(pr.keywords||pr.name), rawUrl);
+      var url=buildLink(adv, prName.length>5?prName:(pr.keywords||prName), rawUrl);
       if (!url) continue;
-      buttons += cardProd(pr.name, pr.price||"Voir prix", url, adv, pr.badge||null);
+      buttons += cardProd(prName, pr.price||"Voir prix", url, adv, pr.badge||null);
     }
 
     var promoHtml="";
     for (var pi=0; pi<Math.min((promos||[]).length,2); pi++) {
       var c=promos[pi];
-      if (c.code) promoHtml += promoBox(c.code,c.store||"boutique",c.discount||"Reduction");
+      if (c && typeof c==="object" && c.code) promoHtml += promoBox(c.code,c.store||"boutique",c.discount||"Reduction");
     }
 
     // Wishlist
