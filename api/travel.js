@@ -1,10 +1,23 @@
 export const config = { runtime: 'edge' };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HUNTIFY — Mode Voyage
-// Fichier autonome — aucun import externe
-// Liens : Skyscanner + Booking.com + Expedia + GetTransfer + Eurocar (Awin 7418)
-// Pipeline : Groq DeepSearch → Groq 70b → Claude (generation finale)
+// HUNTIFY — Mode Voyage — v2 FIABILISÉE
+//
+// PROBLÈME v1 : "aucune question n'est posée".
+// Cause : la règle "pose une question si info manquante" n'existait que dans
+// le prompt Groq. Si Groq échouait (timeout, clé absente, JSON invalide),
+// step1 était vide → le code générait quand même avec des infos vides.
+//
+// CORRECTIF : les questions sont maintenant IMPOSÉES PAR LE CODE :
+//   - destination manquante → question obligatoire
+//   - ville de départ manquante → question obligatoire
+//   - dates/durée manquantes → question obligatoire (1 seule fois)
+//   - maximum 2 questions par conversation → ensuite on génère avec des
+//     hypothèses raisonnables (jamais de boucle infinie de questions)
+//   - si l'IA de décision échoue → Claude prend le relais ; si tout échoue,
+//     le code extrait lui-même destination/départ et pose la bonne question.
+//
+// BONUS : Claude génère l'itinéraire AVEC web_search → vrais hôtels, vrais prix.
 // ─────────────────────────────────────────────────────────────────────────────
 
 var SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
@@ -40,6 +53,14 @@ function toIATA(str) {
   return null;
 }
 
+// Détection de ville dans un texte libre (secours si l'IA de décision échoue)
+function findCity(text) {
+  if (!text) return null;
+  var s=text.toLowerCase();
+  for (var k in IATA) { if (s.includes(k)) return k.charAt(0).toUpperCase()+k.slice(1); }
+  return null;
+}
+
 // ── SUPABASE ──────────────────────────────────────────────────────────────────
 async function sb(path, method, body) {
   var h={"Content-Type":"application/json","apikey":SUPABASE_KEY,"Authorization":"Bearer "+SUPABASE_KEY};
@@ -71,6 +92,16 @@ function bookLink(dest, ci, co, adults, cat) {
   return url;
 }
 
+// Recherche Booking sur le NOM EXACT de l'hôtel → le lien correspond à la carte
+function bookHotelLink(hotelName, dest, ci, co, adults) {
+  var q=(hotelName||"")+" "+(dest||"");
+  var url="https://www.booking.com/searchresults.html?ss="+encodeURIComponent(q.trim())
+    +"&group_adults="+(adults||2)+"&no_rooms="+Math.ceil((adults||2)/2)+"&lang=fr&selected_currency=EUR";
+  if (ci) url+="&checkin="+ci;
+  if (co) url+="&checkout="+co;
+  return url;
+}
+
 function expLink(dest, ci, co, adults) {
   var url="https://www.expedia.fr/Hotel-Search?destination="+encodeURIComponent(dest||"")+"&adults="+(adults||2);
   if (ci) url+="&startDate="+ci;
@@ -95,12 +126,7 @@ function wantsCar(dest, style) {
   return true;
 }
 
-// ── KLOOK (activites et excursions, via Travelpayouts) ────────────────────────
-// Lien affilie reel Klook — le tracking se fait via ce lien de base,
-// la recherche destination se passe cote Klook une fois sur le site
-function klookLink(dest) {
-  return "https://klook.tpk.mx/uGeFNRZq";
-}
+function klookLink(dest) { return "https://klook.tpk.mx/uGeFNRZq"; }
 
 function parseDate(str) {
   if (!str) return null;
@@ -121,8 +147,6 @@ function parseDate(str) {
 }
 
 // ── APPELS IA ─────────────────────────────────────────────────────────────────
-// Timeout de securite — evite qu un appel IA lent fasse depasser la limite
-// Vercel Edge (~25s) et plante toute la requete sans reponse JSON propre
 async function fetchT(url, opts, ms) {
   var ctrl = new AbortController();
   var timer = setTimeout(function(){ctrl.abort();}, ms||8000);
@@ -130,10 +154,7 @@ async function fetchT(url, opts, ms) {
     var r = await fetch(url, Object.assign({}, opts, {signal:ctrl.signal}));
     clearTimeout(timer);
     return r;
-  } catch(e) {
-    clearTimeout(timer);
-    throw e;
-  }
+  } catch(e) { clearTimeout(timer); throw e; }
 }
 
 async function groqDS(prompt, maxTok) {
@@ -141,27 +162,19 @@ async function groqDS(prompt, maxTok) {
   try {
     var r=await fetchT("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"compound-beta",max_tokens:maxTok||1500,messages:[{role:"user",content:prompt}]})},12000);
+      body:JSON.stringify({model:"compound-beta",max_tokens:maxTok||1500,messages:[{role:"user",content:prompt}]})},10000);
     if (!r.ok) return null; var d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
   } catch(e){return null;}
 }
 
-async function groq70b(sys, user, maxTok) {
-  var key=process.env.GROQ_API_KEY; if (!key) return null;
-  try {
-    var r=await fetchT("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"llama-3.3-70b-versatile",max_tokens:maxTok||800,messages:[{role:"system",content:sys},{role:"user",content:user}]})},7000);
-    if (!r.ok) return null; var d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
-  } catch(e){return null;}
-}
-
-async function claude(sys, user, maxTok) {
+async function claude(sys, user, maxTok, tools) {
   var key=process.env.ANTHROPIC_API_KEY; if (!key) return null;
   try {
+    var payload={model:MODEL,max_tokens:maxTok||2500,system:sys,messages:[{role:"user",content:user}]};
+    if (tools&&tools.length) payload.tools=tools;
     var r=await fetchT("https://api.anthropic.com/v1/messages",{method:"POST",
       headers:{"Content-Type":"application/json; charset=utf-8","x-api-key":key,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:MODEL,max_tokens:maxTok||2500,system:sys,messages:[{role:"user",content:user}]})},15000);
+      body:JSON.stringify(payload)},18000);
     var d=await r.json(); if (!r.ok) return null;
     var t=""; for(var i=0;i<(d.content||[]).length;i++){if(d.content[i].type==="text")t+=d.content[i].text;} return t||null;
   } catch(e){return null;}
@@ -171,7 +184,7 @@ async function gemini(prompt, maxTok) {
   var key=process.env.GEMINI_API_KEY; if (!key) return null;
   try {
     var r=await fetchT("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+key,{method:"POST",
-      headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:maxTok||1500}})},12000);
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:maxTok||1500}})},10000);
     if (!r.ok) return null; var d=await r.json(); return d.candidates&&d.candidates[0]&&d.candidates[0].content?d.candidates[0].content.parts[0].text:null;
   } catch(e){return null;}
 }
@@ -191,6 +204,20 @@ function buildHist(history) {
   }).filter(Boolean).join("\n")).slice(0,2000);
 }
 
+// Nombre de questions déjà posées par le bot (messages courts sans itinéraire)
+function countQ(history) {
+  return (history||[]).filter(function(m){
+    return m.role!=="user"&&(m.content||"").length>10&&(m.content||"").length<300;
+  }).length;
+}
+
+function qReply(msg, sid, H) {
+  return new Response(JSON.stringify({
+    reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+msg+'</div>',
+    sessionId:sid
+  }),{headers:H});
+}
+
 // ── HTML VOYAGE ───────────────────────────────────────────────────────────────
 function cardHotel(h, link) {
   var stars="⭐".repeat(Math.min(h.stars||3,5));
@@ -207,7 +234,7 @@ function cardHotel(h, link) {
     +'<div style="font-size:15px;font-weight:900">'+(h.price||'?')+'EUR</div>'
     +'<div style="font-size:9px;opacity:.8">/nuit</div></div></div>'
     +(h.hl?'<div style="font-size:11px;color:'+cc+';font-weight:600;background:#eff6ff;border-radius:8px;padding:4px 10px">✨ '+h.hl+'</div>':'')
-    +'<div style="font-size:10.5px;color:#94a3b8;font-weight:600">🏨 Voir disponibilites sur Booking.com →</div></a>';
+    +'<div style="font-size:10.5px;color:#94a3b8;font-weight:600">🏨 Voir cet hotel sur Booking.com →</div></a>';
 }
 
 function cardDay(d) {
@@ -256,78 +283,105 @@ export default async function handler(req) {
     var sid=body.sessionId||("anon_"+Date.now());
     var today=new Date().toISOString().slice(0,10);
     var hist=buildHist(history);
+    var allUserText=(history||[]).filter(function(m){return m.role==="user";}).map(function(m){return m.content||"";}).join(" ")+" "+message;
+    var qAsked=countQ(history);
 
     if (body.trackingEnabled) {
       sb("searches","POST",{query:"[VOYAGE] "+message,session_id:sid,user_id:body.userId||null});
     }
 
-    // ── PIPELINE : Groq DeepSearch comprend + Claude genere ────────────────────
-
-    // Etape 1 — Groq DeepSearch analyse la conversation et decide, en totale autonomie
-    var groqPrompt = 'Tu es Huntify, un ami expert voyage — pas un formulaire administratif.\n'
-      +'Aujourd\'hui: '+today+'\n\n'
+    // ── ÉTAPE 1 : Extraction + décision (Groq, puis Claude en secours) ────────
+    var extractPrompt = 'Tu es Huntify, agent voyage expert. Aujourd hui: '+today+'\n\n'
       +'CONVERSATION COMPLETE:\n'+hist+'\n'
-      +'MESSAGE: '+message+'\n\n'
-      +'MISSION: comprends vraiment ce que la personne veut, comme le ferait un ami tres competent qui organise le voyage.\n'
-      +'Extrais toutes les infos disponibles: destination, ville_depart, checkin (YYYY-MM-DD), checkout (YYYY-MM-DD), duree, nb_adultes, budget, style.\n'
-      +'Si l utilisateur repond a une question precedente, sa reponse EST la reponse a cette question — ne la redemande jamais.\n'
-      +'"marseille", "marseilel", "depuis marseille" = ville de depart (tolere les fautes de frappe).\n\n'
-      +'DECISION — utilise ton jugement, pas une regle fixe:\n'
-      +'- Si tu as assez d infos essentielles (destination + point de depart + une notion de duree/dates) pour proposer un voyage pertinent → action:generate MAINTENANT. Ne cherche pas la perfection, un ami ne fait pas un interrogatoire.\n'
-      +'- Si une info vraiment bloquante manque (on ne sait meme pas ou la personne veut aller, ou d ou elle part) → action:question, UNE seule question naturelle et chaleureuse, jamais une liste.\n'
-      +'- Relis TOUJOURS l historique avant de decider : si la personne a deja repondu a une question, meme approximativement, on avance — on ne boucle jamais sur la meme question.\n'
-      +'- En cas de doute entre demander et generer, privilegie GENERER avec des hypotheses raisonnables (budget moyen, 2 adultes, 3-4 jours) plutot que de multiplier les questions.\n\n'
-      +'JSON:\n'
-      +'question: {action:"question", msg:"question courte et chaleureuse"}\n'
-      +'generation: {action:"generate", infos:{destination, ville_depart, nb_adultes, checkin, checkout, duree, budget, style}}';
+      +'DERNIER MESSAGE: '+message+'\n\n'
+      +'MISSION: extrais TOUTES les infos voyage disponibles dans la conversation entiere:\n'
+      +'destination, ville_depart, checkin (YYYY-MM-DD), checkout (YYYY-MM-DD), duree,\n'
+      +'nb_adultes, budget, style.\n'
+      +'"marseille", "depuis marseille", meme avec fautes de frappe = ville_depart.\n'
+      +'Si le client a repondu a une question precedente, sa reponse EST cette info.\n'
+      +'Mets null pour toute info absente. N INVENTE RIEN.\n\n'
+      +'JSON STRICT: {"infos":{"destination":..,"ville_depart":..,"checkin":..,"checkout":..,"duree":..,"nb_adultes":..,"budget":..,"style":..}}';
 
-    var step1raw = await groqDS(groqPrompt, 700);
-    var step1 = parseJSON(step1raw||"{}");
+    var step1raw = await groqDS(extractPrompt, 500);
+    if (!step1raw) step1raw = await claude('Tu extrais des infos voyage. Reponds en JSON strict uniquement.', extractPrompt, 500);
+    if (!step1raw) step1raw = await gemini(extractPrompt, 500);
+    var infos = (parseJSON(step1raw||"{}").infos) || parseJSON(step1raw||"{}") || {};
 
-    if (step1.action==="question" && step1.msg) {
-      return new Response(JSON.stringify({reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+step1.msg+'</div>',sessionId:sid}),{headers:H});
+    // Secours code : si l'IA a raté destination/départ, on scanne nous-mêmes
+    if (!infos.destination) {
+      var mDest = allUserText.match(/(?:a|à|pour|vers|direction)\s+([a-zA-ZÀ-ÿ' \-]{3,25})/i);
+      infos.destination = infos.destination || (mDest?findCity(mDest[1]):null) || null;
+    }
+    if (!infos.ville_depart) {
+      var mDep = allUserText.match(/(?:depuis|de|au depart de|au départ de|from)\s+([a-zA-ZÀ-ÿ' \-]{3,25})/i);
+      infos.ville_depart = (mDep?findCity(mDep[1]):null) || null;
     }
 
-    // Etape 2 — Claude genere l itineraire complet
-    var infos = step1.infos||{};
+    // ── QUESTIONS IMPOSÉES PAR LE CODE (le correctif clé) ─────────────────────
+    // Peu importe ce que l'IA a décidé : si une info bloquante manque et qu'on
+    // n'a pas déjà posé 2 questions, on demande. Après 2 questions → on génère
+    // avec des hypothèses raisonnables (jamais de boucle).
+    var hasDates = !!(parseDate(infos.checkin) || infos.duree || /\d+\s*(jours?|nuits?|semaines?|week)/i.test(allUserText));
+
+    if (qAsked < 2) {
+      if (!infos.destination) {
+        return qReply("Avec plaisir ! ✈️ Pour te préparer le voyage parfait, dis-moi d'abord : <b>où rêves-tu de partir ?</b> (une ville, un pays, ou même juste une envie — plage, culture, aventure...)", sid, H);
+      }
+      if (!infos.ville_depart) {
+        return qReply("Super choix, "+infos.destination+" ! 🌍 <b>De quelle ville pars-tu ?</b> (pour te trouver les meilleurs vols)", sid, H);
+      }
+      if (!hasDates) {
+        return qReply("Parfait ! Dernière chose : <b>quand veux-tu partir, et pour combien de temps ?</b> (ex : \"du 15 au 20 août\" ou \"5 jours en septembre\")", sid, H);
+      }
+    }
+
+    // Hypothèses raisonnables si on génère malgré des infos manquantes
+    if (!infos.destination) infos.destination = findCity(allUserText) || "Barcelone";
+    if (!infos.ville_depart) infos.ville_depart = "Paris";
+
     var adults = parseInt(infos.nb_adultes)||2;
     var ci = parseDate(infos.checkin||null);
-    var nights = parseInt(((infos.duree||"3 jours").match(/\d+/)||["3"])[0])||3;
+    var nights = parseInt(((infos.duree||"4 jours").match(/\d+/)||["4"])[0])||4;
     var co = parseDate(infos.checkout||null);
     if (!co && ci) { var dco=new Date(ci); dco.setDate(dco.getDate()+nights); co=dco.toISOString().slice(0,10); }
 
+    // ── ÉTAPE 2 : Claude + web_search génère l'itinéraire (vrais hôtels/prix) ─
     var claudeSys = 'Expert voyage Huntify. Genere un itineraire COMPLET en JSON.\n'
       +'Date: '+today+'\n'
       +'Infos: destination='+infos.destination+', depart='+infos.ville_depart+', adultes='+adults
       +', checkin='+(ci||'?')+' checkout='+(co||'?')+' ('+nights+' nuits)'
       +', budget='+(infos.budget||'moyen')+', style='+(infos.style||'equilibre')+'\n\n'
-      +'RECHERCHE les vrais prix pour cette destination et ces dates.\n'
+      +'UTILISE web_search pour verifier: 3 VRAIS hotels existants a '+infos.destination
+      +' (un budget, un confort, un luxe) avec leurs vrais noms et prix approximatifs actuels,\n'
+      +'et un ordre de grandeur realiste du prix des vols '+infos.ville_depart+' → '+infos.destination+'.\n'
+      +'N invente JAMAIS un nom d hotel : uniquement des etablissements vus dans tes recherches.\n\n'
       +'JSON avec TOUS ces champs:\n'
       +'t:"i", recap:string, itin:{\n'
       +'  dest, country, flag, dur, trav, style, dep,\n'
       +'  checkin:YYYY-MM-DD, checkout:YYYY-MM-DD, adults,\n'
       +'  flights:{out:{from:IATA,to:IATA,price,co,dur}, ret:{from:IATA,to:IATA,price,co,dur}},\n'
-      +'  hotels:[3 vrais hotels: {name,stars,price,loc,hl,cat:budget/confort/luxe}],\n'
-      +'  days:[{n,title,am,pm,eve,resto:{name,price,spec},acts:[],budget}],\n'
+      +'  hotels:[3 hotels: {name,stars,price,loc,hl,cat:budget/confort/luxe}],\n'
+      +'  days:['+nights+' jours: {n,title,am,pm,eve,resto:{name,price,spec},acts:[],budget}],\n'
       +'  budget:{vols,hotel,acts,resto,transport,total,pp},\n'
       +'  tips:[4 conseils specifiques]}\n'
-      +'IATA: Paris=CDG,Marseille=MRS,Nice=NCE,Lyon=LYS,Rome=FCO,Barcelone=BCN,Madrid=MAD,Lisbonne=LIS,Londres=LHR.\n'
-      +'Hotels: VRAIS etablissements existants. JSON UNIQUEMENT.';
+      +'JSON UNIQUEMENT, aucun texte autour.';
 
-    var itinRaw = await claude(claudeSys, 'Genere: '+JSON.stringify(infos), 3000);
+    var itinRaw = await claude(claudeSys, 'Genere l itineraire: '+JSON.stringify(infos), 3000,
+      [{type:"web_search_20250305",name:"web_search",max_uses:3}]);
+    if (!itinRaw) itinRaw = await claude(claudeSys, 'Genere l itineraire: '+JSON.stringify(infos), 3000);
     if (!itinRaw) itinRaw = await groqDS(claudeSys+'\nGenere: '+JSON.stringify(infos), 2500);
     if (!itinRaw) itinRaw = await gemini(claudeSys+'\nGenere: '+JSON.stringify(infos), 2500);
 
     var tP = parseJSON(itinRaw||"");
     var itin = tP.itin;
 
-    // Fallback minimal
+    // Fallback minimal — liens directs (toujours fonctionnels)
     if (!itin) {
       var skyF=skyLink(infos.ville_depart||"",infos.destination||"",ci,co,adults);
       var bkgF=bookLink(infos.destination||"",ci,co,adults,null);
       var gtfF=getTransferLink(infos.destination||"",ci);
       return new Response(JSON.stringify({reply:
-        '<div style="font-size:13.5px;color:#1e293b;margin-bottom:12px">Voici les liens directs pour votre voyage :</div>'
+        '<div style="font-size:13.5px;color:#1e293b;margin-bottom:12px">Voici les liens directs pour votre voyage a '+(infos.destination||"")+' :</div>'
         +'<a href="'+skyF+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">✈️ Vols sur Skyscanner →</a>'
         +'<a href="'+bkgF+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">🏨 Hotels sur Booking.com →</a>'
         +'<a href="'+gtfF+'" target="_blank" style="display:flex;justify-content:center;background:linear-gradient(135deg,#1a1a2e,#e94560);color:#fff;text-decoration:none;border-radius:12px;padding:14px;margin-top:8px;font-size:13px;font-weight:700">🚗 Transfert GetTransfer →</a>',
@@ -341,7 +395,6 @@ export default async function handler(req) {
     var itinId = "itin_"+Date.now();
     var html = "";
 
-    // Header
     html += '<div id="'+itinId+'" style="background:linear-gradient(135deg,#1f2da0,#2f54ff);border-radius:16px;padding:18px;margin-bottom:4px;text-align:center">'
       +'<div style="font-size:32px;margin-bottom:6px">'+(itin.flag||"✈️")+'</div>'
       +'<div style="font-size:20px;font-weight:800;color:#fff">'+(itin.dest||"")+(itin.country?", "+itin.country:"")+'</div>'
@@ -373,23 +426,23 @@ export default async function handler(req) {
         +'<a href="'+skyU+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0e1430,#1f2da0);color:#fff;text-decoration:none;border-radius:12px;padding:12px;font-size:13px;font-weight:700;margin-top:6px">🔍 Comparer ces vols sur Skyscanner →</a>';
     }
 
-    // Klook — activites et excursions sur place
+    // Klook
     html += '<a href="'+klookLink(itin.dest||"")+'" target="_blank" style="display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#ff5722,#ff8a50);color:#fff;text-decoration:none;border-radius:14px;padding:12px 14px;margin-top:8px">'
       +'<span style="font-size:20px">🎫</span><div style="flex:1"><div style="font-size:12px;font-weight:800">Activites, tickets et transport local</div>'
       +'<div style="font-size:11px;opacity:.85">Klook · '+(itin.dest||"")+'</div></div>'
       +'<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.2);border-radius:8px;padding:5px 10px">Voir tout →</span></a>';
 
-    // Hotels
+    // Hotels — CORRECTIF : le lien cherche le NOM EXACT de l'hôtel sur Booking,
+    // pas juste la catégorie → le lien correspond enfin à la carte affichée
     if (itin.hotels&&itin.hotels.length) {
       html += '<div style="font-size:12px;font-weight:800;color:#0e1430;margin:16px 0 6px">🏨 Hebergements</div>';
       var cats=["budget","confort","luxe"];
       for (var hi=0;hi<itin.hotels.length;hi++) {
         var h=itin.hotels[hi];
         var hcat=cats[hi]||h.cat||"confort";
-        var hlink=bookLink(itin.dest||"",finalCi,finalCo,finalAdults,hcat);
+        var hlink=bookHotelLink(h.name, itin.dest||"", finalCi, finalCo, finalAdults);
         html += cardHotel({name:h.name,stars:h.stars,price:h.price,loc:h.loc||itin.dest,hl:h.hl,cat:hcat}, hlink);
       }
-      // Boutons voir plus
       html += '<div style="display:flex;gap:8px;margin-top:8px">'
         +'<a href="'+bookLink(itin.dest||"",finalCi,finalCo,finalAdults,null)+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#003580,#0071c2);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">🏨 Booking.com</a>'
         +'<a href="'+expLink(itin.dest||"",finalCi,finalCo,finalAdults)+'" target="_blank" style="flex:1;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#00355f,#00a0e3);color:#fff;text-decoration:none;border-radius:12px;padding:10px;font-size:11px;font-weight:700">✈️ Expedia.fr</a>'
@@ -404,7 +457,7 @@ export default async function handler(req) {
         +'<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.15);border-radius:8px;padding:5px 10px">Voir prix →</span></a>';
     }
 
-    // Eurocar (si pertinent)
+    // Eurocar
     if (wantsCar(itin.dest, itin.style)) {
       html += '<a href="'+eurocarLink(itin.dest||"",finalCi,finalCo)+'" target="_blank" style="display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;text-decoration:none;border-radius:14px;padding:12px 14px;margin-top:8px">'
         +'<span style="font-size:20px">🚗</span><div style="flex:1"><div style="font-size:12px;font-weight:800">Louer une voiture sur place</div>'
