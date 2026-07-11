@@ -1,15 +1,24 @@
 export const config = { runtime: 'edge' };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HUNTIFY — Mode Comparateur Produit (Amazon + Rakuten)
-// Fichier autonome — aucun import externe
-// Pipeline : Groq DeepSearch → Groq 70b → Gemini → Mistral → DeepSeek → Claude
+// HUNTIFY — Mode Comparateur Produit (Amazon + Rakuten) — v2 FIABILISÉE
+//
+// CHANGEMENT MAJEUR vs v1 :
+// Les liens faux venaient du fait que Groq (compound-beta) INVENTAIT des URLs.
+// Un LLM sans recherche web ne peut PAS connaître un ASIN réel — il hallucine.
+//
+// Nouvelle règle d'or, appliquée DANS LE CODE (pas seulement dans le prompt) :
+//   1. Claude + web_search = SOURCE PRIMAIRE (il cherche réellement sur le web)
+//   2. Toute URL non vérifiée par regex stricte → remplacée par un lien de
+//      RECHERCHE contenant le NOM EXACT du produit. Un lien de recherche
+//      fonctionne toujours et correspond toujours à la proposition affichée.
+//   3. Groq/Gemini/Mistral ne servent qu'à la décision et au fallback,
+//      et leurs URLs sont TOUJOURS ignorées (url forcée à null).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SUPABASE_URL = "https://enocxbrqyybendertytl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NmPh--frZG5HuqfaoxnemA_E7cidV9Y";
 const MODEL        = "claude-haiku-4-5";
-const MAX_Q        = 3;
 const AMAZON_TAG   = "huntify21-21";
 const AWIN_PUB     = "2920215";
 const RAKUTEN_MID  = "55615";
@@ -37,26 +46,29 @@ function cleanKw(kw) {
     .split(" ").filter(w=>w.length>1&&!stop.has(w.toLowerCase())).slice(0,7).join(" ");
 }
 
+// Validation STRICTE des URLs produit. Tout ce qui ne passe pas → lien recherche.
+function validAmazonUrl(url) {
+  const m = (url||"").match(/amazon\.fr\/(?:[^\/]+\/)?dp\/([A-Z0-9]{10})(?:[\/?]|$)/);
+  return (m && /^B[A-Z0-9]{9}$/.test(m[1])) ? m[1] : null;
+}
+function validRakutenUrl(url) {
+  return !!(url && url.includes("rakuten.com") && /\/(mfp|m)\/\d+/.test(url) && !url.includes("/s/"));
+}
+
 function buildLink(adv, keywords, directUrl) {
   if (!adv||!adv.active) return null;
   const kw = cleanKw(keywords);
   if (adv.slug==="amazon") {
     const tag = adv.amazon_tag||AMAZON_TAG;
-    // Validation ASIN strict : B + 9 chars alphanumériques
-    const asinM = (directUrl||"").match(/\/dp\/([A-Z0-9]{10})(?:[/?]|$)/);
-    const validAsin = asinM && /^B[A-Z0-9]{9}$/.test(asinM[1]);
-    if (validAsin) return "https://www.amazon.fr/dp/"+asinM[1]+"?tag="+tag;
+    const asin = validAmazonUrl(directUrl);
+    if (asin) return "https://www.amazon.fr/dp/"+asin+"?tag="+tag;
+    // Lien de recherche avec le NOM EXACT du produit → toujours cohérent
     return "https://www.amazon.fr/s?k="+encodeURIComponent(kw)+"&tag="+tag;
   }
   if (adv.slug==="rakuten") {
     const mid = adv.awin_mid||RAKUTEN_MID;
     const aff = adv.awin_affid||adv.awin_aff||AWIN_PUB;
-    // Valide une vraie URL produit Rakuten (contient /mfp/ ou /m/ suivi d'un ID numérique)
-    const isRealProductUrl = directUrl
-      && directUrl.includes("rakuten.com")
-      && /\/(mfp|m)\/\d+/.test(directUrl)
-      && !directUrl.includes("/s/"); // /s/ = recherche générique, pas un produit
-    const dest = isRealProductUrl
+    const dest = validRakutenUrl(directUrl)
       ? directUrl.split("?")[0]
       : "https://fr.shopping.rakuten.com/s/"+encodeURIComponent(kw.replace(/\s+/g,"+"));
     return "https://www.awin1.com/cread.php?awinmid="+mid+"&awinaffid="+aff+"&clickref=huntify&ued="+encodeURIComponent(dest);
@@ -71,9 +83,7 @@ function buildLink(adv, keywords, directUrl) {
 
 function findAdv(ads, slug) { return (ads||[]).find(a=>a.slug===(slug||"").toLowerCase())||null; }
 
-// ── APPELS IA ─────────────────────────────────────────────────────────────────
-// Timeout de securite sur chaque appel IA — evite qu un service lent
-// fasse depasser la limite Vercel Edge (~25s) et plante toute la requete
+// ── APPELS IA (avec timeout de sécurité) ──────────────────────────────────────
 async function fetchT(url, opts, ms) {
   const ctrl = new AbortController();
   const timer = setTimeout(()=>ctrl.abort(), ms||8000);
@@ -81,10 +91,7 @@ async function fetchT(url, opts, ms) {
     const r = await fetch(url, {...opts, signal:ctrl.signal});
     clearTimeout(timer);
     return r;
-  } catch(e) {
-    clearTimeout(timer);
-    throw e;
-  }
+  } catch(e) { clearTimeout(timer); throw e; }
 }
 
 async function groq(sys, user, maxTok) {
@@ -127,26 +134,18 @@ async function mistral(sys, user, maxTok) {
   } catch(e){return null;}
 }
 
-async function deepseek(sys, user, maxTok) {
-  const key = process.env.DEEPSEEK_API_KEY; if (!key) return null;
-  try {
-    const r = await fetchT("https://api.deepseek.com/v1/chat/completions",{method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"deepseek-chat",max_tokens:maxTok||500,messages:[{role:"system",content:sys},{role:"user",content:user}]})},7000);
-    if (!r.ok) return null; const d=await r.json(); return d.choices&&d.choices[0]?d.choices[0].message.content:null;
-  } catch(e){return null;}
-}
-
 async function freeAI(sys, user, maxTok) {
-  return await groq(sys,user,maxTok)||await gemini(sys+"\n\n"+user,maxTok)||await mistral(sys,user,maxTok)||await deepseek(sys,user,maxTok);
+  return await groq(sys,user,maxTok)||await gemini(sys+"\n\n"+user,maxTok)||await mistral(sys,user,maxTok);
 }
 
 async function claude(sys, user, maxTok, tools) {
   const key = process.env.ANTHROPIC_API_KEY; if (!key) return null;
   try {
+    const payload = {model:MODEL,max_tokens:maxTok||800,system:sys,messages:[{role:"user",content:user}]};
+    if (tools&&tools.length) payload.tools = tools;
     const r = await fetchT("https://api.anthropic.com/v1/messages",{method:"POST",
       headers:{"Content-Type":"application/json; charset=utf-8","x-api-key":key,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:MODEL,max_tokens:maxTok||800,tools:tools||[],system:sys,messages:[{role:"user",content:user}]})},12000);
+      body:JSON.stringify(payload)},18000);
     const d=await r.json(); if (!r.ok) return null;
     let t=""; for(const b of (d.content||[])){if(b.type==="text")t+=b.text;} return t||null;
   } catch(e){return null;}
@@ -169,17 +168,6 @@ function buildHist(history) {
 }
 
 function countQ(history) { return (history||[]).filter(m=>m.role!=="user"&&(m.content||"").length>20&&(m.content||"").length<300).length; }
-
-function detectCat(text) {
-  if (!text) return "general";
-  const t=text.toLowerCase();
-  if (/fond de teint|mascara|parfum|creme|serum|maquillage|beaute|cosmetique/.test(t)) return "beaute";
-  if (/casque|telephone|laptop|tablette|tv|console|electronique|gaming/.test(t)) return "electronique";
-  if (/robe|veste|pantalon|chaussure|sneaker|jean|vetement|mode/.test(t)) return "mode";
-  if (/cadeau|anniversaire|noel|mariage|naissance|offrir/.test(t)) return "cadeau";
-  if (/sport|running|velo|yoga|fitness|snorkeling|plongee|masque|piscine/.test(t)) return "sport";
-  return "general";
-}
 
 function detectBudget(text) {
   if (!text) return null;
@@ -211,10 +199,11 @@ function getCross(recap) {
 }
 
 // ── HTML ──────────────────────────────────────────────────────────────────────
-function cardProd(name, price, url, adv, badge) {
+function cardProd(name, price, url, adv, badge, verified) {
   const pill='<span style="background:rgba(255,255,255,.2);border-radius:100px;padding:2px 10px;font-size:10px;font-weight:800">'+(adv.emoji||"🛍")+" "+adv.name+"</span>";
+  const vBadge = verified ? ' · <span style="font-size:9px;opacity:.9">✓ lien direct</span>' : '';
   return '<a href="'+url+'" target="_blank" rel="sponsored noopener" style="display:flex;align-items:center;gap:12px;background:'+(adv.color||"#2f54ff")+';color:#fff;text-decoration:none;border-radius:14px;padding:12px 14px;margin-top:8px">'
-    +'<div style="flex:1;min-width:0"><div style="font-size:10px;margin-bottom:4px;opacity:.85">'+pill+(badge?" · "+badge:"")+"</div>"
+    +'<div style="flex:1;min-width:0"><div style="font-size:10px;margin-bottom:4px;opacity:.85">'+pill+(badge?" · "+badge:"")+vBadge+"</div>"
     +'<div style="font-size:13px;font-weight:800;line-height:1.3;word-break:break-word">'+name+"</div></div>"
     +'<span style="background:rgba(255,255,255,.22);border-radius:8px;padding:5px 10px;white-space:nowrap;font-size:14px;font-weight:900;flex-shrink:0">'+(price||"Voir prix")+"</span></a>";
 }
@@ -245,133 +234,101 @@ export default async function handler(req) {
       sb("trends","POST",{query:message.toLowerCase().trim(),count:1,last_searched:new Date().toISOString()});
     }
 
-    // ── ÉTAPE 1 : L IA decide si elle a besoin de clarifier avant de chercher ──
-    // Le but du pipeline multi-IA est d avoir un besoin PRECIS avant de chercher.
-    // REGLE DE ROBUSTESSE CRITIQUE : si la decision IA echoue, timeout, ou renvoie
-    // un JSON invalide/incomplet — on NE bloque JAMAIS l utilisateur. On part du
-    // principe qu on cherche avec ce qu on a. Seule une vraie question EXPLICITE
-    // et valide (ready:false + msg present) interrompt la recherche.
+    // ── ÉTAPE 1 : Décision — clarifier ou chercher ────────────────────────────
+    // Jamais bloquant : si la décision IA échoue, on cherche avec ce qu'on a.
     const qAsked = countQ(history);
 
-    const decidePrompt = 'Tu es l assistant shopping Huntify, expert et attentif. Ta mission: decider si une question\n'
-      +'de clarification rendrait la recherche du produit VRAIMENT meilleure, ou si tu peux chercher tout de suite.\n\n'
-      +'HISTORIQUE DE LA CONVERSATION:\n'+(hist||'(debut de conversation)')+'\n'
-      +'DERNIER MESSAGE DU CLIENT: '+message+'\n\n'
-      +'PRINCIPE GENERAL (applique-le a n importe quelle categorie de produit, pas seulement les exemples ci-dessous):\n'
-      +'Pose UNE question courte SEULEMENT si un critere manquant changerait vraiment le resultat de la recherche\n'
-      +'(ex: teinte/carnation pour un maquillage teint, pointure/taille pour un vetement ou une chaussure,\n'
-      +'usage prevu et budget pour de l electronique cher, destinataire et budget pour un cadeau,\n'
-      +'preference de gout/format pour de l alimentaire, etc.). Utilise ton bon sens sur la categorie du produit.\n\n'
-      +'Ne pose PAS de question si:\n'
-      +'- le produit est deja assez clair pour lancer une recherche utile (un nom de categorie suffit souvent)\n'
-      +'- '+qAsked+' question(s) ont deja ete posee(s) dans cette conversation (ready:true obligatoire, ne redemande jamais)\n'
-      +'- le client a deja repondu a une question precedente, meme brievement\n\n'
-      +'Reponds STRICTEMENT en JSON, rien d autre, sans texte autour, sans balises markdown:\n'
-      +'{"ready": false, "msg": "ta question courte et naturelle"}\n'
-      +'ou\n'
-      +'{"ready": true, "recap": "mots-cles produit precis pour une recherche e-commerce (marque/type/critere si connu)"}';
+    const decidePrompt = 'Tu es l assistant shopping Huntify. Decide si UNE question de clarification\n'
+      +'rendrait la recherche VRAIMENT meilleure, ou si tu peux chercher tout de suite.\n\n'
+      +'HISTORIQUE:\n'+(hist||'(debut de conversation)')+'\n'
+      +'DERNIER MESSAGE: '+message+'\n\n'
+      +'Pose UNE question courte SEULEMENT si un critere manquant change vraiment le resultat\n'
+      +'(teinte pour maquillage teint, pointure pour chaussures, usage+budget pour electronique cher,\n'
+      +'destinataire+budget pour cadeau...). Bon sens selon la categorie.\n'
+      +'Ne pose PAS de question si: le produit est assez clair, ou si '+qAsked+' question(s) deja posee(s)\n'
+      +'(dans ce cas ready:true OBLIGATOIRE), ou si le client vient de repondre a une question.\n\n'
+      +'JSON STRICT, rien d autre:\n'
+      +'{"ready": false, "msg": "question courte et naturelle"}\n'
+      +'ou {"ready": true, "recap": "mots-cles produit precis (marque/type/critere si connu)"}';
 
-    let decision = { ready: true, recap: null }; // valeur par defaut sure : on cherche
-
+    let decision = { ready: true, recap: null };
     try {
       const decideRaw = await freeAI(decidePrompt, message, 300);
       if (decideRaw) {
         const parsed = parseJSON(decideRaw);
-        // N interrompt la recherche QUE si l IA a explicitement et clairement demande une question
-        const asksQuestion = (parsed.ready === false || parsed.ready === "false") && parsed.msg;
-        if (asksQuestion) {
-          decision = { ready:false, msg:parsed.msg };
-        } else if (parsed.recap) {
-          decision = { ready:true, recap:parsed.recap };
-        }
-        // Sinon (JSON vide, ready manquant, etc.) → on garde la valeur par defaut ready:true
+        const asksQuestion = (parsed.ready === false || parsed.ready === "false") && parsed.msg && qAsked < 2;
+        if (asksQuestion) decision = { ready:false, msg:parsed.msg };
+        else if (parsed.recap) decision = { ready:true, recap:parsed.recap };
       }
-    } catch(e) { /* decision reste ready:true par defaut — jamais bloquant */ }
+    } catch(e) { /* jamais bloquant */ }
 
     if (decision.ready === false) {
       return new Response(JSON.stringify({reply:'<div style="font-size:13.5px;color:#1e293b;line-height:1.6;padding:4px 0">'+decision.msg+'</div>',sessionId:sid}),{headers:H});
     }
 
-    // Groq transforme la phrase naturelle en mots-cles produit
+    // Extraction des mots-clés produit
     const allUserMsgs = history.filter(m=>m.role==="user").map(m=>m.content||"").join(" ")+" "+message;
     let recap = decision.recap || null;
-
-    const extractPrompt = 'Extrait le PRODUIT recherche de ces messages. Retourne des mots-cles e-commerce concrets.\n'
-      +'JAMAIS la phrase brute du client. TOUJOURS un nom de produit/categorie clair.\n'
-      +'Si un budget, une teinte ou une preference est mentionnee, inclus-la.\n'
-      +'Exemples:\n'
-      +'"je veux vraiment respirer sous l eau" donne "masque snorkeling plongee"\n'
-      +'"un truc pour courir" donne "chaussures running"\n'
-      +'"fond de teint peau claire" donne "fond de teint teinte claire"\n'
-      +'"mascara waterproof budget 15 euros" donne "mascara waterproof 15EUR"\n'
-      +'JSON: {recap:"mots-cles produit"}';
-
     if (!recap) {
-      const extractRaw = await freeAI(extractPrompt, allUserMsgs.trim(), 200);
-      const extracted = parseJSON(extractRaw||"").recap;
-      recap = extracted || cleanKw(allUserMsgs);
+      const extractRaw = await freeAI(
+        'Extrait le PRODUIT recherche. Retourne des mots-cles e-commerce concrets, jamais la phrase brute.\n'
+        +'Ex: "je veux respirer sous l eau" → "masque snorkeling plongee". "un truc pour courir" → "chaussures running".\n'
+        +'JSON: {recap:"mots-cles produit"}',
+        allUserMsgs.trim(), 200);
+      recap = parseJSON(extractRaw||"").recap || cleanKw(allUserMsgs);
     }
 
     const budget = detectBudget(recap) || detectBudget(message) || detectBudget(hist);
-    if (budget && !(recap||"").includes("EUR") && !(recap||"").includes("€")) {
-      recap = recap + " " + budget + "EUR";
-    }
+    if (budget && !(recap||"").includes("EUR") && !(recap||"").includes("€")) recap = recap+" "+budget+"EUR";
 
-    // ── ÉTAPE 2 : Groq DeepSearch cherche les vrais produits ───────────────────
+    // ── ÉTAPE 2 : Claude + web_search = SOURCE PRIMAIRE ──────────────────────
+    // C'est LE changement clé : le modèle qui propose les produits est celui
+    // qui a réellement cherché sur le web. Fini les noms/prix/URLs inventés.
     const dbCtx = await dbLookup(recap);
 
-    const searchPrompt = 'Agent shopping Huntify. Recherche MAINTENANT sur amazon.fr et fr.shopping.rakuten.com.\n'
-      +'BESOIN CLIENT: '+recap+'\n'
-      +(dbCtx?'Donnees internes: '+dbCtx+'\n':'')
-      +'INSTRUCTIONS CRITIQUES:\n'
-      +'1. Cherche les vrais produits disponibles sur amazon.fr\n'
-      +'2. Le nom DOIT etre le VRAI NOM COMPLET (marque + modele exact) tel qu il apparait sur le site\n'
-      +'   INTERDIT: noms generiques comme "Masque de snorkeling" ou "Casque audio"\n'
-      +'   CORRECT: "Cressi F1 Masque Snorkeling", "Sony WH-1000XM5", "Philips Airfryer HD9252"\n'
-      +'3. Pour Amazon: copie l URL exacte /dp/ASIN si tu la trouves. Sinon url=null\n'
-      +'4. Pour Rakuten: cherche sur fr.shopping.rakuten.com et copie l URL EXACTE de la page produit (contient /mfp/ ou /m/ suivi d un ID). Si tu ne trouves pas d URL produit exacte, mets url:null\n'
-      +'5. Prix: le vrai prix trouve sur le site\n'
-      +'JSON: {summary:"1 phrase courte", products:[{name:"VRAI NOM",price:"XX EUR",store:"amazon",keywords:"VRAI NOM",url:"URL ou null",badge:"Top vente"}], promoCodes:[]}\n'
-      +'MINIMUM: 2 produits Amazon + 1 Rakuten. JSON UNIQUEMENT.';
+    const searchSys = 'Tu es l agent shopping Huntify. Tu DOIS utiliser web_search MAINTENANT pour trouver\n'
+      +'les VRAIS produits en vente sur amazon.fr (et si possible fr.shopping.rakuten.com).\n\n'
+      +'REGLES ABSOLUES — toute violation rend ta reponse inutilisable:\n'
+      +'1. INTERDIT d inventer un nom, un prix ou une URL. Tout doit venir de tes resultats de recherche.\n'
+      +'2. name = VRAI nom complet (marque + modele exact) vu dans les resultats.\n'
+      +'   INTERDIT: "Casque audio", "Masque de snorkeling". CORRECT: "Sony WH-1000XM5", "Cressi F1".\n'
+      +'3. url = URL amazon.fr contenant /dp/ASIN UNIQUEMENT si tu l as VUE dans un resultat de recherche.\n'
+      +'   Si tu n as pas vu l URL exacte → url:null (le systeme creera un lien fiable a partir du nom).\n'
+      +'4. price = prix vu dans les resultats. Si non visible → "Voir prix". Jamais un prix devine.\n'
+      +'5. 3 a 4 produits, varies en gamme de prix si possible, adaptes au budget du client.\n\n'
+      +(dbCtx?'Donnees internes Huntify (utilisables): '+dbCtx+'\n\n':'')
+      +'Reponds en JSON UNIQUEMENT:\n'
+      +'{summary:"1 phrase courte et chaleureuse", products:[{name,price,store:"amazon"|"rakuten",url,badge:"Top vente"|"Meilleur rapport qualite/prix"|"Budget"|null}]}';
 
-    let raw = await groqDS(searchPrompt, 1200);
-    let products = parseJSON(raw||"").products||[];
-    let summary  = parseJSON(raw||"").summary||"";
-    let promos   = parseJSON(raw||"").promoCodes||[];
-
-    // ── ÉTAPE 3 : Si ASINs invalides → Claude corrige ──────────────────────────
-    const hasGoodAsin = products.some(p=>p.store==="amazon"&&(p.url||"").match(/\/dp\/B[A-Z0-9]{9}/));
-
-    if (!hasGoodAsin && products.length > 0) {
-      const claudeRaw = await claude(
-        'Cherche sur amazon.fr les vrais produits. Retourne les URLs exactes /dp/ASIN.',
-        'Cherche: '+recap+'. JSON: {products:[{name:"VRAI NOM",price:"XX EUR",store:"amazon",url:"https://www.amazon.fr/dp/ASIN",badge:"..."}]}',
-        600,
-        [{type:"web_search_20250305",name:"web_search",max_uses:2}]
-      );
-      const cp = parseJSON(claudeRaw||"").products||[];
-      if (cp.some(p=>p.store==="amazon"&&(p.url||"").match(/\/dp\/B[A-Z0-9]{9}/))) {
-        // Garde les produits Claude (meilleurs ASINs) + Rakuten de Groq
-        products = [...cp.filter(p=>p.store==="amazon"), ...products.filter(p=>p.store==="rakuten")];
-      }
+    let products = [], summary = "", promos = [];
+    const claudeRaw = await claude(searchSys, 'Recherche pour ce besoin client: '+recap, 1200,
+      [{type:"web_search_20250305",name:"web_search",max_uses:3}]);
+    if (claudeRaw) {
+      const cp = parseJSON(claudeRaw);
+      products = cp.products||[];
+      summary  = cp.summary||"";
     }
 
-    // Si aucun resultat du tout → fallback Gemini/Mistral
+    // ── ÉTAPE 3 : Fallbacks — mais leurs URLs sont TOUJOURS neutralisees ─────
+    // Groq/Gemini n'ont pas de vraie recherche fiable → on garde leurs noms de
+    // produits (utiles pour des liens de recherche precis) mais url forcee null.
     if (!products.length) {
-      const fallback = await freeAI('Agent shopping. Reponds en JSON.', searchPrompt, 700);
-      const fp = parseJSON(fallback||"");
-      products = fp.products||[];
+      const fbPrompt = 'Agent shopping. Besoin client: '+recap+'\n'
+        +'Propose 3 produits CONNUS et populaires de cette categorie (marque + modele reels et courants).\n'
+        +'Ne fournis PAS d URL. JSON: {summary:"1 phrase", products:[{name,price:"Voir prix",store:"amazon"|"rakuten",badge}]}';
+      const raw = await groqDS(fbPrompt, 800) || await freeAI('Reponds en JSON.', fbPrompt, 700);
+      const fp = parseJSON(raw||"");
+      products = (fp.products||[]).map(p=>({...p, url:null})); // URLs neutralisées
       summary  = fp.summary||summary;
     }
 
-    // ── Garantit toujours Amazon + Rakuten ────────────────────────────────────
+    // ── Garantit toujours au moins Amazon + Rakuten ───────────────────────────
     if (!products.some(p=>(p.store||"").includes("amazon"))) {
-      products.unshift({name:recap,price:"Voir prix",store:"amazon",keywords:recap,url:null,badge:"Bestseller"});
+      products.unshift({name:recap,price:"Voir prix",store:"amazon",url:null,badge:"Bestseller"});
     }
     if (!products.some(p=>(p.store||"").includes("rakuten"))) {
-      products.push({name:recap,price:"Voir prix",store:"rakuten",keywords:recap,url:null,badge:"Bon plan"});
+      products.push({name:recap,price:"Voir prix",store:"rakuten",url:null,badge:"Bon plan"});
     }
-
     if (!summary) summary = 'Voici mes selections pour vous :';
 
     // ── Construction HTML ─────────────────────────────────────────────────────
@@ -386,10 +343,12 @@ export default async function handler(req) {
         else continue;
       }
       var prName = String(pr.name||"");
-      var rawUrl=(pr.url&&pr.url!=="null"&&(pr.url||"").length>15)?pr.url:null;
-      var url=buildLink(adv, prName.length>5?prName:(pr.keywords||prName), rawUrl);
+      var rawUrl = (pr.url && pr.url!=="null" && (pr.url||"").length>15) ? pr.url : null;
+      // verified = un vrai lien produit validé par regex (donc issu de la recherche web)
+      var verified = !!(validAmazonUrl(rawUrl) || validRakutenUrl(rawUrl));
+      var url = buildLink(adv, prName.length>5?prName:recap, rawUrl);
       if (!url) continue;
-      buttons += cardProd(prName, pr.price||"Voir prix", url, adv, pr.badge||null);
+      buttons += cardProd(prName, pr.price||"Voir prix", url, adv, pr.badge||null, verified);
     }
 
     var promoHtml="";
@@ -403,7 +362,7 @@ export default async function handler(req) {
     var first=products[0];
     if (first) {
       var wAdv=findAdv(ads,first.store)||{slug:"amazon",name:"Amazon",color:"#e47911",active:true};
-      var wUrl=buildLink(wAdv,first.keywords||first.name,first.url||null)||"";
+      var wUrl=buildLink(wAdv,first.name||recap,first.url||null)||"";
       var wD=JSON.stringify({type:"product",name:first.name,price:first.price,store:first.store,url:wUrl}).replace(/"/g,"&quot;");
       wishHtml='<button onclick="addToWishlist('+wD+')" style="background:#fff;border:1.5px solid #e8edf8;color:#3b5bdb;border-radius:12px;padding:8px 16px;margin-top:10px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;width:100%">♡ Ajouter a ma wishlist</button>';
     }
