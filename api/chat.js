@@ -118,6 +118,50 @@ async function llm(sys,user,max=650){
  }
  return {text:null,provider:null,attempts,configured,openaiEnabled:false,paidFallbackEnabled:process.env.ENABLE_PAID_ADVISOR_FALLBACK==='true'};
 }
+// Recherche Google via Gemini, avec la clé EXISTANTE et sans API de scraping shopping.
+// Le prix est accepté uniquement après confirmation par une page Product/Offer du marchand.
+async function geminiGroundedShopping(query){
+ const key=process.env.GEMINI_API_KEY;
+ if(!key)return {offers:[],status:'missing_gemini_key',attempts:[]};
+ const attempts=[];
+ const model=process.env.GEMINI_SEARCH_MODEL||'gemini-2.5-flash-lite';
+ try{
+  const prompt='Effectue une RECHERCHE GOOGLE RÉELLE pour trouver plusieurs produits disponibles en France correspondant à : '+query+
+   '. Inclus toutes les boutiques, même non affiliées (sauf Rakuten et AliExpress). Recherche au maximum 10 fiches produit directes HTTPS chez plusieurs marchands. '+
+   'Retourne JSON seulement : {"products":[{"name":"nom précis de produit, marque et référence","url":"https://URL_DIRECTE_FICHE_PRODUIT_MARCHAND","store":"marchand"}]}. '+
+   'Il faut des liens constatés par ta recherche, pas des URLs de recherche, ni des URLs inventées. Ne donne AUCUN prix : le serveur lira le vrai prix sur les pages.';
+  const resp=await timeoutFetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent',{
+   method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},
+   body:JSON.stringify({contents:[{parts:[{text:prompt}]}],tools:[{google_search:{}}],generationConfig:{temperature:0.1,maxOutputTokens:1800}})
+  },19000);
+  const data=await resp.json().catch(()=>({}));
+  if(!resp.ok)return {offers:[],status:'http_'+resp.status,attempts:[{source:'gemini_google',status:'http_'+resp.status,model}]};
+  const candidate=data.candidates?.[0];
+  const raw=(candidate?.content?.parts||[]).map(p=>p.text||'').join('\n');
+  const productList=parseJSON(raw)?.products;
+  const proposed=Array.isArray(productList)?productList.slice(0,12):[];
+  const links=new Set(),sources=[];
+  const groundedUrls=new Set((candidate?.groundingMetadata?.groundingChunks||[]).map(c=>c.web?.uri).filter(Boolean));
+  // L'URL du modèle seule ne suffit jamais. Chaque page est vérifiée par une requête
+  // réseau serveur et ses données structurées Product/Offer avant d'être affichée.
+  for(const p of proposed){
+   const url=safeMerchantFetchUrl(p.url);
+   if(url&&!links.has(url)){links.add(url);sources.push({url,claimedName:String(p.name||'').slice(0,150)})}
+   if(sources.length>=10)break;
+  }
+  // Si la réponse ne contient pas un JSON exploitable, les URLs citées peuvent
+  // être exploitées uniquement si ce sont des fiches marchand directes.
+  if(!sources.length)for(const url of groundedUrls){
+   const safe=safeMerchantFetchUrl(url);
+   if(safe&&!links.has(safe)){links.add(safe);sources.push({url:safe,claimedName:''})}
+   if(sources.length>=8)break;
+  }
+  const pages=await Promise.all(sources.slice(0,8).map(x=>merchantProductEvidence(x.url,query)));
+  const offers=pages.filter(p=>p&&p.price!==null&&p.directProductLink);
+  attempts.push({source:'gemini_google',status:offers.length?'ok':sources.length?'no_public_structured_prices':'no_direct_product_urls',model,proposed:proposed.length,grounded:groundedUrls.size,checked:pages.length});
+  return {offers,status:offers.length?'ok':'no_priced_products',attempts};
+ }catch(e){return {offers:[],status:e?.name==='AbortError'?'timeout':'network_error',attempts:[{source:'gemini_google',status:e?.name==='AbortError'?'timeout':'network_error'}]}}
+}
 async function brave(query){const key=process.env.BRAVE_SEARCH_API_KEY;if(!key)return [];try{const u='https://api.search.brave.com/res/v1/web/search?q='+encodeURIComponent(query+' acheter prix')+'&country=fr&search_lang=fr&count=15';const r=await timeoutFetch(u,{headers:{'Accept':'application/json','X-Subscription-Token':key}},10000);if(!r.ok)return [];const d=await r.json();const t=new Date().toISOString();return (d.web?.results||[]).map(x=>offer({title:x.title,url:x.url,source:host(x.url),price:null},'Web (prix non disponible)',t)).filter(Boolean).slice(0,8)}catch{return []}}
 async function groqWebCandidates(query){
 if(!process.env.GROQ_API_KEY)return [];
@@ -397,11 +441,14 @@ export default async function handler(req){
   const approved=body.approvedBrief;
   if(!approved||typeof approved!=='object'||!Array.isArray(approved.criteria)||!String(approved.query||'').trim())return respond({error:'Critères non validés',reply:'Validez d’abord les critères avec l’assistant.'},400);
   const query=String(approved.query).slice(0,180);
-  let offers=[],source='web_independent';
+  let offers=[],source='gemini_google';
   const seen=new Set(offers.map(o=>o.url||o.id));
   const addMore=items=>{for(const o of items||[]){const id=o.url||o.id;if(id&&!seen.has(id)){seen.add(id);offers.push(o)}}};
+  const google=await geminiGroundedShopping(query);
+  addMore(google.offers);
+  if(google.offers.length)source='gemini_google';
   // Brave est indépendant de SerperMatrix, uniquement s'il est configuré.
-  const braveOffers=await brave(query);
+  const braveOffers=offers.filter(pricedDirect).length<5?await brave(query):[];
   addMore(braveOffers);
   if(braveOffers.length)source='brave_web';
   // Phase de coût minimal : extraction directe des prix Product/Offer chez les marchands,
@@ -427,8 +474,8 @@ export default async function handler(req){
   const priceAudit=await claudeCompactAudit(query,valid);
   const reply=valid.length
    ?'Voici '+valid.length+' offre(s) avec prix et fiche marchand directe. Les prix sont sourcés mais à confirmer chez le marchand.'
-   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(!process.env.BRAVE_SEARCH_API_KEY?'Aucun moteur web externe gratuit configuré. ':'')+'Aucun prix ni URL inventé.';
-  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:'not_used',received:0,rejected:0,attempts:[],detail:'SerperMatrix retiré du moteur.'},completionDiagnostic:{...completion.diagnostic,freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
+   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(google.status!=='ok'?'Google/Gemini : '+google.status+'. ':'')+'Aucun prix ni URL inventé.';
+  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:'not_used',received:0,rejected:0,attempts:[],detail:'SerperMatrix retiré du moteur.'},completionDiagnostic:{...completion.diagnostic,googleGrounding:{status:google.status,attempts:google.attempts},freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
