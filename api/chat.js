@@ -118,107 +118,6 @@ async function llm(sys,user,max=650){
  }
  return {text:null,provider:null,attempts,configured,openaiEnabled:false,paidFallbackEnabled:process.env.ENABLE_PAID_ADVISOR_FALLBACK==='true'};
 }
-async function shopping(query){
-  // Deux voies publiées par le fournisseur : Shopping spécialisé, puis Search multi-sources.
-  // Ne jamais transmettre la clé ou les réponses brutes au navigateur.
-  if(process.env.ENABLE_SERPERMATRIX_SEARCH!=='true')return {offers:[],status:'disabled_optional',received:0,rejected:0,attempts:[]};
-  const key=process.env.SERPERMATRIX_API_KEY?.trim();
-  if(!key)return {offers:[],status:'missing_key',received:0,rejected:0,attempts:[]};
-  const attempts=[];
-  const requests=[
-    {name:'shopping',url:'https://serpermatrix.com/api/v1/shopping',body:{q:query,gl:'fr',hl:'fr',num:18,use_cache:true}},
-    {name:'search_shopping',url:'https://serpermatrix.com/api/v1/search',body:{query,sources:['shopping'],limit:18,country:'fr',lang:'fr',use_cache:true}}
-  ];
-  for(const endpoint of requests){
-    let r;
-    try{
-      r=await timeoutFetch(endpoint.url,{
-        method:'POST',redirect:'follow',headers:{'Content-Type':'application/json','X-API-KEY':key},
-        body:JSON.stringify(endpoint.body)
-      },14000);
-    }catch(e){
-      const status=e?.name==='AbortError'?'timeout':'network_error';
-      attempts.push({endpoint:endpoint.name,status});
-      // La deuxième voie est un secours uniquement si la première est introuvable.
-      return {offers:[],status,received:0,rejected:0,attempts};
-    }
-    if(!r.ok){
-      const codes={400:'bad_request',401:'invalid_key',402:'insufficient_credits',403:'forbidden',404:'http_404',405:'http_405',429:'rate_limited',500:'provider_error',502:'provider_error',503:'provider_error'};
-      const status=codes[r.status]||'http_'+r.status;
-      attempts.push({endpoint:endpoint.name,status});
-      if(endpoint.name==='shopping' && (r.status===404 || r.status===405))continue;
-      return {offers:[],status,received:0,rejected:0,attempts};
-    }
-    let data;
-    try{data=await r.json()}catch{
-      attempts.push({endpoint:endpoint.name,status:'invalid_json'});
-      return {offers:[],status:'invalid_json',received:0,rejected:0,attempts};
-    }
-    const candidates=[data?.shopping,data?.data?.shopping,data?.data?.results?.shopping,data?.results?.shopping];
-    const items=candidates.find(Array.isArray)||[];
-    const seen=new Set(),t=new Date().toISOString(),rejectionReasons={};
-    const linked=[],indexedOnly=[];
-    for(const item of items){
-      const direct=offer(item,'Shopping SerperMatrix (prix indexé)',t);
-      if(direct){
-        if(!seen.has(direct.id)){seen.add(direct.id);linked.push(direct)}
-        continue;
-      }
-      const indexed=offer(item,'Shopping SerperMatrix (lien marchand non vérifié)',t,{allowIndexedOnly:true});
-      if(indexed){
-        if(!seen.has(indexed.id)){seen.add(indexed.id);indexedOnly.push(indexed)}
-        continue;
-      }
-      const reason=rejectionReason(item);
-      rejectionReasons[reason]=(rejectionReasons[reason]||0)+1;
-    }
-    // Si les annonces Shopping ne fournissent aucun lien marchand direct, rechercher
-    // des fiches produits via la même API de recherche web, plutôt qu'inventer des liens.
-    const webOffers=[];
-    if(linked.length===0&&process.env.ENABLE_SERPER_WEB_FALLBACK!=='false'){
-      try{
-        const wr=await timeoutFetch('https://serpermatrix.com/api/v1/search',{
-          method:'POST',headers:{'Content-Type':'application/json','X-API-KEY':key},
-          body:JSON.stringify({query:query+' acheter prix',sources:['web'],limit:15,country:'fr',lang:'fr',use_cache:true})
-        },12000);
-        if(wr.ok){
-          const wd=await wr.json();
-          const webItems=wd?.data?.web||wd?.web||wd?.results?.web||[];
-          for(const item of webItems){
-            const candidate=offer(item,'Recherche web SerperMatrix (prix non disponible)',t);
-            if(candidate&&!seen.has(candidate.id)){seen.add(candidate.id);webOffers.push(candidate)}
-          }
-          attempts.push({endpoint:'merchant_web_fallback',status:webOffers.length?'ok':'no_direct_product_links'});
-        }else attempts.push({endpoint:'merchant_web_fallback',status:'http_'+wr.status});
-      }catch(e){attempts.push({endpoint:'merchant_web_fallback',status:e?.name==='AbortError'?'timeout':'network_error'})}
-    }
-    // Pour ne pas masquer les résultats : conserver les prix indexés sans inventer
-    // d'URL de marchand. L'interface cache naturellement le bouton si url === null.
-    const valid=[...linked,...webOffers,...indexedOnly].slice(0,10);
-    const status=valid.length?(linked.length?'ok':webOffers.length?'web_fallback':'indexed_without_direct_links'):items.length?'all_filtered':'empty_results';
-    attempts.push({endpoint:endpoint.name,status});
-    return {offers:valid,status,received:items.length,rejected:Math.max(0,items.length-linked.length-indexedOnly.length),directCount:linked.length+webOffers.length,indexedCount:indexedOnly.length,rejectionReasons,attempts};
-  }
-  return {offers:[],status:'shopping_endpoints_unavailable',received:0,rejected:0,attempts};
-}
-const shoppingMessages={
-  shopping_endpoints_unavailable:'Les deux accès Shopping documentés sont introuvables (HTTP 404/405). Vérifiez l’accès aux endpoints auprès du fournisseur.',
-  disabled_optional:'SerperMatrix est facultatif et désactivé : utilisation des autres moteurs.',
-  missing_key:'Clé SerperMatrix absente ; utilisation des autres moteurs.',
-  invalid_key:'SerperMatrix refuse la clé API (HTTP 401). Vérifiez sa validité et l’absence d’espaces superflus.',
-  insufficient_credits:'SerperMatrix indique des crédits insuffisants (HTTP 402). Vérifiez le solde du compte.',
-  rate_limited:'SerperMatrix limite les requêtes (HTTP 429). Réessayez plus tard.',
-  bad_request:'SerperMatrix refuse les paramètres de recherche (HTTP 400).',
-  forbidden:'SerperMatrix refuse l’accès (HTTP 403). Vérifiez les autorisations de la clé.',
-  timeout:'SerperMatrix n’a pas répondu avant le délai maximal.',
-  network_error:'Le serveur Vercel ne parvient pas à joindre SerperMatrix.',
-  invalid_json:'SerperMatrix a renvoyé une réponse non interprétable.',
-  all_filtered:'Les annonces reçues ne disposent pas des données minimales exploitables.',
-  indexed_without_direct_links:'Produits et prix trouvés, mais aucun lien marchand direct confirmé. Ces annonces sont affichées sans lien inventé.',
-  web_fallback:'Les liens marchands directs proviennent de la recherche web complémentaire ; leurs prix ne sont pas vérifiés.',
-  empty_results:'SerperMatrix a répondu sans fiche shopping pour cette recherche.',
-  provider_error:'Le service de recherche connaît une erreur temporaire.'
-};
 async function brave(query){const key=process.env.BRAVE_SEARCH_API_KEY;if(!key)return [];try{const u='https://api.search.brave.com/res/v1/web/search?q='+encodeURIComponent(query+' acheter prix')+'&country=fr&search_lang=fr&count=15';const r=await timeoutFetch(u,{headers:{'Accept':'application/json','X-Subscription-Token':key}},10000);if(!r.ok)return [];const d=await r.json();const t=new Date().toISOString();return (d.web?.results||[]).map(x=>offer({title:x.title,url:x.url,source:host(x.url),price:null},'Web (prix non disponible)',t)).filter(Boolean).slice(0,8)}catch{return []}}
 async function groqWebCandidates(query){
 if(!process.env.GROQ_API_KEY)return [];
@@ -386,43 +285,6 @@ async function merchantPagePrice(o){
  }catch(e){return {status:e?.name==='AbortError'?'timeout':'unavailable'}}
 }
 
-async function recoverMerchantLinksFromSearch(indexed){
- const key=process.env.ENABLE_SERPERMATRIX_SEARCH==='true'?process.env.SERPERMATRIX_API_KEY?.trim():null;
- const found=[],attempts=[];
- if(!key)return {offers:found,attempts};
- const shortlist=[];const seenStore=new Set();
- for(const offer of indexed){
-  if(offer.directProductLink||offer.price===null||!offer.store||offer.store==='Marchand non précisé')continue;
-  const fingerprint=offer.store.toLowerCase()+'|'+productTokens(offer.name).slice(0,4).join('-');
-  if(seenStore.has(fingerprint))continue;
-  seenStore.add(fingerprint);shortlist.push(offer);
-  if(shortlist.length>=3)break;
- }
- for(const target of shortlist){
-  try{
-   const title=target.name.replace(/["']/g,' ').slice(0,110);
-   const r=await timeoutFetch('https://serpermatrix.com/api/v1/search',{
-    method:'POST',headers:{'Content-Type':'application/json','X-API-KEY':key},
-    body:JSON.stringify({query:'"'+title+'" '+target.store+' acheter',sources:['web'],limit:10,country:'fr',lang:'fr',use_cache:true})
-   },8500);
-   if(!r.ok){attempts.push({status:'http_'+r.status});continue}
-   const data=await r.json().catch(()=>({}));
-   const items=[data?.data?.web,data?.web,data?.results?.web].find(Array.isArray)||[];
-   let matched=false;
-   for(const w of items){
-    const url=actualProductUrl(w.url||w.link);
-    if(!url||!productMatch(target.name,w.title||''))continue;
-    const domain=host(url)||'';
-    const stem=domain.replace(/^www\./,'').split('.')[0];
-    if(!sameMerchant(target.store,stem))continue;
-    const result={...target,url,directProductLink:true,id:'p-'+hash(url),priceStatus:'matched_shopping_index',priceSource:target.priceSource+' (fiche web rapprochée par marchand et modèle)',rating:target.rating,reviewCount:target.reviewCount};
-    found.push(result);matched=true;break;
-   }
-   attempts.push({status:matched?'matched':'no_same_merchant_model_match'});
-  }catch(e){attempts.push({status:e?.name==='AbortError'?'timeout':'network_error'})}
- }
- return {offers:found,attempts};
-}
 async function completeOffers(found,query){
  const counts={initial:found.length,completedFromMerchant:0,pairedFromSources:0,missingPrice:0,missingLink:0,notVerified:0,pageChecks:0};
  const direct=found.filter(o=>o?.directProductLink&&o.url);
@@ -535,8 +397,7 @@ export default async function handler(req){
   const approved=body.approvedBrief;
   if(!approved||typeof approved!=='object'||!Array.isArray(approved.criteria)||!String(approved.query||'').trim())return respond({error:'Critères non validés',reply:'Validez d’abord les critères avec l’assistant.'},400);
   const query=String(approved.query).slice(0,180);
-  const shop=await shopping(query);
-  let offers=[...shop.offers],source='web_independent';
+  let offers=[],source='web_independent';
   const seen=new Set(offers.map(o=>o.url||o.id));
   const addMore=items=>{for(const o of items||[]){const id=o.url||o.id;if(id&&!seen.has(id)){seen.add(id);offers.push(o)}}};
   // Brave est indépendant de SerperMatrix, uniquement s'il est configuré.
@@ -561,18 +422,13 @@ export default async function handler(req){
    addMore(claudeResearch.offers);
    source=braveOffers.length?'brave+claude':'claude_web';
   }
-  let recovered={offers:[],attempts:[]};
-  if(process.env.ENABLE_SERPERMATRIX_SEARCH==='true'&&shop.status==='ok'){
-   recovered=await recoverMerchantLinksFromSearch(offers.filter(o=>!o.directProductLink&&o.price!==null));
-   addMore(recovered.offers);
-  }
   const completion=await completeOffers(offers,query);
   const valid=completion.offers;
   const priceAudit=await claudeCompactAudit(query,valid);
   const reply=valid.length
    ?'Voici '+valid.length+' offre(s) avec prix et fiche marchand directe. Les prix sont sourcés mais à confirmer chez le marchand.'
    :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(!process.env.BRAVE_SEARCH_API_KEY?'Aucun moteur web externe gratuit configuré. ':'')+'Aucun prix ni URL inventé.';
-  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,attempts:shop.attempts||[],detail:shoppingMessages[shop.status]||shop.status},completionDiagnostic:{...completion.diagnostic,merchantRecovery:recovered.attempts,freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
+  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:'not_used',received:0,rejected:0,attempts:[],detail:'SerperMatrix retiré du moteur.'},completionDiagnostic:{...completion.diagnostic,freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
