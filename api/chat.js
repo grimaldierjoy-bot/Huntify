@@ -193,7 +193,7 @@ async function shopping(query){
     }
     // Pour ne pas masquer les résultats : conserver les prix indexés sans inventer
     // d'URL de marchand. L'interface cache naturellement le bouton si url === null.
-    const valid=[...linked,...webOffers,...indexedOnly].slice(0,10);
+    const valid=[...linked,...webOffers,...indexedOnly].slice(0,40);
     const status=valid.length?(linked.length?'ok':webOffers.length?'web_fallback':'indexed_without_direct_links'):items.length?'all_filtered':'empty_results';
     attempts.push({endpoint:endpoint.name,status});
     return {offers:valid,status,received:items.length,rejected:Math.max(0,items.length-linked.length-indexedOnly.length),directCount:linked.length+webOffers.length,indexedCount:indexedOnly.length,rejectionReasons,attempts};
@@ -342,7 +342,7 @@ async function recoverMerchantLinksFromSearch(indexed){
   const fingerprint=offer.store.toLowerCase()+'|'+productTokens(offer.name).slice(0,4).join('-');
   if(seenStore.has(fingerprint))continue;
   seenStore.add(fingerprint);shortlist.push(offer);
-  if(shortlist.length>=3)break;
+  if(shortlist.length>=6)break;
  }
  for(const target of shortlist){
   try{
@@ -421,14 +421,33 @@ export default async function handler(req){
   let offers=[...shop.offers], source='shopping';
   const seen=new Set(offers.map(o=>o.url||o.id));
   const addMore=items=>{for(const o of items){const id=o.url||o.id;if(id&&!seen.has(id)){seen.add(id);offers.push(o)}}};
+  // Deux requêtes Shopping complémentaires maximum lorsqu'il manque des offres complètes.
+  // Elles cherchent d'autres marchands sans restreindre aux programmes d'affiliation.
+  const extendedSearches=[];
+  if(offers.filter(o=>o.directProductLink&&o.price!==null).length<4){
+   const baseTerms=query.trim().split(/\s+/);
+   const broad=baseTerms.slice(0,Math.min(6,Math.max(3,Math.ceil(baseTerms.length*.65)))).join(' ');
+   const choices=[
+    broad&&broad!==query?broad+' acheter prix France':query+' meilleur prix marchands',
+    query+' boutique achat France'
+   ];
+   const unique=[...new Set(choices.map(x=>x.trim().slice(0,180)))].filter(x=>x&&x!==query).slice(0,2);
+   // Concurrence plafonnée : évite les longues chaînes de recherches.
+   const expanded=await Promise.all(unique.map(q=>shopping(q).catch(()=>({offers:[],status:'network_error'}))));
+   for(let i=0;i<expanded.length;i++){
+    const response=expanded[i];
+    addMore(response.offers||[]);
+    extendedSearches.push({query:unique[i],status:response.status,count:(response.offers||[]).length});
+   }
+  }
   // Compléter la source Shopping, y compris quand elle ne donne que des liens indirects.
   const directCount=offers.filter(o=>o.directProductLink).length;
-  if(directCount<3){addMore(await brave(query));source='shopping+web'}
+  if(directCount<5){addMore(await brave(query));source='shopping+web'}
   // Claude explore le web ouvert en complément lorsque peu de fiches directes
   // avec prix sont disponibles ; un seul web_search est permis par demande.
   const pricedDirect=offers.filter(o=>o.directProductLink&&o.price!==null).length;
   let claudeResearch={status:'not_needed',attempts:[]};
-  if(pricedDirect<3&&process.env.ENABLE_CLAUDE_RESEARCH!=='false'&&process.env.ANTHROPIC_API_KEY){
+  if(pricedDirect<5&&process.env.ENABLE_CLAUDE_RESEARCH!=='false'&&process.env.ANTHROPIC_API_KEY){
    claudeResearch=await claudeProductCandidates(query);
    addMore(claudeResearch.offers);
    if(claudeResearch.offers.length)source='shopping+web+claude';
@@ -439,9 +458,9 @@ export default async function handler(req){
   offers=completion.offers;
   const priced=offers.length;
   const reply=offers.length
-   ?'Voici '+offers.length+' offre(s) avec prix en euros et lien marchand direct. Les prix sont sourcés et doivent être confirmés sur la fiche du marchand avant achat.'
+   ?'Voici '+offers.length+' offre(s) avec prix en euros et lien marchand direct. '+(offers.length<4?'La couverture reste limitée : Huntify a tenté des recherches marchandes supplémentaires. ':'')+'Les prix sont sourcés et doivent être confirmés sur la fiche du marchand avant achat.'
    :'Aucune offre réunissant un prix exploitable et un lien marchand direct n’a pu être confirmée. Les résultats incomplets ne sont pas affichés. Vous pouvez ajuster les critères pour relancer la recherche.';
-  return respond({phase:'results',reply,sessionId:sid,offers,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,directCount:shop.directCount||0,indexedCount:shop.indexedCount||0,rejectionReasons:shop.rejectionReasons||{},attempts:shop.attempts,detail:shoppingMessages[shop.status]||null},completionDiagnostic:{...completion.diagnostic,merchantRecovery:recovered.attempts},pricedCount:priced,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,webEvidenceCount:claudeResearch.webEvidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
+  return respond({phase:'results',reply,sessionId:sid,offers,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,directCount:shop.directCount||0,indexedCount:shop.indexedCount||0,rejectionReasons:shop.rejectionReasons||{},attempts:shop.attempts,detail:shoppingMessages[shop.status]||null},completionDiagnostic:{...completion.diagnostic,extendedSearches,merchantRecovery:recovered.attempts},pricedCount:priced,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,webEvidenceCount:claudeResearch.webEvidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
