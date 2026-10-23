@@ -193,7 +193,7 @@ async function shopping(query){
     }
     // Pour ne pas masquer les résultats : conserver les prix indexés sans inventer
     // d'URL de marchand. L'interface cache naturellement le bouton si url === null.
-    const valid=[...linked,...webOffers,...indexedOnly].slice(0,10);
+    const valid=[...linked,...webOffers,...indexedOnly].slice(0,40);
     const status=valid.length?(linked.length?'ok':webOffers.length?'web_fallback':'indexed_without_direct_links'):items.length?'all_filtered':'empty_results';
     attempts.push({endpoint:endpoint.name,status});
     return {offers:valid,status,received:items.length,rejected:Math.max(0,items.length-linked.length-indexedOnly.length),directCount:linked.length+webOffers.length,indexedCount:indexedOnly.length,rejectionReasons,attempts};
@@ -342,7 +342,7 @@ async function recoverMerchantLinksFromSearch(indexed){
   const fingerprint=offer.store.toLowerCase()+'|'+productTokens(offer.name).slice(0,4).join('-');
   if(seenStore.has(fingerprint))continue;
   seenStore.add(fingerprint);shortlist.push(offer);
-  if(shortlist.length>=3)break;
+  if(shortlist.length>=6)break;
  }
  for(const target of shortlist){
   try{
@@ -462,6 +462,26 @@ async function compareCustomerReviews(items,brief){
  return {summaries,sources,status:summaries.length?'ok':'no_valid_summary',provider:ai.provider};
 }
 
+// Le budget est un plafond, jamais un prix cible ; ignorer les nombres de modèles.
+function maxBudget(brief){
+ const src=[brief?.summary,...(Array.isArray(brief?.criteria)?brief.criteria:[]),...(Array.isArray(brief?.assumptions)?brief.assumptions:[])].filter(Boolean).join(' | ');
+ const patterns=[
+  /(?:budget|prix\s*max(?:imum)?|plafond|maximum|max\.?|jusqu['’]?\s*à|moins\s*de|ne\s*pas\s*dépasser|inférieur\s*à)\s*(?:de|est|:|à|d['’]?)?\s*(\d{1,5}(?:[,.]\d{1,2})?)\s*(?:€|euros?|eur)?/gi,
+  /(\d{1,5}(?:[,.]\d{1,2})?)\s*(?:€|euros?|eur)\s*(?:max(?:imum)?|au maximum|de budget)/gi
+ ];
+ const nums=[];
+ for(const pattern of patterns){for(const m of src.matchAll(pattern)){const v=Number(m[1].replace(',','.'));if(v>0&&v<=100000)nums.push(v)}}
+ return nums.length?Math.min(...nums):null;
+}
+function expandedQueries(query){
+ const words=String(query).split(/\s+/).filter(Boolean);
+ const shorter=words.slice(0,Math.min(words.length,Math.max(3,Math.ceil(words.length*0.7)))).join(' ');
+ return [...new Set([
+  shorter&&shorter!==query?shorter+' achat boutique France':query+' alternatives modèles marchands France',
+  query+' comparatif prix boutiques France'
+ ])].map(x=>x.slice(0,180)).filter(x=>x!==query).slice(0,2);
+}
+
 // Contrat conversationnel V6 : aucune recherche sans action explicite « search ».
 // L'IA choisit les questions; seules les limites d'usage sont déterministes.
 export default async function handler(req){
@@ -481,18 +501,30 @@ export default async function handler(req){
   const approved=body.approvedBrief;
   if(!approved||typeof approved!=='object'||!Array.isArray(approved.criteria)||!String(approved.query||'').trim())return respond({error:'Critères non validés',reply:'Validez d’abord les critères avec l’assistant.'},400);
   const query=String(approved.query).slice(0,180);
+  const budgetLimit=maxBudget(approved);
   const shop=await shopping(query);
   let offers=[...shop.offers], source='shopping';
   const seen=new Set(offers.map(o=>o.url||o.id));
   const addMore=items=>{for(const o of items){const id=o.url||o.id;if(id&&!seen.has(id)){seen.add(id);offers.push(o)}}};
+  // L'utilisateur n'a pas à dire « élargis la recherche » : si la couverture
+  // prix+lien est faible, lancer deux variantes multi-marchands automatiquement.
+  const expansion=[];
+  if(offers.filter(o=>o.directProductLink&&o.price!==null&&(budgetLimit===null||o.price<=budgetLimit)).length<5){
+   const variants=expandedQueries(query);
+   const next=await Promise.all(variants.map(q=>shopping(q).catch(()=>({offers:[],status:'network_error'}))));
+   for(let i=0;i<variants.length;i++){
+    addMore(next[i].offers||[]);
+    expansion.push({query:variants[i],status:next[i].status,received:(next[i].offers||[]).length});
+   }
+  }
   // Compléter la source Shopping, y compris quand elle ne donne que des liens indirects.
   const directCount=offers.filter(o=>o.directProductLink).length;
-  if(directCount<3){addMore(await brave(query));source='shopping+web'}
+  if(directCount<5){addMore(await brave(query));source='shopping+web'}
   // Claude explore le web ouvert en complément lorsque peu de fiches directes
   // avec prix sont disponibles ; un seul web_search est permis par demande.
   const pricedDirect=offers.filter(o=>o.directProductLink&&o.price!==null).length;
   let claudeResearch={status:'not_needed',attempts:[]};
-  if(pricedDirect<3&&process.env.ENABLE_CLAUDE_RESEARCH!=='false'&&process.env.ANTHROPIC_API_KEY){
+  if(pricedDirect<5&&process.env.ENABLE_CLAUDE_RESEARCH!=='false'&&process.env.ANTHROPIC_API_KEY){
    claudeResearch=await claudeProductCandidates(query);
    addMore(claudeResearch.offers);
    if(claudeResearch.offers.length)source='shopping+web+claude';
@@ -500,17 +532,19 @@ export default async function handler(req){
   const recovered=await recoverMerchantLinksFromSearch(offers.filter(o=>!o.directProductLink&&o.price!==null));
   addMore(recovered.offers);
   const completion=await completeOffers(offers,query);
-  offers=completion.offers;
+  offers=completion.offers.filter(o=>budgetLimit===null||o.price<=budgetLimit);
+  // Montrer la diversité des marques et marchands, sans sacrifier les critères ni les prix.
+  offers.sort((a,b)=>a.price-b.price);
   const priced=offers.length;
   const reply=offers.length
-   ?'Voici '+offers.length+' offre(s) avec prix en euros et lien marchand direct. Les prix sont sourcés et doivent être confirmés sur la fiche du marchand avant achat.'
+   ?'Voici '+offers.length+' offre(s) avec prix et lien marchand direct'+(budgetLimit!==null?' sous votre plafond de '+budgetLimit.toLocaleString('fr-FR')+' €':'')+'. '+(offers.length<5?'J’ai déjà élargi automatiquement la recherche, sans trouver davantage d’offres complètes vérifiables. ':'')+'Les prix sont sourcés et à confirmer sur la fiche du marchand.'
    :'Aucune offre réunissant un prix exploitable et un lien marchand direct n’a pu être confirmée. Les résultats incomplets ne sont pas affichés. Vous pouvez ajuster les critères pour relancer la recherche.';
-  return respond({phase:'results',reply,sessionId:sid,offers,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,directCount:shop.directCount||0,indexedCount:shop.indexedCount||0,rejectionReasons:shop.rejectionReasons||{},attempts:shop.attempts,detail:shoppingMessages[shop.status]||null},completionDiagnostic:{...completion.diagnostic,merchantRecovery:recovered.attempts},pricedCount:priced,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,webEvidenceCount:claudeResearch.webEvidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
+  return respond({phase:'results',reply,sessionId:sid,offers,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,directCount:shop.directCount||0,indexedCount:shop.indexedCount||0,rejectionReasons:shop.rejectionReasons||{},attempts:shop.attempts,detail:shoppingMessages[shop.status]||null},completionDiagnostic:{...completion.diagnostic,expansion,merchantRecovery:recovered.attempts,budgetLimit,withinBudget:priced},pricedCount:priced,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,webEvidenceCount:claudeResearch.webEvidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
  const transcript=history.map(x=>x.role+': '+x.content).join('\n');
- const sys=`Tu es Huntify, conseiller d'achat expert, indépendant et exigeant. Tu identifies les usages et contraintes propres au besoin de l'utilisateur, sans questionnaire standard ni critères codés par catégorie. Le but est de lui proposer des produits pertinents, même chez des marchands sans affiliation. N'utilise pas Rakuten ou AliExpress. Pose UNE question uniquement si sa réponse changerait significativement le choix des produits. Évite les répétitions et ne redemande jamais une information déjà fournie. Si les informations suffisent, produis une synthèse à valider; tu ne déclenches PAS la recherche toi-même. Après ${turns} question(s), il reste au maximum ${Math.max(0,3-turns)} question(s). Si plus de questions possibles, synthétise ce qui est connu sans inventer les informations manquantes. Réponds UNIQUEMENT en JSON : soit {"state":"question","question":"une question courte et décisive"}, soit {"state":"ready","summary":"besoin reformulé en langage clair","query":"requête shopping précise avec termes des produits pertinents","criteria":["critères réellement fournis ou déduits explicitement"],"assumptions":["hypothèses si nécessaire"]}. Ne fabrique aucun produit, URL, prix ni avis.`;
+ const sys=`Tu es Huntify, conseiller d'achat expert, indépendant et exigeant. Tu identifies les usages et contraintes propres au besoin de l'utilisateur, sans questionnaire standard ni critères codés par catégorie. Le but est de lui proposer des produits pertinents, même chez des marchands sans affiliation. Un budget maximum est un plafond, jamais une cible de prix : explore aussi des produits bien moins chers. La requête shopping doit permettre plusieurs marques et modèles pertinents, pas imposer une référence précise tant que l'utilisateur ne l'a pas exigée. N'utilise pas Rakuten ou AliExpress. Pose UNE question uniquement si sa réponse changerait significativement le choix des produits. Évite les répétitions et ne redemande jamais une information déjà fournie. Si les informations suffisent, produis une synthèse à valider; tu ne déclenches PAS la recherche toi-même. Après ${turns} question(s), il reste au maximum ${Math.max(0,3-turns)} question(s). Si plus de questions possibles, synthétise ce qui est connu sans inventer les informations manquantes. Réponds UNIQUEMENT en JSON : soit {"state":"question","question":"une question courte et décisive"}, soit {"state":"ready","summary":"besoin reformulé en langage clair","query":"requête shopping précise avec termes des produits pertinents","criteria":["critères réellement fournis ou déduits explicitement"],"assumptions":["hypothèses si nécessaire"]}. Ne fabrique aucun produit, URL, prix ni avis.`;
  const ai=await llm(sys,'Historique:\n'+transcript+'\nMessage actuel : '+message+'\nNombre de questions déjà posées : '+turns,650);
  const raw=ai.text;
  if(!raw)return respond({phase:'error',reply:'Aucune IA de conseil n’a répondu. Vérifiez le diagnostic fournisseur : aucune recherche n’est lancée.',sessionId:sid,offers:[],diagnostic:'ai_unavailable',aiDiagnostic:{attempts:ai.attempts,configured:ai.configured,openaiEnabled:ai.openaiEnabled}},503);
