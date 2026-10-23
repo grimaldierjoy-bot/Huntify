@@ -272,7 +272,7 @@ function merchantPriceFromHtml(html){
   const attrs={};for(const m of tag.matchAll(/([a-z][\w:-]*)\s*=\s*["']([^"']*)["']/gi))attrs[m[1].toLowerCase()]=m[2];
   const label=String(attrs.property||attrs.name||attrs.itemprop||'').toLowerCase();
   if(['product:price:amount','og:price:amount','price','product_price','product:price','twitter:data1'].includes(label)){
-   const val=amount(attrs.content??attrs.value);
+   const raw=attrs.content??attrs.value;const val=amount(raw==null?null:String(raw)+' EUR');
    if(val!==null)numeric=val;
   }
   if(['product:price:currency','og:price:currency','pricecurrency'].includes(label))currency=String(attrs.content||attrs.value||'').toUpperCase();
