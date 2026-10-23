@@ -213,6 +213,37 @@ async function geminiGroundedShopping(query){
 function sameSourceUrl(a,b){
  try{const x=new URL(a),y=new URL(b);return x.hostname===y.hostname&&x.pathname.replace(/\/$/,'')===y.pathname.replace(/\/$/,'')}catch{return false}
 }
+// Index public RSS : découverte de liens sans IA payante, pas de prix inventés.
+async function publicWebOffers(query){
+ const attempts=[],seen=new Set(),candidates=[];
+ for(const suffix of [' prix acheter',' site:fnac.com OR site:boulanger.com OR site:darty.com prix']){
+  try{
+   const url='https://www.bing.com/search?format=rss&setlang=fr-FR&q='+encodeURIComponent(query+suffix);
+   const r=await timeoutFetch(url,{headers:{Accept:'application/rss+xml,application/xml,text/xml'},redirect:'manual'},5500);
+   if(!r.ok){attempts.push('http_'+r.status);continue}
+   const xml=(await r.text()).slice(0,160000);
+   for(const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)){
+    const item=match[1],raw=item.match(/<link>([\s\S]*?)<\/link>/i)?.[1]||'';
+    const link=safeMerchantFetchUrl(raw.replace(/&amp;/g,'&').trim());
+    if(!link||seen.has(link))continue;
+    const domain=host(link);
+    if(/(?:google|bing|youtube|wikipedia)\./i.test(domain||''))continue;
+    seen.add(link);candidates.push(link);
+    if(candidates.length>=12)break;
+   }
+   attempts.push('rss_'+candidates.length);
+  }catch(e){attempts.push(e?.name==='AbortError'?'timeout':'network_error')}
+  if(candidates.length>=12)break;
+ }
+ const checked=await Promise.all(candidates.slice(0,12).map(link=>merchantProductEvidence(link,query)));
+ const offers=checked.filter(o=>o&&o.price!==null);
+ return {offers,status:offers.length?'ok':candidates.length?'no_public_prices':'no_public_links',found:candidates.length,checked:checked.length,attempts};
+}
+function approvedMaximum(brief){
+ const text=[brief.query,brief.summary,...(brief.criteria||[])].filter(x=>typeof x==='string').join(' ');
+ const values=[...text.matchAll(/(?:budget(?: maximum| max)?(?: de)?|prix max(?:imum)?(?: de)?|moins de|jusqu['’]à|maximum de)\s*(\d+(?:[,.]\d{1,2})?)\s*(?:€|euros?|eur)/gi)].map(m=>Number(m[1].replace(',','.'))).filter(x=>x>0);
+ return values.length?Math.min(...values):null;
+}
 async function brave(query){const key=process.env.BRAVE_SEARCH_API_KEY;if(!key)return [];try{const u='https://api.search.brave.com/res/v1/web/search?q='+encodeURIComponent(query+' acheter prix')+'&country=fr&search_lang=fr&count=15';const r=await timeoutFetch(u,{headers:{'Accept':'application/json','X-Subscription-Token':key}},10000);if(!r.ok)return [];const d=await r.json();const t=new Date().toISOString();return (d.web?.results||[]).map(x=>offer({title:x.title,url:x.url,source:host(x.url),price:null},'Web (prix non disponible)',t)).filter(Boolean).slice(0,8)}catch{return []}}
 async function groqWebCandidates(query){
 if(!process.env.GROQ_API_KEY)return [];
@@ -571,7 +602,11 @@ export default async function handler(req){
   let offers=[],source='gemini_google';
   const seen=new Set(offers.map(o=>o.url||o.id));
   const addMore=items=>{for(const o of items||[]){const id=o.url||o.id;if(id&&!seen.has(id)){seen.add(id);offers.push(o)}}};
-  const google=await geminiGroundedShopping(query);
+  // Flux public et données structurées marchandes en priorité.
+  const free=await publicWebOffers(query);
+  addMore(free.offers);
+  if(free.offers.length)source='public_web+merchant_pages';
+  const google=offers.filter(pricedDirect).length>=5?{offers:[],status:'not_needed',attempts:[]}:await geminiGroundedShopping(query);
   addMore(google.offers);
   if(google.offers.length)source='gemini_google';
   // Brave est indépendant de SerperMatrix, uniquement s'il est configuré.
@@ -592,12 +627,13 @@ export default async function handler(req){
   // Pas de recherche web facturable Anthropic. Haiku analyse uniquement les offres sourcées.
   const claudeResearch={status:'paid_web_search_disabled',attempts:[]};
   const completion=await completeOffers(offers,query);
-  const valid=completion.offers;
+  const max=approvedMaximum(approved);
+  const valid=completion.offers.filter(o=>max===null||o.price<=max).sort((a,b)=>a.price-b.price);
   const priceAudit=await claudeCompactAudit(query,valid);
   const reply=valid.length
    ?'Voici '+valid.length+' offre(s) avec prix et fiche marchand directe. '+(valid.length<5?'La recherche a déjà exploré les sources disponibles, mais seulement '+valid.length+' offres ont un prix lisible sur leur fiche. ':'')+'Les prix sont sourcés mais à confirmer chez le marchand.'
-   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(google.status!=='ok'?'Google/Gemini : '+google.status+' ('+(google.attempts||[]).map(x=>x.model+':'+x.status).join(', ')+'). ':'')+'Claude : '+claudeResearch.status+'. Aucun prix ni URL inventé.';
-  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,completionDiagnostic:{...completion.diagnostic,googleGrounding:{status:google.status,attempts:google.attempts},freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
+   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(google.status!=='ok'?'Google/Gemini : '+google.status+' ('+(google.attempts||[]).map(x=>x.model+':'+x.status).join(', ')+'). ':'')+'Découverte gratuite : '+free.status+'. Claude Web Search désactivé. Aucun prix ni URL inventé.';
+  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,completionDiagnostic:{...completion.diagnostic,publicDiscovery:{status:free.status,found:free.found,checked:free.checked,attempts:free.attempts},maximumBudget:max,googleGrounding:{status:google.status,attempts:google.attempts},freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
