@@ -301,11 +301,11 @@ async function claudeProductCandidates(query){
 // Contrôle IA en dernier, sans outil web et sans repayer une recherche.
 // Il juge uniquement la cohérence de fiches déjà sourcées, jamais le prix réel en direct.
 async function claudeCompactAudit(query,offers){
- if(process.env.ENABLE_CLAUDE_PRICE_AUDIT!=='true'||!process.env.ANTHROPIC_API_KEY||!offers.length)return {status:'disabled',audited:0};
- const sample=offers.slice(0,6).map((o,i)=>({index:i,name:o.name,store:o.store,priceEUR:o.price,merchantHost:host(o.url),priceSource:o.priceSource}));
+ if(process.env.ENABLE_CLAUDE_PRICE_AUDIT==='false'||!process.env.ANTHROPIC_API_KEY||!offers.length)return {status:'disabled',audited:0};
+ const sample=offers.slice(0,5).map((o,i)=>({index:i,name:o.name,store:o.store,priceEUR:o.price,merchantHost:host(o.url),priceSource:o.priceSource}));
  try{
   const r=await timeoutFetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},body:JSON.stringify({
-   model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:400,
+   model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:200,
    system:'Contrôle seulement la pertinence des références produits par rapport à la demande. Tu ne peux pas vérifier les prix en temps réel. N’invente aucun prix ni lien. Retourne JSON uniquement.',
    messages:[{role:'user',content:'Demande : '+query+'\nFiches structurées avec URL déjà trouvées : '+JSON.stringify(sample)+'\nJSON {"reviews":[{"index":0,"relevant":true,"reason":"..."}]}. Max 12 mots par raison.'}]
   })},8500);
@@ -589,13 +589,8 @@ export default async function handler(req){
    if(existing)Object.assign(existing,p);else addMore([p]);
   }
   if(pageOffers.length)source='brave+merchant_pages';
-  let claudeResearch={status:process.env.ANTHROPIC_API_KEY?'not_needed_or_disabled':'missing_anthropic_key',attempts:[]};
-  // Claude n'utilise les crédits Anthropic que si les offres complètes sont insuffisantes.
-  if(offers.filter(pricedDirect).length<5&&process.env.ANTHROPIC_API_KEY&&process.env.ENABLE_CLAUDE_QUOTA_FALLBACK!=='false'){
-   claudeResearch=await claudeProductCandidates(query);
-   addMore(claudeResearch.offers);
-   source=braveOffers.length?'brave+claude':'claude_web';
-  }
+  // Pas de recherche web facturable Anthropic. Haiku analyse uniquement les offres sourcées.
+  const claudeResearch={status:'paid_web_search_disabled',attempts:[]};
   const completion=await completeOffers(offers,query);
   const valid=completion.offers;
   const priceAudit=await claudeCompactAudit(query,valid);
