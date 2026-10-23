@@ -125,8 +125,16 @@ async function llm(sys,user,max=650){
 async function geminiGroundedShopping(query){
  const key=process.env.GEMINI_API_KEY;
  if(!key)return {offers:[],status:'missing_gemini_key',attempts:[]};
- const models=[...new Set([process.env.GEMINI_SEARCH_MODEL,'gemini-2.5-flash-lite','gemini-2.5-flash'].filter(Boolean))].slice(0,3);
  const attempts=[];
+ // Découverte des modèles réellement annoncés pour cette clé, comme pour le conseiller.
+ // Les 2.5 renvoient 404 sur certains comptes récents (restriction Google).
+ const available=await modelList('gemini',key,attempts);
+ const newer=available.filter(x=>/gemini-(3\\.|3-|4\\.)/i.test(x)&&/flash|lite/i.test(x));
+ const standard=available.filter(x=>/gemini/i.test(x)&&/flash|lite/i.test(x));
+ const prefer=['gemini-3.5-flash-lite','gemini-3.8-flash','gemini-3.1-flash-lite','gemini-3.5-flash','gemini-3-flash'];
+ const requested=process.env.GEMINI_SEARCH_MODEL;
+ const models=[...new Set([requested,...prefer.filter(x=>available.includes(x)),...newer,...standard].filter(x=>x&&available.includes(x)))].slice(0,5);
+ if(!models.length)return {offers:[],status:available.length?'no_search_model_found':'model_listing_unavailable',attempts};
  for(const model of models){
   try{
    const prompt='Recherche sur Google des fiches PRODUITS de boutiques françaises répondant à : '+query+
@@ -142,6 +150,8 @@ async function geminiGroundedShopping(query){
    if(!r.ok){
     const reason=safeErrorCode(data,r.status);
     attempts.push({provider:'gemini_google',model,status:reason});
+    // 404 : modèle inaccessible. 400 : outil Google Search non pris en charge
+    // par ce modèle. Essayer le suivant annoncé par models.list.
     if([400,404].includes(r.status))continue;
     return {offers:[],status:reason,attempts};
    }
@@ -192,6 +202,9 @@ async function geminiGroundedShopping(query){
    const offers=checked.map(x=>x.offer).filter(Boolean);
    const counts={proposed:products.length,groundingLinks:groundedUrls.length,merchantUrls:candidates.length,checked:checked.length,pricedPages:checked.filter(x=>x.status==='priced_on_merchant').length,indexedCited:checked.filter(x=>x.status==='indexed_price_cited').length};
    attempts.push({provider:'gemini_google',model,status:offers.length?'ok':candidates.length?'no_readable_prices':'no_merchant_urls',...counts});
+   // Un modèle peut générer du texte sans grounding ; si aucune URL n'est
+   // exploitable, essayer les autres modèles disponibles (limite 5).
+   if(!candidates.length)continue;
    return {offers,status:offers.length?'ok':candidates.length?'no_readable_prices':products.length?'no_merchant_urls':'no_products_extracted',attempts};
   }catch(e){attempts.push({provider:'gemini_google',model,status:e?.name==='AbortError'?'timeout':'network_error'})}
  }
