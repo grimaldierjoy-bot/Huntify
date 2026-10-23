@@ -244,10 +244,14 @@ async function claudeProductCandidates(query){
   const results=[],used=new Set();let rejected=0;
   for(const p of Array.isArray(products)?products.slice(0,12):[]){
    const url=actualProductUrl(p.url);
-   if(!url||!sources.has(p.url)){rejected++;continue}
+   if(!url||![...sources].some(cited=>sameSourceUrl(cited,p.url))){rejected++;continue}
    const o=offer({title:p.name,link:url,store:p.store,price:p.price},'Claude Web Search, URL citée (prix non confirmé)',new Date().toISOString());
    if(!o||used.has(o.url)){rejected++;continue}
-   used.add(o.url);results.push(o);
+   // Une citation ne prouve pas qu'un prix est à jour : on privilégie la fiche
+   // marchand réelle ; si elle est inaccessible on conserve le prix cité indexé.
+   const merchant=await merchantProductEvidence(o.url,query,o.name);
+   const verified=merchant?.price!==null&&merchant?.price!==undefined?merchant:o;
+   used.add(o.url);results.push(verified);
   }
   // Si l'IA n'a pas produit un JSON exploitable, inspecter directement les pages
   // marchandes découvertes par la recherche web pour leurs prix structurés.
@@ -553,9 +557,9 @@ export default async function handler(req){
    if(existing)Object.assign(existing,p);else addMore([p]);
   }
   if(pageOffers.length)source='brave+merchant_pages';
-  let claudeResearch={status:'web_discovery_not_enabled',attempts:[]};
+  let claudeResearch={status:process.env.ANTHROPIC_API_KEY?'not_needed_or_disabled':'missing_anthropic_key',attempts:[]};
   // Claude n'utilise les crédits Anthropic que si les offres complètes sont insuffisantes.
-  if(offers.filter(pricedDirect).length<5&&process.env.ENABLE_CLAUDE_WEB_DISCOVERY==='true'&&process.env.ANTHROPIC_API_KEY){
+  if(offers.filter(pricedDirect).length<5&&process.env.ANTHROPIC_API_KEY&&(process.env.ENABLE_CLAUDE_WEB_DISCOVERY==='true'||(google.status==='rate_limited_or_quota'&&process.env.ENABLE_CLAUDE_RESEARCH!=='false'))){
    claudeResearch=await claudeProductCandidates(query);
    addMore(claudeResearch.offers);
    source=braveOffers.length?'brave+claude':'claude_web';
@@ -565,8 +569,8 @@ export default async function handler(req){
   const priceAudit=await claudeCompactAudit(query,valid);
   const reply=valid.length
    ?'Voici '+valid.length+' offre(s) avec prix et fiche marchand directe. Les prix sont sourcés mais à confirmer chez le marchand.'
-   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(google.status!=='ok'?'Google/Gemini : '+google.status+' ('+(google.attempts||[]).map(x=>x.model+':'+x.status).join(', ')+'). ':'')+'Aucun prix ni URL inventé.';
-  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:'not_used',received:0,rejected:0,attempts:[],detail:'SerperMatrix retiré du moteur.'},completionDiagnostic:{...completion.diagnostic,googleGrounding:{status:google.status,attempts:google.attempts},freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
+   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(google.status!=='ok'?'Google/Gemini : '+google.status+' ('+(google.attempts||[]).map(x=>x.model+':'+x.status).join(', ')+'). ':'')+'Claude : '+claudeResearch.status+'. Aucun prix ni URL inventé.';
+  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,completionDiagnostic:{...completion.diagnostic,googleGrounding:{status:google.status,attempts:google.attempts},freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
