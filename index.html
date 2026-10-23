@@ -295,7 +295,7 @@ async function send(message,action='consult'){
     recordSearch(state.brief,Array.isArray(d.offers)?d.offers:[]);
     state.offers=(Array.isArray(d.offers)?d.offers:[]).map(normalize).filter(Boolean);state.selected.clear();observePrices(state.offers);renderOffers();renderCompare();$('#briefPanel').hidden=true;
     analyticsEvent('search',{search_term:d.search?.query||'',content_type:'product'});tikTokEvent('Search',{content_type:'product'});
-    if(d.search?.shoppingDiagnostic&&state.offers.length===0){const x=d.search.shoppingDiagnostic;const y=d.search.completionDiagnostic||{};say('Diagnostic : '+(x.detail||x.status)+' (Shopping : '+x.received+' reçus, '+x.rejected+' rejetés ; offres complètes : '+(y.complete||0)+' ; sans prix : '+(y.missingPrice||0)+' ; sans lien direct : '+(y.missingLink||0)+').')}
+    if(d.search&&state.offers.length===0){const x=d.search.shoppingDiagnostic||{},y=d.search.completionDiagnostic||{},z=d.search.claudeResearch||{};say('Sources consultées : '+(d.search.source||'aucune')+' · Claude : '+(z.status||'non utilisé')+' · offres complètes : '+(y.complete||0)+' · fiches sans prix : '+(y.missingPrice||0)+'.'+(x.status==='insufficient_credits'?' SerperMatrix sans crédits (facultatif).':''))}
    }
   }
  }catch(err){loader.remove();say('Le service est inaccessible. Vérifiez le déploiement ou les logs Vercel.');}
