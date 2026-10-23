@@ -213,6 +213,37 @@ async function geminiGroundedShopping(query){
 function sameSourceUrl(a,b){
  try{const x=new URL(a),y=new URL(b);return x.hostname===y.hostname&&x.pathname.replace(/\/$/,'')===y.pathname.replace(/\/$/,'')}catch{return false}
 }
+// Index public RSS : découverte de liens sans IA payante, pas de prix inventés.
+async function publicWebOffers(query){
+ const attempts=[],seen=new Set(),candidates=[];
+ for(const suffix of [' prix acheter',' site:fnac.com OR site:boulanger.com OR site:darty.com prix']){
+  try{
+   const url='https://www.bing.com/search?format=rss&setlang=fr-FR&q='+encodeURIComponent(query+suffix);
+   const r=await timeoutFetch(url,{headers:{Accept:'application/rss+xml,application/xml,text/xml'},redirect:'manual'},5500);
+   if(!r.ok){attempts.push('http_'+r.status);continue}
+   const xml=(await r.text()).slice(0,160000);
+   for(const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)){
+    const item=match[1],raw=item.match(/<link>([\s\S]*?)<\/link>/i)?.[1]||'';
+    const link=safeMerchantFetchUrl(raw.replace(/&amp;/g,'&').trim());
+    if(!link||seen.has(link))continue;
+    const domain=host(link);
+    if(/(?:google|bing|youtube|wikipedia)\./i.test(domain||''))continue;
+    seen.add(link);candidates.push(link);
+    if(candidates.length>=12)break;
+   }
+   attempts.push('rss_'+candidates.length);
+  }catch(e){attempts.push(e?.name==='AbortError'?'timeout':'network_error')}
+  if(candidates.length>=12)break;
+ }
+ const checked=await Promise.all(candidates.slice(0,12).map(link=>merchantProductEvidence(link,query)));
+ const offers=checked.filter(o=>o&&o.price!==null);
+ return {offers,status:offers.length?'ok':candidates.length?'no_public_prices':'no_public_links',found:candidates.length,checked:checked.length,attempts};
+}
+function approvedMaximum(brief){
+ const text=[brief.query,brief.summary,...(brief.criteria||[])].filter(x=>typeof x==='string').join(' ');
+ const values=[...text.matchAll(/(?:budget(?: maximum| max)?(?: de)?|prix max(?:imum)?(?: de)?|moins de|jusqu['’]à|maximum de)\s*(\d+(?:[,.]\d{1,2})?)\s*(?:€|euros?|eur)/gi)].map(m=>Number(m[1].replace(',','.'))).filter(x=>x>0);
+ return values.length?Math.min(...values):null;
+}
 async function brave(query){const key=process.env.BRAVE_SEARCH_API_KEY;if(!key)return [];try{const u='https://api.search.brave.com/res/v1/web/search?q='+encodeURIComponent(query+' acheter prix')+'&country=fr&search_lang=fr&count=15';const r=await timeoutFetch(u,{headers:{'Accept':'application/json','X-Subscription-Token':key}},10000);if(!r.ok)return [];const d=await r.json();const t=new Date().toISOString();return (d.web?.results||[]).map(x=>offer({title:x.title,url:x.url,source:host(x.url),price:null},'Web (prix non disponible)',t)).filter(Boolean).slice(0,8)}catch{return []}}
 async function groqWebCandidates(query){
 if(!process.env.GROQ_API_KEY)return [];
@@ -222,90 +253,14 @@ try{const r=await timeoutFetch('https://api.groq.com/openai/v1/chat/completions'
 // Moteur indépendant : Claude effectue AU MAXIMUM une recherche Web payante.
 // Exploiter les sources factuelles du web_search Anthropic, même lorsque le
 // modèle ne renvoie pas de JSON. Aucun prix non sourcé ne sera inventé.
-function claudeSearchSources(response){
- const urls=new Map();
- function walk(obj,depth=0){
-  if(!obj||typeof obj!=='object'||depth>12)return;
-  if(Array.isArray(obj)){obj.forEach(x=>walk(x,depth+1));return}
-  if(typeof obj.url==='string'){
-   const url=safeMerchantFetchUrl(obj.url);
-   if(url){
-    const old=urls.get(url)||{url,titles:[],snippets:[]};
-    if(obj.title&&!old.titles.includes(obj.title))old.titles.push(String(obj.title).slice(0,180));
-    const evidence=obj.cited_text||obj.snippet||obj.description;
-    if(evidence&&!old.snippets.includes(evidence))old.snippets.push(String(evidence).slice(0,450));
-    urls.set(url,old);
-   }
-  }
-  for(const key of ['content','citations','results','sources','data'])if(obj[key])walk(obj[key],depth+1);
- }
- walk(response.content||[]);
- return [...urls.values()];
-}
-function citedPrice(entry,name){
- if(!name||!entry)return null;
- for(const snippet of entry.snippets){
-  const matched=productMatch(name,snippet)||entry.titles.some(t=>productMatch(name,t));
-  if(!matched)continue;
-  for(const hit of snippet.matchAll(/\d{1,5}(?:[.,]\d{2})?\s*(?:€|EUR)/gi)){
-   const parsed=amount(hit[0]);
-   if(parsed!==null)return parsed;
-  }
- }
- return null;
-}
-async function claudeProductCandidates(query){
- if(!process.env.ANTHROPIC_API_KEY)return {offers:[],status:'missing_key',attempts:[]};
- if(process.env.ENABLE_CLAUDE_QUOTA_FALLBACK==='false')return {offers:[],status:'explicitly_disabled',attempts:[]};
- try{
-  const prompt='Recherche vraiment sur le WEB des fiches produits en France pour : '+query+
-   '. Trouve des marques, modèles et boutiques différents, sans restriction d’affiliation. Exclure Rakuten et AliExpress. '+
-   'Fournis les noms exacts, des prix EUR visibles si disponibles et surtout des citations de pages PRODUIT DIRECTES de marchands. '+ 
-   'N’invente aucun prix ni lien. Réponds en français avec les sources.';
-  const resp=await timeoutFetch('https://api.anthropic.com/v1/messages',{
-   method:'POST',headers:{'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-   body:JSON.stringify({model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:1350,tools:[{type:'web_search_20250305',name:'web_search',max_uses:1}],system:'Utilise la recherche web réelle, jamais ta mémoire pour les prix. Cite les fiches marchandes directement.',messages:[{role:'user',content:prompt}]})
-  },23000);
-  const data=await resp.json().catch(()=>({}));
-  if(!resp.ok)return {offers:[],status:'http_'+resp.status,attempts:[{source:'claude',status:'http_'+resp.status}]};
-  const sources=claudeSearchSources(data)
-   .filter(x=>!/^(?:www\\.)?(?:youtube\\.com|wikipedia\\.org|reddit\\.com|facebook\\.com|instagram\\.com|tiktok\\.com)$/i.test(host(x.url)||''))
-   .slice(0,16);
-  const checked=await Promise.all(sources.slice(0,12).map(async source=>{
-   const page=await merchantProductEvidence(source.url,query);
-   if(page?.price!==null&&page?.price!==undefined)return {offer:page,reason:'merchant_price'};
-   // Les marchands bloquent parfois les robots. Conserver le prix réellement
-   // présent dans le résultat web cité pour cette URL PRODUIT (prix indexé).
-   // Ne jamais attribuer un prix d'une page récapitulative au mauvais modèle.
-   const title=page?.name||source.titles[0]||'';
-   const price=citedPrice(source,title);
-   if(price===null)return {offer:null,reason:page?'no_cited_price':'unreadable_or_nonproduct'};
-   if(!page){
-    const candidate=offer({title,link:source.url,store:host(source.url),price:price+' EUR'},'Extrait web Anthropic cité (prix indexé non vérifié)',new Date().toISOString());
-    if(!candidate)return {offer:null,reason:'invalid_cited_product'};
-    candidate.priceStatus='web_citation_indexed';candidate.priceVerified=false;
-    return {offer:candidate,reason:'citation_price'};
-   }
-   page.price=price;page.priceLabel=price.toLocaleString('fr-FR',{style:'currency',currency:'EUR'});
-   page.priceStatus='web_citation_indexed';
-   page.priceSource='Extrait cité de la recherche web Anthropic (prix non confirmé)';
-   page.priceObservedAt=new Date().toISOString();page.priceVerified=false;
-   return {offer:page,reason:'citation_price'};
-  }));
-  const offers=checked.map(x=>x.offer).filter(Boolean);
-  const toolErrors=(data.content||[]).filter(x=>x.type==='web_search_tool_result'&&x.content?.type==='web_search_tool_result_error').map(x=>x.content.error_code);
-  const status=offers.length?'ok':toolErrors.length?'tool_'+toolErrors[0]:sources.length?'no_merchant_prices':'no_web_sources';
-  return {offers,status,evidenceCount:sources.length,attempts:[{source:'claude_web',status,sources:sources.length,checked:checked.length,merchantPrice:checked.filter(x=>x.reason==='merchant_price').length,citedPrice:checked.filter(x=>x.reason==='citation_price').length,webSearchRequests:data.usage?.server_tool_use?.web_search_requests||0,stopReason:data.stop_reason||null}],rejected:checked.length-offers.length};
- }catch(e){return {offers:[],status:e?.name==='AbortError'?'timeout':'network_error',attempts:[{source:'claude_web',status:e?.name==='AbortError'?'timeout':'network_error'}]}}
-}
 // Contrôle IA en dernier, sans outil web et sans repayer une recherche.
 // Il juge uniquement la cohérence de fiches déjà sourcées, jamais le prix réel en direct.
 async function claudeCompactAudit(query,offers){
- if(process.env.ENABLE_CLAUDE_PRICE_AUDIT!=='true'||!process.env.ANTHROPIC_API_KEY||!offers.length)return {status:'disabled',audited:0};
- const sample=offers.slice(0,6).map((o,i)=>({index:i,name:o.name,store:o.store,priceEUR:o.price,merchantHost:host(o.url),priceSource:o.priceSource}));
+ if(process.env.ENABLE_CLAUDE_PRICE_AUDIT==='false'||!process.env.ANTHROPIC_API_KEY||!offers.length)return {status:'disabled',audited:0};
+ const sample=offers.slice(0,5).map((o,i)=>({index:i,name:o.name,store:o.store,priceEUR:o.price,merchantHost:host(o.url),priceSource:o.priceSource}));
  try{
   const r=await timeoutFetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},body:JSON.stringify({
-   model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:400,
+   model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:200,
    system:'Contrôle seulement la pertinence des références produits par rapport à la demande. Tu ne peux pas vérifier les prix en temps réel. N’invente aucun prix ni lien. Retourne JSON uniquement.',
    messages:[{role:'user',content:'Demande : '+query+'\nFiches structurées avec URL déjà trouvées : '+JSON.stringify(sample)+'\nJSON {"reviews":[{"index":0,"relevant":true,"reason":"..."}]}. Max 12 mots par raison.'}]
   })},8500);
@@ -571,7 +526,11 @@ export default async function handler(req){
   let offers=[],source='gemini_google';
   const seen=new Set(offers.map(o=>o.url||o.id));
   const addMore=items=>{for(const o of items||[]){const id=o.url||o.id;if(id&&!seen.has(id)){seen.add(id);offers.push(o)}}};
-  const google=await geminiGroundedShopping(query);
+  // Flux public et données structurées marchandes en priorité.
+  const free=await publicWebOffers(query);
+  addMore(free.offers);
+  if(free.offers.length)source='public_web+merchant_pages';
+  const google=offers.filter(pricedDirect).length>=5?{offers:[],status:'not_needed',attempts:[]}:await geminiGroundedShopping(query);
   addMore(google.offers);
   if(google.offers.length)source='gemini_google';
   // Brave est indépendant de SerperMatrix, uniquement s'il est configuré.
@@ -589,20 +548,16 @@ export default async function handler(req){
    if(existing)Object.assign(existing,p);else addMore([p]);
   }
   if(pageOffers.length)source='brave+merchant_pages';
-  let claudeResearch={status:process.env.ANTHROPIC_API_KEY?'not_needed_or_disabled':'missing_anthropic_key',attempts:[]};
-  // Claude n'utilise les crédits Anthropic que si les offres complètes sont insuffisantes.
-  if(offers.filter(pricedDirect).length<5&&process.env.ANTHROPIC_API_KEY&&process.env.ENABLE_CLAUDE_QUOTA_FALLBACK!=='false'){
-   claudeResearch=await claudeProductCandidates(query);
-   addMore(claudeResearch.offers);
-   source=braveOffers.length?'brave+claude':'claude_web';
-  }
+  // Pas de recherche web facturable Anthropic. Haiku analyse uniquement les offres sourcées.
+  const claudeResearch={status:'paid_web_search_disabled',attempts:[]};
   const completion=await completeOffers(offers,query);
-  const valid=completion.offers;
+  const max=approvedMaximum(approved);
+  const valid=completion.offers.filter(o=>max===null||o.price<=max).sort((a,b)=>a.price-b.price);
   const priceAudit=await claudeCompactAudit(query,valid);
   const reply=valid.length
    ?'Voici '+valid.length+' offre(s) avec prix et fiche marchand directe. '+(valid.length<5?'La recherche a déjà exploré les sources disponibles, mais seulement '+valid.length+' offres ont un prix lisible sur leur fiche. ':'')+'Les prix sont sourcés mais à confirmer chez le marchand.'
-   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(google.status!=='ok'?'Google/Gemini : '+google.status+' ('+(google.attempts||[]).map(x=>x.model+':'+x.status).join(', ')+'). ':'')+'Claude : '+claudeResearch.status+'. Aucun prix ni URL inventé.';
-  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,completionDiagnostic:{...completion.diagnostic,googleGrounding:{status:google.status,attempts:google.attempts},freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
+   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(google.status!=='ok'?'Google/Gemini : '+google.status+' ('+(google.attempts||[]).map(x=>x.model+':'+x.status).join(', ')+'). ':'')+'Découverte gratuite : '+free.status+'. Claude Web Search désactivé. Aucun prix ni URL inventé.';
+  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,completionDiagnostic:{...completion.diagnostic,publicDiscovery:{status:free.status,found:free.found,checked:free.checked,attempts:free.attempts},maximumBudget:max,googleGrounding:{status:google.status,attempts:google.attempts},freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
