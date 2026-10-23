@@ -474,11 +474,12 @@ function maxBudget(brief){
  return nums.length?Math.min(...nums):null;
 }
 function expandedQueries(query){
- const words=String(query).split(/\s+/).filter(Boolean);
+ const cleaned=String(query).replace(/\b(?:budget|prix\s*max(?:imum)?|moins\s*de|jusqu['’]?\s*à)\s*(?:de\s*)?\d+(?:[,.]\d+)?\s*(?:€|euros?|eur)?\b/gi,' ').replace(/\s*\d+(?:[,.]\d+)?\s*(?:€|euros?|eur)\s*(?:max(?:imum)?)?\b/gi,' ').replace(/\s+/g,' ').trim();
+ const words=(cleaned||query).split(/\s+/).filter(Boolean);
  const shorter=words.slice(0,Math.min(words.length,Math.max(3,Math.ceil(words.length*0.7)))).join(' ');
  return [...new Set([
-  shorter&&shorter!==query?shorter+' achat boutique France':query+' alternatives modèles marchands France',
-  query+' comparatif prix boutiques France'
+  shorter&&shorter!==query?shorter+' achat boutique France':(cleaned||query)+' alternatives modèles marchands France',
+  (cleaned||query)+' comparatif prix boutiques France'
  ])].map(x=>x.slice(0,180)).filter(x=>x!==query).slice(0,2);
 }
 
