@@ -268,6 +268,31 @@ async function claudeProductCandidates(query){
   return {offers:results,status:results.length?'ok':'no_grounded_offers',attempts:[{source:'claude_web',status:results.length?'ok':'no_grounded_offers'}],evidenceCount:sources.size,rejected};
  }catch(e){return {offers:[],status:e?.name==='AbortError'?'timeout':'network_error',attempts:[{source:'claude_web',status:e?.name==='AbortError'?'timeout':'network_error'}]}}
 }
+// Contrôle IA en dernier, sans outil web et sans repayer une recherche.
+// Il juge uniquement la cohérence de fiches déjà sourcées, jamais le prix réel en direct.
+async function claudeCompactAudit(query,offers){
+ if(process.env.ENABLE_CLAUDE_PRICE_AUDIT!=='true'||!process.env.ANTHROPIC_API_KEY||!offers.length)return {status:'disabled',audited:0};
+ const sample=offers.slice(0,6).map((o,i)=>({index:i,name:o.name,store:o.store,priceEUR:o.price,merchantHost:host(o.url),priceSource:o.priceSource}));
+ try{
+  const r=await timeoutFetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},body:JSON.stringify({
+   model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:400,
+   system:'Contrôle seulement la pertinence des références produits par rapport à la demande. Tu ne peux pas vérifier les prix en temps réel. N’invente aucun prix ni lien. Retourne JSON uniquement.',
+   messages:[{role:'user',content:'Demande : '+query+'\nFiches structurées avec URL déjà trouvées : '+JSON.stringify(sample)+'\nJSON {"reviews":[{"index":0,"relevant":true,"reason":"..."}]}. Max 12 mots par raison.'}]
+  })},8500);
+  if(!r.ok)return {status:'http_'+r.status,audited:0};
+  const data=await r.json().catch(()=>({}));
+  const parsed=parseJSON((data.content||[]).filter(x=>x.type==='text').map(x=>x.text).join(''));
+  if(!Array.isArray(parsed?.reviews))return {status:'invalid_output',audited:0};
+  let checked=0;
+  for(const item of parsed.reviews){
+   if(!Number.isInteger(item.index)||item.index<0||item.index>=sample.length)continue;
+   // L'avis IA est seulement une annotation, pas une confirmation de prix.
+   offers[item.index].aiRelevance=item.relevant===true?'pertinent':item.relevant===false?'à examiner':'inconnu';
+   checked++;
+  }
+  return {status:'ok',audited:checked};
+ }catch(e){return {status:e?.name==='AbortError'?'timeout':'network_error',audited:0}}
+}
 async function merchantProductEvidence(url,query){
  const link=safeMerchantFetchUrl(url);if(!link)return null;
  try{
@@ -543,10 +568,11 @@ export default async function handler(req){
   }
   const completion=await completeOffers(offers,query);
   const valid=completion.offers;
+  const priceAudit=await claudeCompactAudit(query,valid);
   const reply=valid.length
    ?'Voici '+valid.length+' offre(s) avec prix et fiche marchand directe. Les prix sont sourcés mais à confirmer chez le marchand.'
    :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(!process.env.BRAVE_SEARCH_API_KEY?'Aucun moteur web externe gratuit configuré. ':'')+'Aucun prix ni URL inventé.';
-  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,attempts:shop.attempts||[],detail:shoppingMessages[shop.status]||shop.status},completionDiagnostic:{...completion.diagnostic,merchantRecovery:recovered.attempts,freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
+  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,attempts:shop.attempts||[],detail:shoppingMessages[shop.status]||shop.status},completionDiagnostic:{...completion.diagnostic,merchantRecovery:recovered.attempts,freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
