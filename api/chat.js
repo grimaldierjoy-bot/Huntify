@@ -314,8 +314,15 @@ async function merchantProductEvidence(url,query,expectedName=''){
   const r=await timeoutFetch(link,{headers:{Accept:'text/html'},redirect:'manual'},6500);
   if(!r.ok||!/text\/html|application\/xhtml/i.test(r.headers.get('content-type')||''))return null;
   const html=(await r.text()).slice(0,700000);
-  const ld=productJsonPrice(html,expectedName);
-  if(!ld)return null; // Ne pas confondre les pages génériques et fiches produits.
+  let ld=productJsonPrice(html,expectedName);
+  if(!ld){
+   // Certains marchands exposent OG title/price mais pas de JSON-LD.
+   const match=html.match(/<meta\b[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["'][^>]*>/i);
+   const title=match?.[1]?.replace(/&amp;/g,'&').trim()||'';
+   const meta=merchantPriceFromHtml(html);
+   if(title.length<8||meta.price===null||expectedName&&!productMatch(expectedName,title))return null;
+   ld={name:title,price:meta.price,method:'merchant_og'};
+  }
   const name=ld.name;
   const models=productTokens(query).filter(x=>/[a-z]/.test(x)&&/\d/.test(x)&&!['200','100'].includes(x));
   if(models.length&&!models.every(x=>productTokens(name).includes(x)))return null;
