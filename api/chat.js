@@ -10,7 +10,27 @@ function parseJSON(s){if(!s)return null;try{return JSON.parse(s)}catch{} const m
 function host(url){try{const u=new URL(url);return u.protocol==='https:'&&!u.username&&!u.password&&!BLOCKED.test(u.hostname)?u.hostname.toLowerCase():null}catch{return null}}
 function actualProductUrl(url){const h=host(url);if(!h)return null;const u=new URL(url);if(/(^|\.)google\.|(^|\.)bing\.|(^|\.)awin1\.|(^|\.)awin\./i.test(h))return null;if(/(^|\.)amazon\./i.test(h)&&!(/\/(dp|gp\/product)\/[A-Z0-9]{10}/i.test(u.pathname)))return null;if(/\/(search|searchresults|s\/|wholesale|catalogsearch|recherche)(\/|$)/i.test(u.pathname))return null;if(u.searchParams.has('q')&&u.pathname==='/')return null;return u.href}
 function amount(raw){if(typeof raw==='number')return Number.isFinite(raw)&&raw>0?raw:null;let s=String(raw||'').replace(/\s/g,'');if(!/[€]|EUR/i.test(String(raw||'')))return null;let n=s.match(/\d[\d.,]*/)?.[0];if(!n)return null;const comma=n.lastIndexOf(','),dot=n.lastIndexOf('.');if(comma>dot)n=n.replace(/\./g,'').replace(',','.');else n=n.replace(/,/g,'');const v=Number(n);return Number.isFinite(v)&&v>0&&v<1000000?v:null}
-function offer(o,source,observedAt){const link=actualProductUrl(o.link||o.url||o.product_url||o.productLink);if(!link)return null;const name=String(o.title||o.name||'').trim().slice(0,200);if(name.length<9||name.split(' ').length<2)return null;const price=amount(o.price);const store=String(o.source||o.store||host(link)||'Boutique').slice(0,70);return {id:'p-'+hash(link),name,store,price,priceLabel:price!==null?price.toLocaleString('fr-FR',{style:'currency',currency:'EUR'}):'Prix indisponible',currency:'EUR',url:link,directProductLink:true,priceVerified:false,priceSource:source,priceObservedAt:price===null?null:observedAt,priceStatus:price===null?'unavailable':'indexed',image:typeof o.imageUrl==='string'&&host(o.imageUrl)?o.imageUrl:null,affiliate:false};}
+function offer(o,source,observedAt,{allowIndexedOnly=false}={}){
+ const name=String(o.title||o.name||o.productName||'').trim().slice(0,200);
+ if(name.length<6)return null;
+ const rawLink=o.merchantLink||o.merchant_link||o.offer_link||o.offerLink||o.product_url||o.productUrl||o.productLink||o.link||o.url||'';
+ const link=actualProductUrl(rawLink);
+ const price=amount(o.price??o.priceText??o.price_text??o.displayPrice??o.extracted_price);
+ // Une annonce Shopping sans lien marchand direct ne doit pas être présentée comme une fiche validée.
+ if(!link&&(!allowIndexedOnly||price===null))return null;
+ const store=String(o.source||o.store||o.merchant||o.seller|| (link?host(link):'Marchand non précisé')).trim().slice(0,70);
+ const id='p-'+hash(link||name+'|'+store+'|'+String(price));
+ const imageCandidate=o.imageUrl||o.image_url||o.thumbnail||null;
+ return {id,name,store,price,priceLabel:price!==null?price.toLocaleString('fr-FR',{style:'currency',currency:'EUR'}):'Prix indisponible',currency:'EUR',url:link,directProductLink:!!link,priceVerified:false,priceSource:source,priceObservedAt:price===null?null:observedAt,priceStatus:price===null?'unavailable':'indexed',image:typeof imageCandidate==='string'&&host(imageCandidate)?imageCandidate:null,affiliate:false};
+}
+function rejectionReason(o){
+ const name=String(o?.title||o?.name||o?.productName||'').trim();
+ if(name.length<6)return 'missing_or_short_title';
+ const rawLink=o.merchantLink||o.merchant_link||o.offer_link||o.offerLink||o.product_url||o.productUrl||o.productLink||o.link||o.url||'';
+ if(!rawLink)return 'missing_product_link';
+ if(!actualProductUrl(rawLink))return 'indirect_or_unsafe_link';
+ return 'invalid_product';
+}
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return (h>>>0).toString(36)}
 // Orchestration du conseil : OpenAI d'abord (si activé), Gemini puis Groq en secours.
 // Un fournisseur est appelé après l'autre ; aucun appel Anthropic sans consentement explicite.
@@ -131,11 +151,48 @@ async function shopping(query){
     }
     const candidates=[data?.shopping,data?.data?.shopping,data?.data?.results?.shopping,data?.results?.shopping];
     const items=candidates.find(Array.isArray)||[];
-    const seen=new Set(),t=new Date().toISOString();
-    const valid=items.map(x=>offer(x,'Shopping (index marchand)',t)).filter(x=>x&&!seen.has(x.url)&&seen.add(x.url)).slice(0,10);
-    const status=valid.length?'ok':items.length?'all_filtered':'empty_results';
+    const seen=new Set(),t=new Date().toISOString(),rejectionReasons={};
+    const linked=[],indexedOnly=[];
+    for(const item of items){
+      const direct=offer(item,'Shopping SerperMatrix (prix indexé)',t);
+      if(direct){
+        if(!seen.has(direct.id)){seen.add(direct.id);linked.push(direct)}
+        continue;
+      }
+      const indexed=offer(item,'Shopping SerperMatrix (lien marchand non vérifié)',t,{allowIndexedOnly:true});
+      if(indexed){
+        if(!seen.has(indexed.id)){seen.add(indexed.id);indexedOnly.push(indexed)}
+        continue;
+      }
+      const reason=rejectionReason(item);
+      rejectionReasons[reason]=(rejectionReasons[reason]||0)+1;
+    }
+    // Si les annonces Shopping ne fournissent aucun lien marchand direct, rechercher
+    // des fiches produits via la même API de recherche web, plutôt qu'inventer des liens.
+    const webOffers=[];
+    if(linked.length===0&&process.env.ENABLE_SERPER_WEB_FALLBACK!=='false'){
+      try{
+        const wr=await timeoutFetch('https://serpermatrix.com/api/v1/search',{
+          method:'POST',headers:{'Content-Type':'application/json','X-API-KEY':key},
+          body:JSON.stringify({query:query+' acheter prix',sources:['web'],limit:15,country:'fr',lang:'fr',use_cache:true})
+        },12000);
+        if(wr.ok){
+          const wd=await wr.json();
+          const webItems=wd?.data?.web||wd?.web||wd?.results?.web||[];
+          for(const item of webItems){
+            const candidate=offer(item,'Recherche web SerperMatrix (prix non disponible)',t);
+            if(candidate&&!seen.has(candidate.id)){seen.add(candidate.id);webOffers.push(candidate)}
+          }
+          attempts.push({endpoint:'merchant_web_fallback',status:webOffers.length?'ok':'no_direct_product_links'});
+        }else attempts.push({endpoint:'merchant_web_fallback',status:'http_'+wr.status});
+      }catch(e){attempts.push({endpoint:'merchant_web_fallback',status:e?.name==='AbortError'?'timeout':'network_error'})}
+    }
+    // Pour ne pas masquer les résultats : conserver les prix indexés sans inventer
+    // d'URL de marchand. L'interface cache naturellement le bouton si url === null.
+    const valid=[...linked,...webOffers,...indexedOnly].slice(0,10);
+    const status=valid.length?(linked.length?'ok':webOffers.length?'web_fallback':'indexed_without_direct_links'):items.length?'all_filtered':'empty_results';
     attempts.push({endpoint:endpoint.name,status});
-    return {offers:valid,status,received:items.length,rejected:Math.max(0,items.length-valid.length),attempts};
+    return {offers:valid,status,received:items.length,rejected:Math.max(0,items.length-linked.length-indexedOnly.length),directCount:linked.length+webOffers.length,indexedCount:indexedOnly.length,rejectionReasons,attempts};
   }
   return {offers:[],status:'shopping_endpoints_unavailable',received:0,rejected:0,attempts};
 }
@@ -150,7 +207,9 @@ const shoppingMessages={
   timeout:'SerperMatrix n’a pas répondu avant le délai maximal.',
   network_error:'Le serveur Vercel ne parvient pas à joindre SerperMatrix.',
   invalid_json:'SerperMatrix a renvoyé une réponse non interprétable.',
-  all_filtered:'SerperMatrix a répondu, mais aucun de ses résultats ne répond aux règles de fiches produits directes.',
+  all_filtered:'Les annonces reçues ne disposent pas des données minimales exploitables.',
+  indexed_without_direct_links:'Produits et prix trouvés, mais aucun lien marchand direct confirmé. Ces annonces sont affichées sans lien inventé.',
+  web_fallback:'Les liens marchands directs proviennent de la recherche web complémentaire ; leurs prix ne sont pas vérifiés.',
   empty_results:'SerperMatrix a répondu sans fiche shopping pour cette recherche.',
   provider_error:'Le service de recherche connaît une erreur temporaire.'
 };
@@ -175,11 +234,13 @@ export default async function handler(req){
   const shop=await shopping(query);
   let offers=shop.offers, source='shopping';
   if(!offers.length){offers=await brave(query);source='web'}
+  else if(shop.status==='web_fallback')source='web';
+  else if(shop.status==='indexed_without_direct_links')source='shopping_indexed';
   if(!offers.length&&process.env.ENABLE_GROQ_WEB_SEARCH==='true'){offers=await groqWebCandidates(query);source='groq'}
   if(!offers.length&&process.env.ENABLE_CLAUDE_RESEARCH==='true'){offers=await claudeProductCandidates(query);source='claude'}
   const priced=offers.filter(o=>o.price!==null).length;
-  const reply=offers.length?(priced?`Voici ${offers.length} fiches produits, dont ${priced} avec un prix relevé par une source Shopping. Les prix restent à confirmer chez le marchand.`:`Voici ${offers.length} fiches produits. Aucun prix suffisamment sourcé : ils ne seront pas inventés.`):'Recherche terminée : aucune fiche produit exploitable. Source prix : '+(shoppingMessages[shop.status]||shop.status)+'.';
-  return respond({phase:'results',reply,sessionId:sid,offers,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,attempts:shop.attempts,detail:shoppingMessages[shop.status]||null},pricedCount:priced,observedAt:new Date().toISOString()}})
+  const reply=offers.length?(priced?`Voici ${offers.length} résultats produits, dont ${priced} avec un prix relevé par une source Shopping. Les annonces sans lien marchand confirmé ne comportent pas de bouton d'achat. Tous les prix restent à confirmer chez le marchand.`:`Voici ${offers.length} fiches produits. Aucun prix suffisamment sourcé : ils ne seront pas inventés.`):'Recherche terminée : aucune fiche produit exploitable. Source prix : '+(shoppingMessages[shop.status]||shop.status)+'.';
+  return respond({phase:'results',reply,sessionId:sid,offers,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,directCount:shop.directCount||0,indexedCount:shop.indexedCount||0,rejectionReasons:shop.rejectionReasons||{},attempts:shop.attempts,detail:shoppingMessages[shop.status]||null},pricedCount:priced,observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
