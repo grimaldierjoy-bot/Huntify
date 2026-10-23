@@ -129,7 +129,7 @@ async function geminiGroundedShopping(query){
  // Découverte des modèles réellement annoncés pour cette clé, comme pour le conseiller.
  // Les 2.5 renvoient 404 sur certains comptes récents (restriction Google).
  const available=await modelList('gemini',key,attempts);
- const newer=available.filter(x=>/gemini-(3\\.|3-|4\\.)/i.test(x)&&/flash|lite/i.test(x));
+ const newer=available.filter(x=>/^gemini-[34]/i.test(x)&&/flash|lite/i.test(x));
  const standard=available.filter(x=>/gemini/i.test(x)&&/flash|lite/i.test(x));
  const prefer=['gemini-3.5-flash-lite','gemini-3.8-flash','gemini-3.1-flash-lite','gemini-3.5-flash','gemini-3-flash'];
  const requested=process.env.GEMINI_SEARCH_MODEL;
