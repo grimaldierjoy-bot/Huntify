@@ -222,7 +222,7 @@ try{const r=await timeoutFetch('https://api.groq.com/openai/v1/chat/completions'
 // Moteur indépendant : Claude effectue AU MAXIMUM une recherche Web payante.
 async function claudeProductCandidates(query){
  if(!process.env.ANTHROPIC_API_KEY)return {offers:[],status:'missing_key',attempts:[]};
- if(process.env.ENABLE_CLAUDE_RESEARCH==='false')return {offers:[],status:'disabled',attempts:[]};
+ if(process.env.ENABLE_CLAUDE_QUOTA_FALLBACK==='false')return {offers:[],status:'explicitly_disabled',attempts:[]};
  try{
   const prompt='Effectue une recherche web réelle sur des fiches PRODUIT françaises pertinentes pour : '+query+'. Explore plusieurs marchands sans condition d’affiliation, sauf Rakuten et AliExpress. Retourne uniquement JSON {"products":[{"name":"produit marque et référence","store":"marchand","url":"https://fiche-marchand","price":"prix explicite en EUR ou null"}]}. N’invente aucun lien ni prix, et utilise les URL visibles dans les résultats de ta recherche. Jusqu’à 8 produits.';
   const resp=await timeoutFetch('https://api.anthropic.com/v1/messages',{
@@ -559,7 +559,7 @@ export default async function handler(req){
   if(pageOffers.length)source='brave+merchant_pages';
   let claudeResearch={status:process.env.ANTHROPIC_API_KEY?'not_needed_or_disabled':'missing_anthropic_key',attempts:[]};
   // Claude n'utilise les crédits Anthropic que si les offres complètes sont insuffisantes.
-  if(offers.filter(pricedDirect).length<5&&process.env.ANTHROPIC_API_KEY&&(process.env.ENABLE_CLAUDE_WEB_DISCOVERY==='true'||(google.status==='rate_limited_or_quota'&&process.env.ENABLE_CLAUDE_RESEARCH!=='false'))){
+  if(offers.filter(pricedDirect).length<5&&process.env.ANTHROPIC_API_KEY&&(process.env.ENABLE_CLAUDE_WEB_DISCOVERY==='true'||(google.status==='rate_limited_or_quota'&&process.env.ENABLE_CLAUDE_QUOTA_FALLBACK!=='false'))){
    claudeResearch=await claudeProductCandidates(query);
    addMore(claudeResearch.offers);
    source=braveOffers.length?'brave+claude':'claude_web';
