@@ -55,11 +55,11 @@ body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-ser
 <section class="panel" id="saved"><header><h2>♡ Ma liste de sélection</h2><div class="stats"><span class="counter" id="listCount">0</span><span class="muted">Enregistrée sur cet appareil</span></div></header><div class="content"><div id="savedItems" class="offers"></div><div class="sectionFoot"><button class="ghost" id="exportSaved">Exporter en JSON</button><button class="ghost" id="clearSaved">Vider</button></div></div></section></div></div><section class="panel full" id="history"><header><h2>◷ Historique de mes recherches</h2><span class="muted" id="historyCount">0 recherche</span></header><div class="content"><p class="muted" id="historyNote">Vos recherches restent sur cet appareil tant que vous n’êtes pas connecté.</p><div id="historyList" class="history-list"></div></div></section><section class="panel full" id="comparison"><header><h2>⇄ Comparateur personnalisé</h2><span id="compareCount" class="muted">Cochez deux à six offres dans les résultats ou vos favoris</span></header><div id="comparisonBody" class="content"><div class="empty">Cochez deux offres parmi les résultats ou vos favoris pour commencer.</div></div></section><div class="footer">Huntify recherche sur les sites marchands sans priorité à l’affiliation. Les prix indexés ne sont pas une confirmation de stock ou de tarif en caisse. Les favoris et seuils de prix sont stockés sur cet appareil ; sans compte, aucun email d’alerte n’est envoyé.</div></main></div></div><dialog id="accountDialog" class="account-dialog" aria-labelledby="accountTitle"><div class="account-inner"><button id="accountClose" class="account-close" type="button" aria-label="Fermer">×</button><div class="eyebrow" style="color:#5b58d7">VOTRE ESPACE HUNTIFY</div><h2 id="accountTitle">Vos découvertes, partout avec vous.</h2><p>Créez votre compte gratuit avec votre email et un code à six chiffres. Gardez vos favoris et l’historique de vos recherches.</p><div id="accountSignedOut"><form id="accountEmailForm"><label>Votre adresse email<input id="accountEmail" type="email" autocomplete="email" required placeholder="vous@exemple.fr"></label><button class="primary" id="sendEmailCode" type="submit" style="width:100%;margin-top:12px;padding:13px">Recevoir mon code de connexion →</button></form><form id="accountCodeForm" hidden style="margin-top:14px"><label>Code reçu par email<input id="accountCode" type="text" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="one-time-code" placeholder="123456" required></label><button class="primary" type="submit" id="verifyEmailCode" style="width:100%;margin-top:12px;padding:13px">Valider et accéder à mon compte</button></form></div><div id="accountSignedIn" hidden><strong id="accountIdentity"></strong><p>Vos recherches et favoris sont synchronisés avec votre espace sécurisé.</p><button id="signOut" type="button" class="ghost" style="margin-top:12px">Se déconnecter</button></div><div id="accountStatus" class="account-status" role="status">La recherche et la comparaison restent accessibles sans compte.</div></div></dialog><aside id="cookieConsent" class="cookie-consent" hidden><strong>Mesure de fréquentation</strong><p>Autorisez-vous Google Analytics pour mesurer les visites, les recherches et les clics vers les boutiques ? Le refus n'empêche pas Huntify de fonctionner.</p><div class="choice"><button id="refuseAnalytics" type="button">Refuser</button><button id="acceptAnalytics" class="accept" type="button">Accepter</button></div></aside>
 <script>
 (()=>{'use strict';
-const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];const STORAGE='huntify_v4_saved', ALERT_DRAFTS='huntify_alert_drafts_v1', PRICE_LOG='huntify_price_observations_v1';
-const state={mode:'product',busy:false,history:[],sessionId:typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():String(Date.now()),offers:[],saved:load(),selected:new Set(),alertDrafts:loadArray(ALERT_DRAFTS),priceLog:loadArray(PRICE_LOG),travelContext:{},brief:null,questionCount:0};
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];const STORAGE='huntify_v4_saved', ALERT_DRAFTS='huntify_alert_drafts_v1', PRICE_LOG='huntify_price_observations_v1', SEARCH_HISTORY='huntify_recent_searches_v1';
+const state={mode:'product',busy:false,history:[],sessionId:typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():String(Date.now()),offers:[],saved:load(),selected:new Set(),alertDrafts:loadArray(ALERT_DRAFTS),priceLog:loadArray(PRICE_LOG),searchLog:loadArray(SEARCH_HISTORY),supabase:null,user:null,travelContext:{},brief:null,questionCount:0};
 function loadArray(name){try{const a=JSON.parse(localStorage.getItem(name)||'[]');return Array.isArray(a)?a.slice(0,300):[]}catch{return []}}
 function load(){return loadArray(STORAGE).slice(0,100)}
-function save(){try{localStorage.setItem(STORAGE,JSON.stringify(state.saved))}catch{}renderSaved()}
+function save(){try{localStorage.setItem(STORAGE,JSON.stringify(state.saved))}catch{}renderSaved();if(state.user)syncFavorites().catch(showSyncError)}
 function elem(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=String(txt);return e}
 let ga4Id=null;let analyticsConsent=localStorage.getItem('huntify_analytics_consent');
 function analyticsEvent(name, params={}){if(analyticsConsent==='yes'&&typeof window.gtag==='function')window.gtag('event',name,params)}
@@ -131,6 +131,122 @@ async function loadReviewSummaries(items,button,target){
  }catch(e){target.append(elem('p','notice','Service des avis momentanément indisponible.'))}
  finally{button.disabled=false;button.textContent='Actualiser l’analyse des avis'}
 }
+
+const accountDialog=$('#accountDialog'),accountStatus=$('#accountStatus');
+function accountMessage(message){accountStatus.textContent=message}
+function showSyncError(e){accountMessage('Enregistrement local conservé. Synchronisation indisponible : '+String(e?.message||e||'vérifiez la configuration').slice(0,120))}
+function openAccount(){if(!accountDialog.open)accountDialog.showModal()}
+$('#accountTrigger').onclick=openAccount;
+$('#sidebarAccount').onclick=e=>{e.preventDefault();openAccount()};
+$('#accountClose').onclick=()=>accountDialog.close();
+accountDialog.addEventListener('click',e=>{if(e.target===accountDialog)accountDialog.close()});
+async function initAccount(){
+ try{
+  const response=await fetch('/api/public-config',{cache:'no-store'});
+  const cfg=await response.json();
+  if(!cfg.supabaseUrl||!cfg.supabasePublishableKey){
+   accountMessage('Le compte sera disponible après configuration des paramètres publics Supabase sur Vercel. Vos favoris et recherches restent enregistrés sur cet appareil.');
+   $('#sendEmailCode').disabled=true;return;
+  }
+  const sdk=await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+  state.supabase=sdk.createClient(cfg.supabaseUrl,cfg.supabasePublishableKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+  const {data}=await state.supabase.auth.getUser();
+  if(data?.user)await onAccountChange(data.user);
+  state.supabase.auth.onAuthStateChange((event,session)=>{
+   if(event==='SIGNED_OUT'){state.user=null;renderAccount();return}
+   if(session?.user&&(!state.user||state.user.id!==session.user.id)){
+    state.user=session.user;renderAccount();setTimeout(()=>syncAccount().catch(showSyncError),0);
+   }
+  });
+ }catch(e){showSyncError(e)}
+}
+function renderAccount(){
+ const logged=!!state.user;
+ $('#accountSignedOut').hidden=logged;$('#accountSignedIn').hidden=!logged;
+ $('#accountTrigger').textContent=logged?'◉ Mon compte':'◉ Créer mon compte / Connexion';
+ if(logged){$('#accountIdentity').textContent=state.user.email||'Compte connecté';accountMessage('Compte connecté. Vos recherches et favoris sont synchronisés lorsque la connexion fonctionne.')}
+ else accountMessage('Recherche et comparaison accessibles sans compte. Historique temporaire conservé sur cet appareil.');
+ $('#historyNote').textContent=logged?'Historique synchronisé à votre compte Huntify.':'Vos recherches restent sur cet appareil tant que vous n’êtes pas connecté.';
+ renderHistory();
+}
+async function onAccountChange(user){state.user=user;renderAccount();await syncAccount()}
+$('#accountEmailForm').onsubmit=async e=>{
+ e.preventDefault();const button=$('#sendEmailCode'),email=$('#accountEmail').value.trim().toLowerCase();
+ if(!state.supabase){accountMessage('Supabase n’est pas encore configuré.');return}
+ button.disabled=true;accountMessage('Envoi du code en cours…');
+ try{
+  const {error}=await state.supabase.auth.signInWithOtp({email,options:{shouldCreateUser:true}});
+  if(error)throw error;
+  $('#accountCodeForm').hidden=false;
+  accountMessage('Code envoyé à '+email+'. Vérifiez vos emails et vos spams.');
+ }catch(err){showSyncError(err)}finally{button.disabled=false}
+};
+$('#accountCodeForm').onsubmit=async e=>{
+ e.preventDefault();const button=$('#verifyEmailCode');button.disabled=true;
+ try{
+  const {data,error}=await state.supabase.auth.verifyOtp({email:$('#accountEmail').value.trim().toLowerCase(),token:$('#accountCode').value.trim(),type:'email'});
+  if(error)throw error;
+  if(!data.user)throw new Error('Session non confirmée');
+  await onAccountChange(data.user);
+  accountMessage('Bienvenue ! Votre compte est confirmé.');
+ }catch(err){showSyncError(err)}finally{button.disabled=false}
+};
+$('#signOut').onclick=async()=>{try{await state.supabase?.auth.signOut();state.user=null;renderAccount();accountMessage('Vous êtes déconnecté.')}catch(e){showSyncError(e)}};
+function historyKey(x){return String(x?.id||x?.query||'')}
+function renderHistory(){
+ const box=$('#historyList');box.replaceChildren();const items=state.searchLog.slice(-20).reverse();
+ $('#historyCount').textContent=items.length+' recherche'+(items.length===1?'':'s');
+ if(!items.length){box.append(elem('div','empty','Aucune recherche enregistrée. Lancez votre première recherche avec Huntify.'));return}
+ for(const h of items){
+  const btn=elem('button','history-entry');btn.type='button';
+  btn.append(elem('strong','',h.query||h.summary||'Recherche'),elem('small','',new Date(h.createdAt).toLocaleString('fr-FR')+(h.offerCount>=0?' · '+h.offerCount+' offre(s)':'') ));
+  btn.title='Reprendre ce besoin dans le conseiller';
+  btn.onclick=()=>{$('#message').value=h.summary||h.query||'';setMode('product');$('#message').value=h.summary||h.query||'';$('#message').focus();$('#assistant').scrollIntoView({behavior:'smooth',block:'start'})};
+  box.append(btn);
+ }
+}
+function recordSearch(brief,offers){
+ const entry={id:crypto.randomUUID?.()||String(Date.now()),query:String(brief?.query||'').slice(0,180),summary:String(brief?.summary||'').slice(0,450),criteria:(brief?.criteria||[]).slice(0,8),offerCount:offers.length,createdAt:new Date().toISOString()};
+ state.searchLog=state.searchLog.filter(x=>x.query!==entry.query).slice(-79).concat(entry);
+ try{localStorage.setItem(SEARCH_HISTORY,JSON.stringify(state.searchLog))}catch{}
+ renderHistory();if(state.user)syncSearch(entry).catch(showSyncError);
+}
+async function syncSearch(item){
+ if(!state.supabase||!state.user)return;
+ const {error}=await state.supabase.from('huntify_search_history').upsert({id:item.id,user_id:state.user.id,query:item.query,summary:item.summary,criteria:item.criteria,offer_count:item.offerCount,created_at:item.createdAt},{onConflict:'id'});
+ if(error)throw error;
+}
+async function syncFavorites(){
+ if(!state.supabase||!state.user)return;
+ const rows=state.saved.slice(0,100).map(o=>({user_id:state.user.id,offer_key:key(o),offer:o,updated_at:new Date().toISOString()}));
+ if(rows.length){const {error}=await state.supabase.from('huntify_favorites').upsert(rows,{onConflict:'user_id,offer_key'});if(error)throw error}
+}
+async function syncAccount(){
+ if(!state.supabase||!state.user)return;
+ const db=state.supabase;
+ const [favResult,histResult]=await Promise.all([
+  db.from('huntify_favorites').select('offer').order('updated_at',{ascending:false}).limit(100),
+  db.from('huntify_search_history').select('id,query,summary,criteria,offer_count,created_at').order('created_at',{ascending:false}).limit(80)
+ ]);
+ if(favResult.error)throw favResult.error;
+ if(histResult.error)throw histResult.error;
+ const byKey=new Map(state.saved.map(o=>[key(o),o]));
+ for(const row of favResult.data||[]){if(row.offer?.name)byKey.set(key(row.offer),normalize(row.offer))}
+ state.saved=[...byKey.values()].slice(0,100);
+ try{localStorage.setItem(STORAGE,JSON.stringify(state.saved))}catch{}
+ renderSaved();
+ const histById=new Map(state.searchLog.map(h=>[historyKey(h),h]));
+ for(const row of histResult.data||[]){
+  const entry={id:row.id,query:row.query,summary:row.summary,criteria:row.criteria||[],offerCount:row.offer_count,createdAt:row.created_at};
+  if(![...histById.values()].some(h=>h.query===entry.query))histById.set(entry.id,entry);
+ }
+ state.searchLog=[...histById.values()].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)).slice(-80);
+ try{localStorage.setItem(SEARCH_HISTORY,JSON.stringify(state.searchLog))}catch{}
+ renderHistory();
+ await Promise.all([syncFavorites(),...state.searchLog.filter(h=>h.id).slice(-20).map(syncSearch)]);
+ accountMessage('Compte connecté · favoris et recherches synchronisés.');
+}
+
 function observePrices(items){
  const now=new Date().toISOString();
  for(const o of items){if(!(o.price>0)||!o.url)continue;const id=key(o);const previous=state.priceLog.filter(x=>x.key===id).slice(-1)[0];if(previous&&previous.price===o.price)continue;state.priceLog.push({key:id,price:o.price,at:now});}
@@ -170,6 +286,7 @@ async function send(message,action='consult'){
    if(d.phase==='question')state.questionCount=d.questionCount||state.questionCount+1;
    if(d.phase==='ready'&&d.brief){showBrief(d.brief);state.history.push({role:'assistant',content:'Besoin analysé : '+d.brief.summary+'; critères : '+(d.brief.criteria||[]).join(', ')});}
    if(d.phase==='results'){
+    recordSearch(state.brief,Array.isArray(d.offers)?d.offers:[]);
     state.offers=(Array.isArray(d.offers)?d.offers:[]).map(normalize).filter(Boolean);state.selected.clear();observePrices(state.offers);renderOffers();renderCompare();$('#briefPanel').hidden=true;
     analyticsEvent('search',{search_term:d.search?.query||'',content_type:'product'});tikTokEvent('Search',{content_type:'product'});
     if(d.search?.shoppingDiagnostic&&state.offers.length===0){const x=d.search.shoppingDiagnostic;const y=d.search.completionDiagnostic||{};say('Diagnostic : '+(x.detail||x.status)+' (Shopping : '+x.received+' reçus, '+x.rejected+' rejetés ; offres complètes : '+(y.complete||0)+' ; sans prix : '+(y.missingPrice||0)+' ; sans lien direct : '+(y.missingLink||0)+').')}
@@ -180,6 +297,6 @@ async function send(message,action='consult'){
 }
 $('#approveBrief').onclick=()=>{if(state.brief)send('','search')};
 $('#editBrief').onclick=()=>{$('#briefPanel').hidden=true;$('#message').focus();say('Quelle précision souhaitez-vous ajouter à vos critères ?')};
-$('#form').onsubmit=e=>{e.preventDefault();const v=$('#message').value.trim();if(v){$('#message').value='';send(v)}};$$('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));$$('[data-example]').forEach(b=>b.onclick=()=>{$('#message').value=b.dataset.example;$('#message').focus()});$('#filterOffers').oninput=renderOffers;$('#sortOffers').onchange=renderOffers;$('#clearSaved').onclick=()=>{if(state.saved.length&&confirm('Vider votre liste enregistrée sur cet appareil ?')){state.saved=[];state.selected.clear();save()}};$('#exportSaved').onclick=()=>{const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),offers:state.saved},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='huntify-ma-liste.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};renderSaved();initAnalytics();
+$('#form').onsubmit=e=>{e.preventDefault();const v=$('#message').value.trim();if(v){$('#message').value='';send(v)}};$$('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));$$('[data-example]').forEach(b=>b.onclick=()=>{$('#message').value=b.dataset.example;$('#message').focus()});$('#filterOffers').oninput=renderOffers;$('#sortOffers').onchange=renderOffers;$('#clearSaved').onclick=()=>{if(state.saved.length&&confirm('Vider votre liste enregistrée sur cet appareil ?')){state.saved=[];state.selected.clear();save()}};$('#exportSaved').onclick=()=>{const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),offers:state.saved},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='huntify-ma-liste.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};renderSaved();renderHistory();initAccount();initAnalytics();
 })();
 </script></body></html>
