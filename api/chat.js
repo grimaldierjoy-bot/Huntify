@@ -263,6 +263,105 @@ async function claudeProductCandidates(query){
   return {offers,status:offers.length?'ok':'no_cited_direct_offers',rejected,webEvidenceCount:evidence.size,attempts:[{source:'claude',status:offers.length?'ok':'no_cited_direct_offers'}]};
  }catch(e){return {offers:[],status:e?.name==='AbortError'?'timeout':'network_error',attempts:[{source:'claude',status:e?.name==='AbortError'?'timeout':'network_error'}]}}
 }
+
+function pricedDirect(o){return !!o?.directProductLink&&!!o?.url&&typeof o?.price==='number'&&Number.isFinite(o.price)&&o.price>0}
+function productTokens(v){
+ return String(v||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').match(/[a-z0-9]{3,}/g)?.filter(x=>!['pour','avec','chez','dans','the','and','noir','blanc','black','white','prix','achat','livraison','produit'].includes(x))||[];
+}
+function productMatch(a,b){
+ const x=[...new Set(productTokens(a))],y=new Set(productTokens(b));
+ if(x.length<2)return false;
+ const common=x.filter(t=>y.has(t));
+ const models=x.filter(t=>/[a-z]/.test(t)&&/\d/.test(t));
+ if(models.length&&!models.every(t=>y.has(t)))return false;
+ return common.length>=2&&common.length/Math.min(x.length,8)>=0.5;
+}
+function sameMerchant(a,b){
+ const aa=String(a||'').toLowerCase().replace(/[^a-z0-9]/g,''),bb=String(b||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+ return !!aa&&!!bb&&(aa===bb||aa.includes(bb)||bb.includes(aa));
+}
+function safeMerchantFetchUrl(url){
+ const link=actualProductUrl(url);if(!link)return null;
+ const u=new URL(link),h=u.hostname.toLowerCase();
+ if(h==='localhost'||h.endsWith('.localhost')||h.endsWith('.local')||h.endsWith('.internal')||h.endsWith('.test')||h.endsWith('.invalid')||h.endsWith('.example')||h.endsWith('.onion')||h==='metadata.google.internal'||h==='169.254.169.254'||h==='0.0.0.0'||/^\d+\.\d+\.\d+\.\d+$/.test(h)||h.includes(':')||h.startsWith('xn--'))return null;
+ return link;
+}
+function structuredPriceFromHtml(html,expectedTitle){
+ const script=/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+ let m;
+ while((m=script.exec(html))!==null){
+  let data;try{data=JSON.parse(m[1].replace(/^\s*<!--|-->\s*$/g,''))}catch{continue}
+  const todo=[data];let scanned=0;
+  while(todo.length&&scanned++<80){
+   const x=todo.shift();if(!x||typeof x!=='object')continue;
+   if(Array.isArray(x)){todo.push(...x.slice(0,20));continue}
+   if(x['@graph'])todo.push(x['@graph']);
+   const type=String(x['@type']||'');
+   if(/(^|[, ])Product($|[, ])/.test(type)){
+    if(!productMatch(expectedTitle,x.name||''))continue;
+    const offs=Array.isArray(x.offers)?x.offers:[x.offers];
+    for(const o of offs){
+     if(!o||typeof o!=='object'||/AggregateOffer/.test(String(o['@type']||'')))continue;
+     const currency=String(o.priceCurrency||o.priceSpecification?.priceCurrency||'').toUpperCase();
+     const amountRaw=o.price??o.priceSpecification?.price;
+     if(currency!=='EUR'||amountRaw==null)continue;
+     const price=amount(typeof amountRaw==='number'?amountRaw:String(amountRaw)+' EUR');
+     if(price!==null)return price;
+    }
+   }
+  }
+ }
+ return null;
+}
+async function merchantPagePrice(o){
+ const url=safeMerchantFetchUrl(o.url);if(!url)return {status:'unsafe_link'};
+ try{
+  // Pas de redirections automatiques vers une autre URL/ressource.
+  const r=await timeoutFetch(url,{headers:{'Accept':'text/html','User-Agent':'HuntifyPriceCheck/1.0'},redirect:'manual'},5500);
+  if(!r.ok)return {status:'http_'+r.status};
+  const contentType=r.headers.get('content-type')||'';
+  if(!/text\/html|application\/xhtml\+xml/i.test(contentType))return {status:'not_html'};
+  const html=(await r.text()).slice(0,650000);
+  const price=structuredPriceFromHtml(html,o.name);
+  if(price===null)return {status:'no_matching_eur_product_offer'};
+  return {price,status:'structured_product_offer',observedAt:new Date().toISOString()};
+ }catch(e){return {status:e?.name==='AbortError'?'timeout':'unavailable'}}
+}
+async function completeOffers(found,query){
+ const counts={initial:found.length,completedFromMerchant:0,pairedFromSources:0,missingPrice:0,missingLink:0,notVerified:0,pageChecks:0};
+ const direct=found.filter(o=>o?.directProductLink&&o.url);
+ const indexed=found.filter(o=>o?.price!==null&&!o?.directProductLink);
+ // Rejoindre uniquement les offres du même marchand ET du même modèle,
+ // jamais un prix Fnac à un lien Boulanger ou deux variantes différentes.
+ for(const target of direct){
+  if(target.price!==null)continue;
+  const shop=host(target.url)||'';
+  const match=indexed.find(o=>productMatch(o.name,target.name)&&(sameMerchant(o.store,target.store)||sameMerchant(o.store,shop.split('.')[0])));
+  if(match){
+    target.price=match.price;target.priceLabel=match.priceLabel;target.priceSource=match.priceSource+' (rapproché même marchand/modèle)';target.priceObservedAt=match.priceObservedAt;target.priceStatus='cross_source_indexed';counts.pairedFromSources++;
+  }
+ }
+ // Lire les données structurées publiques des fiches marchandes, pas la réponse d'une IA.
+ const candidates=direct.filter(o=>o.price===null).slice(0,6);
+ const resolved=await Promise.all(candidates.map(merchantPagePrice));
+ for(let k=0;k<candidates.length;k++){
+  const got=resolved[k];counts.pageChecks++;
+  if(typeof got.price==='number'){
+   const o=candidates[k];o.price=got.price;o.priceLabel=got.price.toLocaleString('fr-FR',{style:'currency',currency:'EUR'});o.priceSource='Données structurées Product/Offer du marchand';o.priceObservedAt=got.observedAt;o.priceStatus='merchant_structured';o.priceVerified=false;counts.completedFromMerchant++;
+  }
+ }
+ const unique=new Map();
+ for(const o of direct.filter(pricedDirect)){
+  const key=o.url.replace(/[?#].*$/,'');
+  if(!unique.has(key)||(!unique.get(key).priceObservedAt&&o.priceObservedAt))unique.set(key,o);
+ }
+ counts.missingPrice=direct.filter(o=>!pricedDirect(o)).length;
+ counts.missingLink=indexed.length;
+ counts.complete=unique.size;
+ counts.notVerified=[...unique.values()].filter(o=>!o.priceVerified).length;
+ return {offers:[...unique.values()].slice(0,12),diagnostic:counts};
+}
+
 // Contrat conversationnel V6 : aucune recherche sans action explicite « search ».
 // L'IA choisit les questions; seules les limites d'usage sont déterministes.
 export default async function handler(req){
@@ -292,12 +391,13 @@ export default async function handler(req){
    addMore(claudeResearch.offers);
    if(claudeResearch.offers.length)source='shopping+web+claude';
   }
-  // Les URL directes passent avant les annonces indexées sans fiche marchand.
-  offers.sort((a,b)=>Number(!!b.directProductLink)-Number(!!a.directProductLink));
-  offers=offers.slice(0,12);
-  const priced=offers.filter(o=>o.price!==null).length;
-  const reply=offers.length?(priced?`Voici ${offers.length} résultats produits, dont ${priced} avec un prix relevé par une source Shopping. Les annonces sans lien marchand confirmé ne comportent pas de bouton d'achat. Tous les prix restent à confirmer chez le marchand.`:`Voici ${offers.length} fiches produits. Aucun prix suffisamment sourcé : ils ne seront pas inventés.`):'Recherche terminée : aucune fiche produit exploitable. Source prix : '+(shoppingMessages[shop.status]||shop.status)+'.';
-  return respond({phase:'results',reply,sessionId:sid,offers,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,directCount:shop.directCount||0,indexedCount:shop.indexedCount||0,rejectionReasons:shop.rejectionReasons||{},attempts:shop.attempts,detail:shoppingMessages[shop.status]||null},pricedCount:priced,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,webEvidenceCount:claudeResearch.webEvidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
+  const completion=await completeOffers(offers,query);
+  offers=completion.offers;
+  const priced=offers.length;
+  const reply=offers.length
+   ?'Voici '+offers.length+' offre(s) avec prix en euros et lien marchand direct. Les prix sont sourcés et doivent être confirmés sur la fiche du marchand avant achat.'
+   :'Aucune offre réunissant un prix exploitable et un lien marchand direct n’a pu être confirmée. Les résultats incomplets ne sont pas affichés. Vous pouvez ajuster les critères pour relancer la recherche.';
+  return respond({phase:'results',reply,sessionId:sid,offers,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,directCount:shop.directCount||0,indexedCount:shop.indexedCount||0,rejectionReasons:shop.rejectionReasons||{},attempts:shop.attempts,detail:shoppingMessages[shop.status]||null},completionDiagnostic:completion.diagnostic,pricedCount:priced,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,webEvidenceCount:claudeResearch.webEvidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
