@@ -217,7 +217,52 @@ async function brave(query){const key=process.env.BRAVE_SEARCH_API_KEY;if(!key)r
 async function groqWebCandidates(query){
 if(!process.env.GROQ_API_KEY)return [];
 try{const r=await timeoutFetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.GROQ_API_KEY},body:JSON.stringify({model:process.env.GROQ_SEARCH_MODEL||'compound-beta',max_tokens:950,messages:[{role:'user',content:'Recherche sur le web des fiches PRODUITS DIRECTES et réellement trouvées chez tous les marchands français sauf Rakuten et AliExpress pour: '+query+'. Jamais de page de résultats, jamais d’URL imaginée. Retourne uniquement JSON {"products":[{"name":"marque modèle exact","url":"https://lien-direct-observé","store":"marchand"}]}. N’indique aucun prix car le système vérifie les prix indépendamment.'}]})},13000);if(!r.ok)return [];const d=await r.json();const x=parseJSON(d.choices?.[0]?.message?.content);return (Array.isArray(x?.products)?x.products:[]).map(p=>offer(p,'Recherche IA (prix indisponible)',null)).filter(Boolean).slice(0,6)}catch{return []}}
-async function claudeProductCandidates(query){if(!process.env.ANTHROPIC_API_KEY)return [];try{const r=await timeoutFetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:700,tools:[{type:'web_search_20250305',name:'web_search',max_uses:2}],system:'Expert shopping : trouve des fiches produits réelles sur tous sites marchands hors Rakuten et AliExpress. N’invente ni URLs ni prix. Retourne du JSON uniquement {"products":[{"name":"nom complet","url":"https://.../fiche-produit","store":"boutique"}]}. Pas de résultats de recherche.',messages:[{role:'user',content:query}]})},14000);if(!r.ok)return [];const d=await r.json();const p=parseJSON((d.content||[]).filter(x=>x.type==='text').map(x=>x.text).join(''));return (p?.products||[]).map(x=>offer(x,'IA + recherche (prix indisponible)',null)).filter(Boolean)}catch{return []}}
+// Recherche augmentée par Claude : les URLs et prix doivent provenir d'une recherche web
+// réellement exécutée. Aucun prix inventé par le modèle n'est présenté.
+async function claudeProductCandidates(query){
+ const key=process.env.ANTHROPIC_API_KEY;
+ const attempts=[];
+ if(!key)return {offers:[],status:'missing_key',attempts};
+ if(process.env.ENABLE_CLAUDE_RESEARCH==='false')return {offers:[],status:'disabled',attempts};
+ try{
+  const prompt='Recherche sur le WEB OUVERT des offres produit exactes en France pour : '+query+
+  '. Explore des marchands indépendants ou non affiliés, sauf Rakuten et AliExpress. '+
+  'Utilise la recherche web pour trouver de vraies pages PRODUIT marchand, avec titre exact, prix affiché en EUR et URL source de la page. '+
+  'Ne déduis jamais un prix et ne fabrique aucune URL. Réponds uniquement JSON compact : '+
+  '{"products":[{"name":"titre produit exact","store":"marchand","url":"https://url-fiche-marchand","price":"149,90 €","evidenceUrl":"https://url-de-la-page-consultee"}]}. '+
+  'Si tu ne trouves pas un prix explicite dans les pages trouvées, mets price:null. '+
+  'Si la page produit directe n est pas trouvée, omets le produit. 6 produits maximum.';
+  const r=await timeoutFetch('https://api.anthropic.com/v1/messages',{
+   method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
+   body:JSON.stringify({model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:1700,tools:[{type:'web_search_20250305',name:'web_search',max_uses:1}],system:'Tu es un moteur de découverte de produits. Ne réponds jamais de mémoire pour les prix. Recherche effectivement le web et cite les pages trouvées. Renvoie exclusivement JSON.',messages:[{role:'user',content:prompt}]})
+  },22000);
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)return {offers:[],status:'http_'+r.status,attempts:[{source:'claude',status:'http_'+r.status}]};
+  const evidence=new Set();
+  function collectEvidence(node,depth=0){
+    if(depth>9||!node||typeof node!=='object')return;
+    if(Array.isArray(node)){for(const v of node)collectEvidence(v,depth+1);return}
+    if(typeof node.url==='string'&&node.url.startsWith('https://'))evidence.add(node.url);
+    for(const k of ['citations','content','results','sources','data'])if(node[k])collectEvidence(node[k],depth+1);
+  }
+  for(const part of d.content||[])collectEvidence(part);
+  const raw=(d.content||[]).filter(x=>x.type==='text').map(x=>x.text).join('\n');
+  const parsed=parseJSON(raw);
+  let rejected=0;const offers=[];
+  for(const p of Array.isArray(parsed?.products)?parsed.products.slice(0,8):[]){
+   const url=actualProductUrl(p.url);
+   const cited=p.evidenceUrl||p.url;
+   // Une URL proposée par Claude ne suffit pas : elle doit exister dans les
+   // résultats ou annotations de sa propre recherche web.
+   const grounded=!!url&&[...evidence].some(e=>e===url||e===cited);
+   if(!grounded){rejected++;continue}
+   const valid=offer({title:p.name,store:p.store,link:url,price:p.price},'Claude Web Search (prix extrait, non vérifié en temps réel)',new Date().toISOString());
+   if(valid){valid.priceVerified=false;valid.priceStatus=valid.price===null?'unavailable':'ai_web_indexed';valid.evidenceUrl=cited;offers.push(valid)}
+   else rejected++;
+  }
+  return {offers,status:offers.length?'ok':'no_cited_direct_offers',rejected,webEvidenceCount:evidence.size,attempts:[{source:'claude',status:offers.length?'ok':'no_cited_direct_offers'}]};
+ }catch(e){return {offers:[],status:e?.name==='AbortError'?'timeout':'network_error',attempts:[{source:'claude',status:e?.name==='AbortError'?'timeout':'network_error'}]}}
+}
 // Contrat conversationnel V6 : aucune recherche sans action explicite « search ».
 // L'IA choisit les questions; seules les limites d'usage sont déterministes.
 export default async function handler(req){
@@ -232,15 +277,27 @@ export default async function handler(req){
   if(!approved||typeof approved!=='object'||!Array.isArray(approved.criteria)||!String(approved.query||'').trim())return respond({error:'Critères non validés',reply:'Validez d’abord les critères avec l’assistant.'},400);
   const query=String(approved.query).slice(0,180);
   const shop=await shopping(query);
-  let offers=shop.offers, source='shopping';
-  if(!offers.length){offers=await brave(query);source='web'}
-  else if(shop.status==='web_fallback')source='web';
-  else if(shop.status==='indexed_without_direct_links')source='shopping_indexed';
-  if(!offers.length&&process.env.ENABLE_GROQ_WEB_SEARCH==='true'){offers=await groqWebCandidates(query);source='groq'}
-  if(!offers.length&&process.env.ENABLE_CLAUDE_RESEARCH==='true'){offers=await claudeProductCandidates(query);source='claude'}
+  let offers=[...shop.offers], source='shopping';
+  const seen=new Set(offers.map(o=>o.url||o.id));
+  const addMore=items=>{for(const o of items){const id=o.url||o.id;if(id&&!seen.has(id)){seen.add(id);offers.push(o)}}};
+  // Compléter la source Shopping, y compris quand elle ne donne que des liens indirects.
+  const directCount=offers.filter(o=>o.directProductLink).length;
+  if(directCount<3){addMore(await brave(query));source='shopping+web'}
+  // Claude explore le web ouvert en complément lorsque peu de fiches directes
+  // avec prix sont disponibles ; un seul web_search est permis par demande.
+  const pricedDirect=offers.filter(o=>o.directProductLink&&o.price!==null).length;
+  let claudeResearch={status:'not_needed',attempts:[]};
+  if(pricedDirect<3&&process.env.ENABLE_CLAUDE_RESEARCH!=='false'&&process.env.ANTHROPIC_API_KEY){
+   claudeResearch=await claudeProductCandidates(query);
+   addMore(claudeResearch.offers);
+   if(claudeResearch.offers.length)source='shopping+web+claude';
+  }
+  // Les URL directes passent avant les annonces indexées sans fiche marchand.
+  offers.sort((a,b)=>Number(!!b.directProductLink)-Number(!!a.directProductLink));
+  offers=offers.slice(0,12);
   const priced=offers.filter(o=>o.price!==null).length;
   const reply=offers.length?(priced?`Voici ${offers.length} résultats produits, dont ${priced} avec un prix relevé par une source Shopping. Les annonces sans lien marchand confirmé ne comportent pas de bouton d'achat. Tous les prix restent à confirmer chez le marchand.`:`Voici ${offers.length} fiches produits. Aucun prix suffisamment sourcé : ils ne seront pas inventés.`):'Recherche terminée : aucune fiche produit exploitable. Source prix : '+(shoppingMessages[shop.status]||shop.status)+'.';
-  return respond({phase:'results',reply,sessionId:sid,offers,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,directCount:shop.directCount||0,indexedCount:shop.indexedCount||0,rejectionReasons:shop.rejectionReasons||{},attempts:shop.attempts,detail:shoppingMessages[shop.status]||null},pricedCount:priced,observedAt:new Date().toISOString()}})
+  return respond({phase:'results',reply,sessionId:sid,offers,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,directCount:shop.directCount||0,indexedCount:shop.indexedCount||0,rejectionReasons:shop.rejectionReasons||{},attempts:shop.attempts,detail:shoppingMessages[shop.status]||null},pricedCount:priced,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,webEvidenceCount:claudeResearch.webEvidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
