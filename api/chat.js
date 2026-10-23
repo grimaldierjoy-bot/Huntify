@@ -404,15 +404,79 @@ async function completeOffers(found,query){
  return {offers:[...unique.values()].slice(0,12),diagnostic:counts};
 }
 
+// Les avis textuels proviennent uniquement des données JSON-LD des fiches marchandes.
+// Une note agrégée seule n'autorise jamais une synthèse qualitative.
+function extractReviewsFromHtml(html,expectedName){
+ const out=[],seen=new Set(),blocks=/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+ let match;
+ while((match=blocks.exec(html))&&out.length<8){
+  let root;try{root=JSON.parse(match[1])}catch{continue}
+  const queue=[root];let scanned=0;
+  while(queue.length&&scanned++<90&&out.length<8){
+   const x=queue.shift();if(!x||typeof x!=='object')continue;
+   if(Array.isArray(x)){queue.push(...x.slice(0,30));continue}
+   if(x['@graph'])queue.push(x['@graph']);
+   if(!/(^|[, ])Product($|[, ])/.test(String(x['@type']||'')))continue;
+   if(!productMatch(expectedName,x.name||''))continue;
+   const entries=Array.isArray(x.review)?x.review:[x.review];
+   for(const v of entries){
+    if(!v||typeof v!=='object')continue;
+    const content=String(v.reviewBody||v.description||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,650);
+    if(content.length<35||seen.has(content))continue;
+    seen.add(content);
+    const rating=Number(v.reviewRating?.ratingValue);
+    out.push({text:content,rating:Number.isFinite(rating)&&rating>=1&&rating<=5?rating:null});
+    if(out.length>=8)break;
+   }
+  }
+ }
+ return out;
+}
+async function merchantReviewEvidence(item){
+ const url=safeMerchantFetchUrl(item.url);
+ if(!url)return {name:item.name,url:null,reviews:[],status:'invalid_url'};
+ try{
+  const r=await timeoutFetch(url,{headers:{Accept:'text/html'},redirect:'manual'},5500);
+  if(!r.ok)return {name:item.name,url,reviews:[],status:'merchant_http_'+r.status};
+  if(!/text\/html|application\/xhtml/i.test(r.headers.get('content-type')||''))return {name:item.name,url,reviews:[],status:'not_html'};
+  const html=(await r.text()).slice(0,700000);
+  const reviews=extractReviewsFromHtml(html,item.name);
+  return {name:item.name,url,reviews,status:reviews.length?'reviews_found':'no_text_reviews'};
+ }catch(e){return {name:item.name,url,reviews:[],status:e?.name==='AbortError'?'timeout':'merchant_unavailable'}}
+}
+async function compareCustomerReviews(items,brief){
+ const evidence=await Promise.all(items.map(merchantReviewEvidence));
+ const sources=evidence.map(x=>({name:x.name,url:x.url,reviewCount:x.reviews.length,status:x.status}));
+ const eligible=evidence.filter(x=>x.reviews.length>=2);
+ if(!eligible.length)return {summaries:[],sources,status:'insufficient_text_reviews'};
+ const prompt='Analyse UNIQUEMENT ces avis clients textuels issus des pages marchandes citées. Pour chaque produit avec au moins 2 avis, synthétise un point positif et un point négatif SEULEMENT si soutenus par les extraits. Aucun fait externe ou inventé. Si une catégorie n’est pas étayée, retourne une chaîne vide. Explique brièvement l’adéquation aux critères utilisateur si vérifiable par les avis, sinon chaîne vide. Réponds strictement JSON {"items":[{"index":0,"pros":"...","cons":"...","fit":"..."}]}. Critères : '+String(brief||'').slice(0,300)+'\n'+JSON.stringify(evidence.map((x,i)=>({index:i,name:x.name,reviews:x.reviews.map(v=>v.text.slice(0,450))})));
+ const ai=await llm('Tu es un analyste rigoureux de retours clients. Aucun avis inventé. Sortie JSON seule.',prompt,1150);
+ if(!ai.text)return {summaries:[],sources,status:'ai_unavailable',diagnostic:ai.attempts};
+ const parsed=parseJSON(ai.text);if(!Array.isArray(parsed?.items))return {summaries:[],sources,status:'invalid_summary'};
+ const summaries=[];
+ for(const x of parsed.items){
+  const i=Number(x.index);if(!Number.isInteger(i)||i<0||i>=evidence.length||evidence[i].reviews.length<2)continue;
+  const ev=evidence[i];
+  summaries.push({index:i,name:ev.name,sourceUrl:ev.url,reviewCount:ev.reviews.length,pros:String(x.pros||'').slice(0,320),cons:String(x.cons||'').slice(0,320),fit:String(x.fit||'').slice(0,320)});
+ }
+ return {summaries,sources,status:summaries.length?'ok':'no_valid_summary',provider:ai.provider};
+}
+
 // Contrat conversationnel V6 : aucune recherche sans action explicite « search ».
 // L'IA choisit les questions; seules les limites d'usage sont déterministes.
 export default async function handler(req){
  if(req.method!=='POST')return respond({error:'POST requis'},405);
  let body;try{body=await req.json()}catch{return respond({error:'JSON invalide'},400)}
  const message=String(body.message||'').trim().slice(0,1500);
- const action=body.action==='search'?'search':'consult';
+ const action=body.action==='search'?'search':body.action==='reviews'?'reviews':'consult';
  const sid=String(body.sessionId||'').slice(0,100)||crypto.randomUUID();
  const history=Array.isArray(body.history)?body.history.slice(-14).map(x=>({role:x.role==='user'?'user':'assistant',content:String(x.content||'').slice(0,500)})):[];
+ if(action==='reviews'){
+  const items=Array.isArray(body.products)?body.products.slice(0,6).filter(x=>x&&typeof x.name==='string'&&typeof x.url==='string').map(x=>({name:x.name.slice(0,180),url:x.url})): [];
+  if(items.length<2)return respond({error:'Sélectionnez au moins deux produits avec une fiche marchande.'},400);
+  const reviewAnalysis=await compareCustomerReviews(items,body.criteria);
+  return respond({phase:'reviews',reviewAnalysis,sessionId:sid});
+ }
  if(action==='search'){
   const approved=body.approvedBrief;
   if(!approved||typeof approved!=='object'||!Array.isArray(approved.criteria)||!String(approved.query||'').trim())return respond({error:'Critères non validés',reply:'Validez d’abord les critères avec l’assistant.'},400);
