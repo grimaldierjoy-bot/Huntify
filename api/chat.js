@@ -157,6 +157,17 @@ async function geminiGroundedShopping(query){
     seen.add(url);
     candidates.push({url,claimedName:String(p.name||'').slice(0,150),indexedPrice:amount(p.price)});
    }
+   // Gemini peut renvoyer du texte Markdown plutôt qu'un JSON valide.
+   // On récupère alors seulement les URL présentes dans sa réponse, et
+   // chaque URL doit encore passer la vérification sur la vraie fiche produit.
+   if(!candidates.length){
+    for(const match of raw.matchAll(/https:\/\/[^\\s<>"'`\\]]+/g)){
+     const cleaned=match[0].replace(/[),.;]+$/g,'');
+     const direct=safeMerchantFetchUrl(cleaned);
+     if(direct&&!seen.has(direct)){seen.add(direct);candidates.push({url:direct,claimedName:'',indexedPrice:null})}
+     if(candidates.length>=10)break;
+    }
+   }
    if(!candidates.length)for(const url of groundedUrls){
     const direct=safeMerchantFetchUrl(url);
     if(direct&&!seen.has(direct)){seen.add(direct);candidates.push({url:direct,claimedName:'',indexedPrice:null})}
