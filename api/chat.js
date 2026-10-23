@@ -274,7 +274,7 @@ function productMatch(a,b){
  const common=x.filter(t=>y.has(t));
  const models=x.filter(t=>/[a-z]/.test(t)&&/\d/.test(t));
  if(models.length&&!models.every(t=>y.has(t)))return false;
- return common.length>=2&&common.length/Math.min(x.length,8)>=0.55;
+ return common.length>=2&&common.length/Math.min(x.length,8)>=0.5;
 }
 function sameMerchant(a,b){
  const aa=String(a||'').toLowerCase().replace(/[^a-z0-9]/g,''),bb=String(b||'').toLowerCase().replace(/[^a-z0-9]/g,'');
