@@ -295,7 +295,7 @@ async function send(message,action='consult'){
     recordSearch(state.brief,Array.isArray(d.offers)?d.offers:[]);
     state.offers=(Array.isArray(d.offers)?d.offers:[]).map(normalize).filter(Boolean);state.selected.clear();observePrices(state.offers);renderOffers();renderCompare();$('#briefPanel').hidden=true;
     analyticsEvent('search',{search_term:d.search?.query||'',content_type:'product'});tikTokEvent('Search',{content_type:'product'});
-    if(d.search&&state.offers.length===0){const y=d.search.completionDiagnostic||{},g=y.googleGrounding||{},a=(g.attempts||[]).slice(-1)[0]||{};say('Diagnostic recherche : Gemini/Google '+(g.status||'non tenté')+' · produits proposés : '+(a.proposed||0)+' · pages marchandes : '+(a.checked||0)+' · prix lisibles : '+(a.pricedPages||0)+' · offres finales : '+(y.complete||0)+(a.status&&a.status!=='ok'?' · détail : '+a.status:'')+'. Aucun lien ni prix inventé.')}
+    if(d.search&&state.offers.length===0){const y=d.search.completionDiagnostic||{},g=y.googleGrounding||{},a=(g.attempts||[]).slice(-1)[0]||{},c=d.search.claudeResearch||{};say('Diagnostic recherche : Gemini/Google '+(g.status||'non tenté')+' · Claude/Anthropic : '+(c.status||'non appelé')+' · produits proposés : '+(a.proposed||0)+' · pages marchandes : '+(a.checked||0)+' · prix lisibles : '+(a.pricedPages||0)+' · offres finales : '+(y.complete||0)+(a.status&&a.status!=='ok'?' · Gemini : '+a.status:'')+'. Aucun lien ni prix inventé.')}
    }
   }
  }catch(err){loader.remove();say('Le service est inaccessible. Vérifiez le déploiement ou les logs Vercel.');}
