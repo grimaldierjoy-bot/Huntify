@@ -224,11 +224,15 @@ async function claudeProductCandidates(query){
  if(!process.env.ANTHROPIC_API_KEY)return {offers:[],status:'missing_key',attempts:[]};
  if(process.env.ENABLE_CLAUDE_QUOTA_FALLBACK==='false')return {offers:[],status:'explicitly_disabled',attempts:[]};
  try{
-  const prompt='Effectue une recherche web réelle sur des fiches PRODUIT françaises pertinentes pour : '+query+'. Explore plusieurs marchands sans condition d’affiliation, sauf Rakuten et AliExpress. Retourne uniquement JSON {"products":[{"name":"produit marque et référence","store":"marchand","url":"https://fiche-marchand","price":"prix explicite en EUR ou null"}]}. N’invente aucun lien ni prix, et utilise les URL visibles dans les résultats de ta recherche. Jusqu’à 8 produits.';
+  const prompt='Recherche web pour : '+query+
+  '. Diversifie la recherche : différentes marques et références pertinentes, différents marchands en France, sans restriction d’affiliation (sauf Rakuten et AliExpress). '+
+  'Trouve jusqu’à 12 fiches produit directes avec prix en EUR réellement visibles dans la recherche. '+
+  'Retourne exclusivement JSON {"products":[{"name":"marque et modèle exact","store":"marchand","url":"https://fiche-produit-exacte","price":"prix visible en euros, sinon null"}]}. '+
+  'N’invente jamais de liens, prix ou références. Une offre doit correspondre au budget et aux caractéristiques demandées.';
   const resp=await timeoutFetch('https://api.anthropic.com/v1/messages',{
    method:'POST',headers:{'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-   body:JSON.stringify({model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:1600,tools:[{type:'web_search_20250305',name:'web_search',max_uses:1}],system:'Recherche les produits sur le web. Ne fabrique aucun prix ni URL. Réponds en JSON uniquement.',messages:[{role:'user',content:prompt}]})
-  },22000);
+   body:JSON.stringify({model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:2600,tools:[{type:'web_search_20250305',name:'web_search',max_uses:1}],system:'Découvre des offres diverses sur le web. JSON seulement. Les prix et URL inventés sont interdits.',messages:[{role:'user',content:prompt}]})
+  },23000);
   const data=await resp.json().catch(()=>({}));
   if(!resp.ok)return {offers:[],status:'http_'+resp.status,attempts:[{source:'claude',status:'http_'+resp.status}]};
   const sources=new Set();
@@ -240,30 +244,38 @@ async function claudeProductCandidates(query){
   }
   for(const part of data.content||[])scan(part);
   const raw=(data.content||[]).filter(x=>x.type==='text').map(x=>x.text||'').join('\n');
-  const products=parseJSON(raw)?.products||[];
-  const results=[],used=new Set();let rejected=0;
-  for(const p of Array.isArray(products)?products.slice(0,12):[]){
-   const url=actualProductUrl(p.url);
-   if(!url||![...sources].some(cited=>sameSourceUrl(cited,p.url))){rejected++;continue}
-   const o=offer({title:p.name,link:url,store:p.store,price:p.price},'Claude Web Search, URL citée (prix non confirmé)',new Date().toISOString());
-   if(!o||used.has(o.url)){rejected++;continue}
-   // Une citation ne prouve pas qu'un prix est à jour : on privilégie la fiche
-   // marchand réelle ; si elle est inaccessible on conserve le prix cité indexé.
-   const merchant=await merchantProductEvidence(o.url,query,o.name);
-   const verified=merchant?.price!==null&&merchant?.price!==undefined?merchant:o;
-   used.add(o.url);results.push(verified);
+  const parsed=parseJSON(raw);
+  const products=Array.isArray(parsed?.products)?parsed.products.slice(0,16):[];
+  const candidates=[],used=new Set();let rejected=0;
+  for(const p of products){
+   const url=safeMerchantFetchUrl(p.url);
+   if(!url||used.has(url)){rejected++;continue}
+   used.add(url);
+   candidates.push({url,name:String(p.name||'').slice(0,180),store:String(p.store||'').slice(0,80),indexed:amount(p.price),cited:[...sources].some(c=>sameSourceUrl(c,url))});
   }
-  // Si l'IA n'a pas produit un JSON exploitable, inspecter directement les pages
-  // marchandes découvertes par la recherche web pour leurs prix structurés.
-  if(!results.length){
-   for(const url of [...sources].slice(0,10)){
-    if(!safeMerchantFetchUrl(url))continue;
-    const page=await merchantProductEvidence(url,query);
-    if(page&&!used.has(page.url)){used.add(page.url);results.push(page)}
-    if(results.length>=5)break;
+  // Ne pas dépendre uniquement de la capacité du modèle à produire du JSON :
+  // ses citations web sont également de vraies pistes de pages à inspecter.
+  for(const source of sources){
+   const url=safeMerchantFetchUrl(source);
+   if(!url||used.has(url))continue;
+   used.add(url);candidates.push({url,name:'',store:'',indexed:null,cited:true});
+   if(candidates.length>=16)break;
+  }
+  const audited=await Promise.all(candidates.slice(0,12).map(async item=>{
+   const merchant=await merchantProductEvidence(item.url,query,item.name);
+   if(merchant?.price!==null&&merchant?.price!==undefined)return {offer:merchant,status:'merchant_priced'};
+   // Une page produit accessible + un prix explicitement indexé dans une
+   // citation exacte de l'outil web est acceptable, étiqueté comme indexé.
+   if(merchant&&item.indexed!==null&&item.cited){
+    merchant.price=item.indexed;merchant.priceLabel=item.indexed.toLocaleString('fr-FR',{style:'currency',currency:'EUR'});
+    merchant.priceSource='Claude Web Search (prix indexé sur URL citée)';merchant.priceStatus='ai_web_indexed';
+    merchant.priceObservedAt=new Date().toISOString();
+    return {offer:merchant,status:'cited_index_price'};
    }
-  }
-  return {offers:results,status:results.length?'ok':'no_grounded_offers',attempts:[{source:'claude_web',status:results.length?'ok':'no_grounded_offers'}],evidenceCount:sources.size,rejected};
+   return {offer:null,status:merchant?'merchant_without_price':'unreadable_or_nonproduct'};
+  }));
+  const offers=audited.map(x=>x.offer).filter(Boolean);
+  return {offers,status:offers.length?'ok':'no_complete_offers',attempts:[{source:'claude_web',status:offers.length?'ok':'no_complete_offers',citations:sources.size,products:products.length,checked:audited.length,verified:audited.filter(x=>x.status==='merchant_priced').length,indexed:audited.filter(x=>x.status==='cited_index_price').length}],evidenceCount:sources.size,rejected};
  }catch(e){return {offers:[],status:e?.name==='AbortError'?'timeout':'network_error',attempts:[{source:'claude_web',status:e?.name==='AbortError'?'timeout':'network_error'}]}}
 }
 // Contrôle IA en dernier, sans outil web et sans repayer une recherche.
@@ -559,7 +571,7 @@ export default async function handler(req){
   if(pageOffers.length)source='brave+merchant_pages';
   let claudeResearch={status:process.env.ANTHROPIC_API_KEY?'not_needed_or_disabled':'missing_anthropic_key',attempts:[]};
   // Claude n'utilise les crédits Anthropic que si les offres complètes sont insuffisantes.
-  if(offers.filter(pricedDirect).length<5&&process.env.ANTHROPIC_API_KEY&&(process.env.ENABLE_CLAUDE_WEB_DISCOVERY==='true'||(google.status==='rate_limited_or_quota'&&process.env.ENABLE_CLAUDE_QUOTA_FALLBACK!=='false'))){
+  if(offers.filter(pricedDirect).length<5&&process.env.ANTHROPIC_API_KEY&&process.env.ENABLE_CLAUDE_QUOTA_FALLBACK!=='false'){
    claudeResearch=await claudeProductCandidates(query);
    addMore(claudeResearch.offers);
    source=braveOffers.length?'brave+claude':'claude_web';
@@ -568,7 +580,7 @@ export default async function handler(req){
   const valid=completion.offers;
   const priceAudit=await claudeCompactAudit(query,valid);
   const reply=valid.length
-   ?'Voici '+valid.length+' offre(s) avec prix et fiche marchand directe. Les prix sont sourcés mais à confirmer chez le marchand.'
+   ?'Voici '+valid.length+' offre(s) avec prix et fiche marchand directe. '+(valid.length<5?'La recherche a déjà exploré les sources disponibles, mais seulement '+valid.length+' offres ont un prix lisible sur leur fiche. ':'')+'Les prix sont sourcés mais à confirmer chez le marchand.'
    :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(google.status!=='ok'?'Google/Gemini : '+google.status+' ('+(google.attempts||[]).map(x=>x.model+':'+x.status).join(', ')+'). ':'')+'Claude : '+claudeResearch.status+'. Aucun prix ni URL inventé.';
   return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,completionDiagnostic:{...completion.diagnostic,googleGrounding:{status:google.status,attempts:google.attempts},freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
