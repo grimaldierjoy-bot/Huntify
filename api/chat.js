@@ -220,62 +220,71 @@ try{const r=await timeoutFetch('https://api.groq.com/openai/v1/chat/completions'
 // Recherche augmentée par Claude : les URLs et prix doivent provenir d'une recherche web
 // réellement exécutée. Aucun prix inventé par le modèle n'est présenté.
 // Moteur indépendant : Claude effectue AU MAXIMUM une recherche Web payante.
+// Exploiter les sources factuelles du web_search Anthropic, même lorsque le
+// modèle ne renvoie pas de JSON. Aucun prix non sourcé ne sera inventé.
+function claudeSearchSources(response){
+ const urls=new Map();
+ function walk(obj,depth=0){
+  if(!obj||typeof obj!=='object'||depth>12)return;
+  if(Array.isArray(obj)){obj.forEach(x=>walk(x,depth+1));return}
+  if(typeof obj.url==='string'){
+   const url=safeMerchantFetchUrl(obj.url);
+   if(url){
+    const old=urls.get(url)||{url,titles:[],snippets:[]};
+    if(obj.title&&!old.titles.includes(obj.title))old.titles.push(String(obj.title).slice(0,180));
+    const evidence=obj.cited_text||obj.snippet||obj.description;
+    if(evidence&&!old.snippets.includes(evidence))old.snippets.push(String(evidence).slice(0,450));
+    urls.set(url,old);
+   }
+  }
+  for(const key of ['content','citations','results','sources','data'])if(obj[key])walk(obj[key],depth+1);
+ }
+ walk(response.content||[]);
+ return [...urls.values()];
+}
+function citedPrice(entry,name){
+ if(!name||!entry)return null;
+ for(const snippet of entry.snippets){
+  const matched=productMatch(name,snippet)||entry.titles.some(t=>productMatch(name,t));
+  if(!matched)continue;
+  for(const hit of snippet.matchAll(/\d{1,5}(?:[.,]\d{2})?\s*(?:€|EUR)/gi)){
+   const parsed=amount(hit[0]);
+   if(parsed!==null)return parsed;
+  }
+ }
+ return null;
+}
 async function claudeProductCandidates(query){
  if(!process.env.ANTHROPIC_API_KEY)return {offers:[],status:'missing_key',attempts:[]};
  if(process.env.ENABLE_CLAUDE_QUOTA_FALLBACK==='false')return {offers:[],status:'explicitly_disabled',attempts:[]};
  try{
-  const prompt='Recherche web pour : '+query+
-  '. Diversifie la recherche : différentes marques et références pertinentes, différents marchands en France, sans restriction d’affiliation (sauf Rakuten et AliExpress). '+
-  'Trouve jusqu’à 12 fiches produit directes avec prix en EUR réellement visibles dans la recherche. '+
-  'Retourne exclusivement JSON {"products":[{"name":"marque et modèle exact","store":"marchand","url":"https://fiche-produit-exacte","price":"prix visible en euros, sinon null"}]}. '+
-  'N’invente jamais de liens, prix ou références. Une offre doit correspondre au budget et aux caractéristiques demandées.';
+  const prompt='Recherche vraiment sur le WEB des fiches produits en France pour : '+query+
+   '. Trouve des marques, modèles et boutiques différents, sans restriction d’affiliation. Exclure Rakuten et AliExpress. '+
+   'Fournis les noms exacts, des prix EUR visibles si disponibles et surtout des citations de pages PRODUIT DIRECTES de marchands. '+ 
+   'N’invente aucun prix ni lien. Réponds en français avec les sources.';
   const resp=await timeoutFetch('https://api.anthropic.com/v1/messages',{
    method:'POST',headers:{'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-   body:JSON.stringify({model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:2600,tools:[{type:'web_search_20250305',name:'web_search',max_uses:1}],system:'Découvre des offres diverses sur le web. JSON seulement. Les prix et URL inventés sont interdits.',messages:[{role:'user',content:prompt}]})
+   body:JSON.stringify({model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:1350,tools:[{type:'web_search_20250305',name:'web_search',max_uses:1}],system:'Utilise la recherche web réelle, jamais ta mémoire pour les prix. Cite les fiches marchandes directement.',messages:[{role:'user',content:prompt}]})
   },23000);
   const data=await resp.json().catch(()=>({}));
   if(!resp.ok)return {offers:[],status:'http_'+resp.status,attempts:[{source:'claude',status:'http_'+resp.status}]};
-  const sources=new Set();
-  function scan(node,depth=0){
-   if(!node||typeof node!=='object'||depth>10)return;
-   if(Array.isArray(node)){node.forEach(v=>scan(v,depth+1));return}
-   if(typeof node.url==='string'&&node.url.startsWith('https://'))sources.add(node.url);
-   for(const k of ['citations','content','results','sources','data'])if(node[k])scan(node[k],depth+1);
-  }
-  for(const part of data.content||[])scan(part);
-  const raw=(data.content||[]).filter(x=>x.type==='text').map(x=>x.text||'').join('\n');
-  const parsed=parseJSON(raw);
-  const products=Array.isArray(parsed?.products)?parsed.products.slice(0,16):[];
-  const candidates=[],used=new Set();let rejected=0;
-  for(const p of products){
-   const url=safeMerchantFetchUrl(p.url);
-   if(!url||used.has(url)){rejected++;continue}
-   used.add(url);
-   candidates.push({url,name:String(p.name||'').slice(0,180),store:String(p.store||'').slice(0,80),indexed:amount(p.price),cited:[...sources].some(c=>sameSourceUrl(c,url))});
-  }
-  // Ne pas dépendre uniquement de la capacité du modèle à produire du JSON :
-  // ses citations web sont également de vraies pistes de pages à inspecter.
-  for(const source of sources){
-   const url=safeMerchantFetchUrl(source);
-   if(!url||used.has(url))continue;
-   used.add(url);candidates.push({url,name:'',store:'',indexed:null,cited:true});
-   if(candidates.length>=16)break;
-  }
-  const audited=await Promise.all(candidates.slice(0,12).map(async item=>{
-   const merchant=await merchantProductEvidence(item.url,query,item.name);
-   if(merchant?.price!==null&&merchant?.price!==undefined)return {offer:merchant,status:'merchant_priced'};
-   // Une page produit accessible + un prix explicitement indexé dans une
-   // citation exacte de l'outil web est acceptable, étiqueté comme indexé.
-   if(merchant&&item.indexed!==null&&item.cited){
-    merchant.price=item.indexed;merchant.priceLabel=item.indexed.toLocaleString('fr-FR',{style:'currency',currency:'EUR'});
-    merchant.priceSource='Claude Web Search (prix indexé sur URL citée)';merchant.priceStatus='ai_web_indexed';
-    merchant.priceObservedAt=new Date().toISOString();
-    return {offer:merchant,status:'cited_index_price'};
-   }
-   return {offer:null,status:merchant?'merchant_without_price':'unreadable_or_nonproduct'};
+  const sources=claudeSearchSources(data).slice(0,16);
+  const checked=await Promise.all(sources.slice(0,12).map(async source=>{
+   const page=await merchantProductEvidence(source.url,query);
+   if(!page)return {offer:null,reason:'unreadable_or_nonproduct'};
+   if(page.price!==null)return {offer:page,reason:'merchant_price'};
+   const price=citedPrice(source,page.name);
+   if(price===null)return {offer:null,reason:'no_cited_price'};
+   page.price=price;page.priceLabel=price.toLocaleString('fr-FR',{style:'currency',currency:'EUR'});
+   page.priceStatus='web_citation_indexed';
+   page.priceSource='Extrait cité de la recherche web Anthropic (prix non confirmé)';
+   page.priceObservedAt=new Date().toISOString();page.priceVerified=false;
+   return {offer:page,reason:'citation_price'};
   }));
-  const offers=audited.map(x=>x.offer).filter(Boolean);
-  return {offers,status:offers.length?'ok':'no_complete_offers',attempts:[{source:'claude_web',status:offers.length?'ok':'no_complete_offers',citations:sources.size,products:products.length,checked:audited.length,verified:audited.filter(x=>x.status==='merchant_priced').length,indexed:audited.filter(x=>x.status==='cited_index_price').length}],evidenceCount:sources.size,rejected};
+  const offers=checked.map(x=>x.offer).filter(Boolean);
+  const toolErrors=(data.content||[]).filter(x=>x.type==='web_search_tool_result'&&x.content?.type==='web_search_tool_result_error').map(x=>x.content.error_code);
+  const status=offers.length?'ok':toolErrors.length?'tool_'+toolErrors[0]:sources.length?'no_merchant_prices':'no_web_sources';
+  return {offers,status,evidenceCount:sources.length,attempts:[{source:'claude_web',status,sources:sources.length,checked:checked.length,merchantPrice:checked.filter(x=>x.reason==='merchant_price').length,citedPrice:checked.filter(x=>x.reason==='citation_price').length,webSearchRequests:data.usage?.server_tool_use?.web_search_requests||0,stopReason:data.stop_reason||null}],rejected:checked.length-offers.length};
  }catch(e){return {offers:[],status:e?.name==='AbortError'?'timeout':'network_error',attempts:[{source:'claude_web',status:e?.name==='AbortError'?'timeout':'network_error'}]}}
 }
 // Contrôle IA en dernier, sans outil web et sans repayer une recherche.
