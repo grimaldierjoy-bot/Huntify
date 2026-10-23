@@ -120,47 +120,74 @@ async function llm(sys,user,max=650){
 }
 // Recherche Google via Gemini, avec la clé EXISTANTE et sans API de scraping shopping.
 // Le prix est accepté uniquement après confirmation par une page Product/Offer du marchand.
+// Google Search grounding utilise la clé Gemini EXISTANTE. On ne retient jamais
+// un prix proposé par un LLM sans preuve indexée ou constat sur la page marchande.
 async function geminiGroundedShopping(query){
  const key=process.env.GEMINI_API_KEY;
  if(!key)return {offers:[],status:'missing_gemini_key',attempts:[]};
+ const models=[...new Set([process.env.GEMINI_SEARCH_MODEL,'gemini-2.5-flash-lite','gemini-2.5-flash'].filter(Boolean))].slice(0,3);
  const attempts=[];
- const model=process.env.GEMINI_SEARCH_MODEL||'gemini-2.5-flash-lite';
- try{
-  const prompt='Effectue une RECHERCHE GOOGLE RÉELLE pour trouver plusieurs produits disponibles en France correspondant à : '+query+
-   '. Inclus toutes les boutiques, même non affiliées (sauf Rakuten et AliExpress). Recherche au maximum 10 fiches produit directes HTTPS chez plusieurs marchands. '+
-   'Retourne JSON seulement : {"products":[{"name":"nom précis de produit, marque et référence","url":"https://URL_DIRECTE_FICHE_PRODUIT_MARCHAND","store":"marchand"}]}. '+
-   'Il faut des liens constatés par ta recherche, pas des URLs de recherche, ni des URLs inventées. Ne donne AUCUN prix : le serveur lira le vrai prix sur les pages.';
-  const resp=await timeoutFetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent',{
-   method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},
-   body:JSON.stringify({contents:[{parts:[{text:prompt}]}],tools:[{google_search:{}}],generationConfig:{temperature:0.1,maxOutputTokens:1800}})
-  },19000);
-  const data=await resp.json().catch(()=>({}));
-  if(!resp.ok)return {offers:[],status:'http_'+resp.status,attempts:[{source:'gemini_google',status:'http_'+resp.status,model}]};
-  const candidate=data.candidates?.[0];
-  const raw=(candidate?.content?.parts||[]).map(p=>p.text||'').join('\n');
-  const productList=parseJSON(raw)?.products;
-  const proposed=Array.isArray(productList)?productList.slice(0,12):[];
-  const links=new Set(),sources=[];
-  const groundedUrls=new Set((candidate?.groundingMetadata?.groundingChunks||[]).map(c=>c.web?.uri).filter(Boolean));
-  // L'URL du modèle seule ne suffit jamais. Chaque page est vérifiée par une requête
-  // réseau serveur et ses données structurées Product/Offer avant d'être affichée.
-  for(const p of proposed){
-   const url=safeMerchantFetchUrl(p.url);
-   if(url&&!links.has(url)){links.add(url);sources.push({url,claimedName:String(p.name||'').slice(0,150)})}
-   if(sources.length>=10)break;
-  }
-  // Si la réponse ne contient pas un JSON exploitable, les URLs citées peuvent
-  // être exploitées uniquement si ce sont des fiches marchand directes.
-  if(!sources.length)for(const url of groundedUrls){
-   const safe=safeMerchantFetchUrl(url);
-   if(safe&&!links.has(safe)){links.add(safe);sources.push({url:safe,claimedName:''})}
-   if(sources.length>=8)break;
-  }
-  const pages=await Promise.all(sources.slice(0,8).map(x=>merchantProductEvidence(x.url,query)));
-  const offers=pages.filter(p=>p&&p.price!==null&&p.directProductLink);
-  attempts.push({source:'gemini_google',status:offers.length?'ok':sources.length?'no_public_structured_prices':'no_direct_product_urls',model,proposed:proposed.length,grounded:groundedUrls.size,checked:pages.length});
-  return {offers,status:offers.length?'ok':'no_priced_products',attempts};
- }catch(e){return {offers:[],status:e?.name==='AbortError'?'timeout':'network_error',attempts:[{source:'gemini_google',status:e?.name==='AbortError'?'timeout':'network_error'}]}}
+ for(const model of models){
+  try{
+   const prompt='Recherche sur Google des fiches PRODUITS de boutiques françaises répondant à : '+query+
+   '. Toutes les boutiques même non affiliées, sauf Rakuten et AliExpress. Trouve 8 à 12 fiches marchandes différentes (pas des pages de recherche). '+ 
+   'Pour chaque produit, indique son nom exact, une URL HTTPS directe de sa fiche marchand et, si Google affiche explicitement son prix en EUR, le prix indexé (sinon null). '+ 
+   'Réponds UNIQUEMENT avec du JSON, sans Markdown : {"products":[{"name":"marque et modèle","store":"marchand","url":"https://fiche-produit","price":"59,99 € ou null"}]}. '+ 
+   'Les liens doivent venir de la recherche, ne crée aucune URL ou tarif.';
+   const r=await timeoutFetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent',{
+    method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},
+    body:JSON.stringify({contents:[{parts:[{text:prompt}]}],tools:[{google_search:{}}],generationConfig:{temperature:0.1,maxOutputTokens:2400}})
+   },18500);
+   const data=await r.json().catch(()=>({}));
+   if(!r.ok){
+    const reason=safeErrorCode(data,r.status);
+    attempts.push({provider:'gemini_google',model,status:reason});
+    if([400,404].includes(r.status))continue;
+    return {offers:[],status:reason,attempts};
+   }
+   const c=data.candidates?.[0]||{};
+   const raw=(c.content?.parts||[]).map(x=>x.text||'').join('\n');
+   const parsed=parseJSON(raw);
+   const products=Array.isArray(parsed?.products)?parsed.products.slice(0,14):[];
+   const groundedUrls=(c.groundingMetadata?.groundingChunks||[]).map(x=>x.web?.uri).filter(Boolean);
+   const candidates=[],seen=new Set();
+   for(const p of products){
+    const url=safeMerchantFetchUrl(p.url);
+    if(!url||seen.has(url))continue;
+    seen.add(url);
+    candidates.push({url,claimedName:String(p.name||'').slice(0,150),indexedPrice:amount(p.price)});
+   }
+   if(!candidates.length)for(const url of groundedUrls){
+    const direct=safeMerchantFetchUrl(url);
+    if(direct&&!seen.has(direct)){seen.add(direct);candidates.push({url:direct,claimedName:'',indexedPrice:null})}
+    if(candidates.length>=10)break;
+   }
+   // Contrôle simultané des pages marchandes, y compris métadonnées OpenGraph.
+   const checked=await Promise.all(candidates.slice(0,10).map(async x=>{
+    const result=await merchantProductEvidence(x.url,query,x.claimedName);
+    if(result?.price!==null&&result?.price!==undefined)return {offer:result,status:'priced_on_merchant'};
+    // Ne jamais afficher un tarif imaginé : prix provenant de Gemini uniquement
+    // si l'URL du marchand figure explicitement dans les résultats Google cités.
+    if(result&&x.indexedPrice!==null&&groundedUrls.some(url=>sameSourceUrl(url,x.url))){
+     result.price=x.indexedPrice;
+     result.priceLabel=x.indexedPrice.toLocaleString('fr-FR',{style:'currency',currency:'EUR'});
+     result.priceSource='Prix indexé Google (à confirmer en boutique)';
+     result.priceStatus='google_indexed';
+     result.priceObservedAt=new Date().toISOString();
+     return {offer:result,status:'indexed_price_cited'};
+    }
+    return {offer:null,status:result?'page_without_price':'page_unavailable_or_not_product'};
+   }));
+   const offers=checked.map(x=>x.offer).filter(Boolean);
+   const counts={proposed:products.length,groundingLinks:groundedUrls.length,merchantUrls:candidates.length,checked:checked.length,pricedPages:checked.filter(x=>x.status==='priced_on_merchant').length,indexedCited:checked.filter(x=>x.status==='indexed_price_cited').length};
+   attempts.push({provider:'gemini_google',model,status:offers.length?'ok':candidates.length?'no_readable_prices':'no_merchant_urls',...counts});
+   return {offers,status:offers.length?'ok':candidates.length?'no_readable_prices':products.length?'no_merchant_urls':'no_products_extracted',attempts};
+  }catch(e){attempts.push({provider:'gemini_google',model,status:e?.name==='AbortError'?'timeout':'network_error'})}
+ }
+ return {offers:[],status:attempts.at(-1)?.status||'unavailable',attempts};
+}
+function sameSourceUrl(a,b){
+ try{const x=new URL(a),y=new URL(b);return x.hostname===y.hostname&&x.pathname.replace(/\/$/,'')===y.pathname.replace(/\/$/,'')}catch{return false}
 }
 async function brave(query){const key=process.env.BRAVE_SEARCH_API_KEY;if(!key)return [];try{const u='https://api.search.brave.com/res/v1/web/search?q='+encodeURIComponent(query+' acheter prix')+'&country=fr&search_lang=fr&count=15';const r=await timeoutFetch(u,{headers:{'Accept':'application/json','X-Subscription-Token':key}},10000);if(!r.ok)return [];const d=await r.json();const t=new Date().toISOString();return (d.web?.results||[]).map(x=>offer({title:x.title,url:x.url,source:host(x.url),price:null},'Web (prix non disponible)',t)).filter(Boolean).slice(0,8)}catch{return []}}
 async function groqWebCandidates(query){
@@ -236,32 +263,65 @@ async function claudeCompactAudit(query,offers){
   return {status:'ok',audited:checked};
  }catch(e){return {status:e?.name==='AbortError'?'timeout':'network_error',audited:0}}
 }
-async function merchantProductEvidence(url,query){
+// Accepte JSON-LD, meta og/product et microdata; un prix n'est jamais
+// attribué à une autre référence produit ou une autre boutique.
+function merchantPriceFromHtml(html){
+ const tags=[...html.matchAll(/<meta\b[^>]*>/gi)].slice(0,220).map(x=>x[0]);
+ let numeric=null,currency=null;
+ for(const tag of tags){
+  const attrs={};for(const m of tag.matchAll(/([a-z][\w:-]*)\s*=\s*["']([^"']*)["']/gi))attrs[m[1].toLowerCase()]=m[2];
+  const label=String(attrs.property||attrs.name||attrs.itemprop||'').toLowerCase();
+  if(['product:price:amount','og:price:amount','price','product_price','product:price','twitter:data1'].includes(label)){
+   const val=amount(attrs.content??attrs.value);
+   if(val!==null)numeric=val;
+  }
+  if(['product:price:currency','og:price:currency','pricecurrency'].includes(label))currency=String(attrs.content||attrs.value||'').toUpperCase();
+ }
+ if(numeric!==null&&currency==='EUR')return {price:numeric,method:'merchant_meta'};
+ return {price:null,method:'missing_eur_meta'};
+}
+function productJsonPrice(html,expectedName){
+ const reg=/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+ let m;
+ while((m=reg.exec(html))){
+  let root;try{root=JSON.parse(m[1].trim())}catch{continue}
+  const queue=[root];let scan=0;
+  while(queue.length&&scan++<100){
+   const x=queue.shift();if(!x||typeof x!=='object')continue;
+   if(Array.isArray(x)){queue.push(...x.slice(0,40));continue}
+   if(x['@graph'])queue.push(x['@graph']);
+   if(!String(x['@type']||'').includes('Product'))continue;
+   const name=String(x.name||'').slice(0,180);
+   if(!name||expectedName&&!productMatch(expectedName,name))continue;
+   const entries=Array.isArray(x.offers)?x.offers:[x.offers];
+   for(const o of entries){
+    if(!o||String(o['@type']||'').includes('AggregateOffer'))continue;
+    const currency=String(o.priceCurrency||o.priceSpecification?.priceCurrency||'').toUpperCase();
+    const value=o.price??o.priceSpecification?.price??o.lowPrice;
+    if(currency!=='EUR'||value==null)continue;
+    const price=amount(typeof value==='number'?value:String(value)+' EUR');
+    if(price!==null)return {name,price,method:'merchant_jsonld'};
+   }
+   // Nom du produit constaté : on pourra utiliser une meta EUR sur cette même page.
+   return {name,price:null,method:'product_without_jsonld_price'};
+  }
+ }
+ return null;
+}
+async function merchantProductEvidence(url,query,expectedName=''){
  const link=safeMerchantFetchUrl(url);if(!link)return null;
  try{
-  const r=await timeoutFetch(link,{headers:{Accept:'text/html'},redirect:'manual'},4500);
-  if(!r.ok||!/text\/html/i.test(r.headers.get('content-type')||''))return null;
-  const html=(await r.text()).slice(0,500000);
-  const pattern=/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let m;
-  while((m=pattern.exec(html))){
-   let root;try{root=JSON.parse(m[1])}catch{continue}
-   const queue=[root];let n=0;
-   while(queue.length&&n++<60){
-    const x=queue.shift();if(!x||typeof x!=='object')continue;
-    if(Array.isArray(x)){queue.push(...x.slice(0,20));continue}
-    if(x['@graph'])queue.push(x['@graph']);
-    if(!String(x['@type']||'').includes('Product'))continue;
-    const name=String(x.name||'').slice(0,180);if(name.length<8)continue;
-    const modelTokens=productTokens(query).filter(v=>/[a-z]/.test(v)&&/\d/.test(v));
-    if(modelTokens.length&&!modelTokens.every(v=>productTokens(name).includes(v)))continue;
-    const offers=Array.isArray(x.offers)?x.offers:[x.offers];
-    let price=null;
-    for(const o of offers){if(!o||String(o.priceCurrency||'').toUpperCase()!=='EUR')continue;const v=o.price??o.priceSpecification?.price;price=amount(typeof v==='number'?v:String(v)+' EUR');if(price!==null)break}
-    const result=offer({title:name,link,price,store:host(link)},'Données Product/Offer du marchand',new Date().toISOString());
-    if(result)return result;
-   }
-  }
+  const r=await timeoutFetch(link,{headers:{Accept:'text/html'},redirect:'manual'},6500);
+  if(!r.ok||!/text\/html|application\/xhtml/i.test(r.headers.get('content-type')||''))return null;
+  const html=(await r.text()).slice(0,700000);
+  const ld=productJsonPrice(html,expectedName);
+  if(!ld)return null; // Ne pas confondre les pages génériques et fiches produits.
+  const name=ld.name;
+  const models=productTokens(query).filter(x=>/[a-z]/.test(x)&&/\d/.test(x)&&!['200','100'].includes(x));
+  if(models.length&&!models.every(x=>productTokens(name).includes(x)))return null;
+  const found=ld.price!==null?{price:ld.price,method:ld.method}:merchantPriceFromHtml(html);
+  const o=offer({title:name,link,store:host(link),price:found.price},'Fiche produit marchande : '+found.method,new Date().toISOString());
+  if(o){o.priceStatus=found.price===null?'unavailable':'merchant_structured';return o}
  }catch{}
  return null;
 }
@@ -474,7 +534,7 @@ export default async function handler(req){
   const priceAudit=await claudeCompactAudit(query,valid);
   const reply=valid.length
    ?'Voici '+valid.length+' offre(s) avec prix et fiche marchand directe. Les prix sont sourcés mais à confirmer chez le marchand.'
-   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(google.status!=='ok'?'Google/Gemini : '+google.status+'. ':'')+'Aucun prix ni URL inventé.';
+   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(google.status!=='ok'?'Google/Gemini : '+google.status+' ('+(google.attempts||[]).map(x=>x.model+':'+x.status).join(', ')+'). ':'')+'Aucun prix ni URL inventé.';
   return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:'not_used',received:0,rejected:0,attempts:[],detail:'SerperMatrix retiré du moteur.'},completionDiagnostic:{...completion.diagnostic,googleGrounding:{status:google.status,attempts:google.attempts},freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length,claudePriceAudit:priceAudit},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
