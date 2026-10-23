@@ -161,7 +161,7 @@ async function geminiGroundedShopping(query){
    // On récupère alors seulement les URL présentes dans sa réponse, et
    // chaque URL doit encore passer la vérification sur la vraie fiche produit.
    if(!candidates.length){
-    for(const match of raw.matchAll(/https:\/\/[^\\s<>"'`\\]]+/g)){
+    for(const match of raw.matchAll(/https:\/\/[^\s<>"')\]]+/g)){
      const cleaned=match[0].replace(/[),.;]+$/g,'');
      const direct=safeMerchantFetchUrl(cleaned);
      if(direct&&!seen.has(direct)){seen.add(direct);candidates.push({url:direct,claimedName:'',indexedPrice:null})}
