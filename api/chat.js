@@ -18,7 +18,7 @@ async function llm(sys, user, max=400){
  const msg=[{role:'system',content:sys},{role:'user',content:user}];
  const attempts=[];
  const providers=[];
- const enabled=process.env.ENABLE_OPENAI_ADVISOR==='true';
+ const enabled=Boolean(process.env.OPENAI_API_KEY)&&process.env.ENABLE_OPENAI_ADVISOR!=='false';
  if(enabled&&process.env.OPENAI_API_KEY)providers.push('openai');
  if(process.env.GEMINI_API_KEY)providers.push('gemini');
  if(process.env.GROQ_API_KEY)providers.push('groq');
