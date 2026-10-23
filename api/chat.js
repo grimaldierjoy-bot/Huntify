@@ -14,41 +14,85 @@ function offer(o,source,observedAt){const link=actualProductUrl(o.link||o.url||o
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return (h>>>0).toString(36)}
 // Orchestration du conseil : OpenAI d'abord (si activé), Gemini puis Groq en secours.
 // Un fournisseur est appelé après l'autre ; aucun appel Anthropic sans consentement explicite.
-async function llm(sys, user, max=400){
+// Conseil : aucun appel OpenAI facturable. Gemini puis Groq via modèles réellement disponibles.
+// Claude uniquement si le propriétaire a activé explicitement le secours payant.
+function safeErrorCode(payload, status) {
+ const code=String(payload?.error?.code||payload?.error?.status||payload?.code||'').toLowerCase();
+ if(/quota|resource_exhausted|insufficient|billing/.test(code))return 'quota_or_billing';
+ if(/model|not_found|invalid_model/.test(code))return 'model_unavailable';
+ if(status===401||status===403)return 'authentication_or_permission';
+ if(status===429)return 'rate_limited_or_quota';
+ if(status===404)return 'model_or_endpoint_not_found';
+ return 'http_'+status;
+}
+async function modelList(provider,key,attempts) {
+ const endpoint=provider==='gemini'
+  ?'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200'
+  :'https://api.groq.com/openai/v1/models';
+ const h=provider==='gemini'?{'x-goog-api-key':key}:{Authorization:'Bearer '+key};
+ try{
+  const r=await timeoutFetch(endpoint,{headers:h},8000);
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){attempts.push({provider,status:'models_'+safeErrorCode(data,r.status)});return []}
+  return provider==='gemini'
+   ?(data.models||[]).filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')).map(m=>m.name.replace(/^models\//,''))
+   :(data.data||[]).filter(m=>m.active!==false).map(m=>m.id);
+ }catch(e){attempts.push({provider,status:e?.name==='AbortError'?'models_timeout':'models_network_error'});return []}
+}
+function preferredModels(provider,available,configured){
+ const preferred=provider==='gemini'
+  ?['gemini-3.5-flash-lite','gemini-3.8-flash','gemini-3-flash','gemini-2.5-flash-lite','gemini-2.5-flash']
+  :['llama-3.1-8b-instant','llama-3.3-70b-versatile','openai/gpt-oss-20b'];
+ const validConfigured=configured&&available.includes(configured)?[configured]:[];
+ const ranked=preferred.filter(m=>available.includes(m));
+ // N'utiliser qu'un petit nombre de modèles de conseil texte réellement listés.
+ const remainder=available.filter(m=>provider==='gemini'?/gemini.*(flash|lite)/i.test(m):/llama.*(instruct|instant|versatile)|gpt-oss/i.test(m));
+ return [...new Set([...validConfigured,...ranked,...remainder])].slice(0,3);
+}
+async function llm(sys,user,max=650){
+ const attempts=[], configured=[];
  const msg=[{role:'system',content:sys},{role:'user',content:user}];
- const attempts=[];
- const providers=[];
- const enabled=Boolean(process.env.OPENAI_API_KEY)&&process.env.ENABLE_OPENAI_ADVISOR!=='false';
- if(enabled&&process.env.OPENAI_API_KEY)providers.push('openai');
- if(process.env.GEMINI_API_KEY)providers.push('gemini');
- if(process.env.GROQ_API_KEY)providers.push('groq');
- if(process.env.ENABLE_PAID_ADVISOR_FALLBACK==='true'&&process.env.ANTHROPIC_API_KEY)providers.push('claude');
- for(const provider of providers){
+ for(const provider of ['gemini','groq','claude']){
+  const key=provider==='gemini'?process.env.GEMINI_API_KEY:provider==='groq'?process.env.GROQ_API_KEY:process.env.ANTHROPIC_API_KEY;
+  if(!key)continue;
+  if(provider==='claude'&&process.env.ENABLE_PAID_ADVISOR_FALLBACK!=='true')continue;
+  configured.push(provider);
+  const models=provider==='claude'
+   ?[process.env.CLAUDE_MODEL||'claude-haiku-4-5']
+   :preferredModels(provider,await modelList(provider,key,attempts),provider==='gemini'?process.env.GEMINI_MODEL:process.env.GROQ_MODEL);
+  if(!models.length){attempts.push({provider,status:'no_supported_model_found'});continue}
+  for(const model of models){
    try{
-     let url,options;
-     if(provider==='openai'){
-       url='https://api.openai.com/v1/chat/completions';
-       options={method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.OPENAI_API_KEY},body:JSON.stringify({model:process.env.OPENAI_MODEL||'gpt-4.1-mini',messages:msg,max_completion_tokens:Math.min(max,500),temperature:0.2})};
-     }else if(provider==='gemini'){
-       const model=process.env.GEMINI_MODEL||'gemini-2.5-flash';
-       url='https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent';
-       options={method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':process.env.GEMINI_API_KEY},body:JSON.stringify({contents:[{parts:[{text:sys+'\n'+user}]}],generationConfig:{maxOutputTokens:Math.min(max,500)}})};
-     }else if(provider==='groq'){
-       url='https://api.groq.com/openai/v1/chat/completions';
-       options={method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.GROQ_API_KEY},body:JSON.stringify({model:process.env.GROQ_MODEL||'llama-3.3-70b-versatile',messages:msg,max_tokens:Math.min(max,500)})};
-     }else{
-       url='https://api.anthropic.com/v1/messages';
-       options={method:'POST',headers:{'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:process.env.CLAUDE_MODEL||'claude-haiku-4-5',max_tokens:Math.min(max,500),system:sys,messages:[{role:'user',content:user}]})};
-     }
-     const r=await timeoutFetch(url,options,11000);
-     if(!r.ok){attempts.push({provider,status:'http_'+r.status});continue;}
-     const data=await r.json();
-     const text=provider==='gemini'?(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join(''):provider==='claude'?(data.content||[]).filter(p=>p.type==='text').map(p=>p.text||'').join(''):data.choices?.[0]?.message?.content;
-     if(text&&String(text).trim())return {text:String(text),provider,attempts};
-     attempts.push({provider,status:'empty_response'});
-   }catch(e){attempts.push({provider,status:e?.name==='AbortError'?'timeout':'network_error'});}
+    let url,options;
+    if(provider==='gemini'){
+      url='https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent';
+      options={method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents:[{parts:[{text:sys+'\n'+user}]}],generationConfig:{maxOutputTokens:1200,responseMimeType:'application/json'}})};
+    }else if(provider==='groq'){
+      url='https://api.groq.com/openai/v1/chat/completions';
+      options={method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},body:JSON.stringify({model,messages:msg,max_tokens:Math.min(max,700),temperature:0.2})};
+    }else{
+      url='https://api.anthropic.com/v1/messages';
+      options={method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model,max_tokens:Math.min(max,600),system:sys,messages:[{role:'user',content:user}]})};
+    }
+    const r=await timeoutFetch(url,options,11000);
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok){
+      const status=safeErrorCode(data,r.status);
+      attempts.push({provider,model,status});
+      // Un 404 permet de tenter un autre modèle réellement annoncé; pas un problème de quota.
+      if(r.status===404)continue;
+      break;
+    }
+    const content=provider==='gemini'?(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('')
+     :provider==='claude'?(data.content||[]).filter(p=>p.type==='text').map(p=>p.text||'').join('')
+     :data.choices?.[0]?.message?.content;
+    if(content&&String(content).trim())return {text:String(content),provider,attempts,configured};
+    attempts.push({provider,model,status:'empty_response'});
+    break;
+   }catch(e){attempts.push({provider,model,status:e?.name==='AbortError'?'timeout':'network_error'});break}
+  }
  }
- return {text:null,provider:null,attempts,configured:providers,openaiEnabled:enabled,paidFallbackEnabled:process.env.ENABLE_PAID_ADVISOR_FALLBACK==='true'};
+ return {text:null,provider:null,attempts,configured,openaiEnabled:false,paidFallbackEnabled:process.env.ENABLE_PAID_ADVISOR_FALLBACK==='true'};
 }
 async function shopping(query){
   // Deux voies publiées par le fournisseur : Shopping spécialisé, puis Search multi-sources.
