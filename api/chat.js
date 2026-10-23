@@ -271,10 +271,19 @@ async function claudeProductCandidates(query){
   const sources=claudeSearchSources(data).slice(0,16);
   const checked=await Promise.all(sources.slice(0,12).map(async source=>{
    const page=await merchantProductEvidence(source.url,query);
-   if(!page)return {offer:null,reason:'unreadable_or_nonproduct'};
-   if(page.price!==null)return {offer:page,reason:'merchant_price'};
-   const price=citedPrice(source,page.name);
-   if(price===null)return {offer:null,reason:'no_cited_price'};
+   if(page?.price!==null&&page?.price!==undefined)return {offer:page,reason:'merchant_price'};
+   // Les marchands bloquent parfois les robots. Conserver le prix réellement
+   // présent dans le résultat web cité pour cette URL PRODUIT (prix indexé).
+   // Ne jamais attribuer un prix d'une page récapitulative au mauvais modèle.
+   const title=page?.name||source.titles[0]||'';
+   const price=citedPrice(source,title);
+   if(price===null)return {offer:null,reason:page?'no_cited_price':'unreadable_or_nonproduct'};
+   if(!page){
+    const candidate=offer({title,link:source.url,store:host(source.url),price:price+' EUR'},'Extrait web Anthropic cité (prix indexé non vérifié)',new Date().toISOString());
+    if(!candidate)return {offer:null,reason:'invalid_cited_product'};
+    candidate.priceStatus='web_citation_indexed';candidate.priceVerified=false;
+    return {offer:candidate,reason:'citation_price'};
+   }
    page.price=price;page.priceLabel=price.toLocaleString('fr-FR',{style:'currency',currency:'EUR'});
    page.priceStatus='web_citation_indexed';
    page.priceSource='Extrait cité de la recherche web Anthropic (prix non confirmé)';
