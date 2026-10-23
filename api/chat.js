@@ -268,7 +268,9 @@ async function claudeProductCandidates(query){
   },23000);
   const data=await resp.json().catch(()=>({}));
   if(!resp.ok)return {offers:[],status:'http_'+resp.status,attempts:[{source:'claude',status:'http_'+resp.status}]};
-  const sources=claudeSearchSources(data).slice(0,16);
+  const sources=claudeSearchSources(data)
+   .filter(x=>!/^(?:www\\.)?(?:youtube\\.com|wikipedia\\.org|reddit\\.com|facebook\\.com|instagram\\.com|tiktok\\.com)$/i.test(host(x.url)||''))
+   .slice(0,16);
   const checked=await Promise.all(sources.slice(0,12).map(async source=>{
    const page=await merchantProductEvidence(source.url,query);
    if(page?.price!==null&&page?.price!==undefined)return {offer:page,reason:'merchant_price'};
