@@ -518,9 +518,20 @@ export default async function handler(req){
   const braveOffers=await brave(query);
   addMore(braveOffers);
   if(braveOffers.length)source='brave_web';
-  let claudeResearch={status:'not_needed',attempts:[]};
+  // Phase de coût minimal : extraction directe des prix Product/Offer chez les marchands,
+  // avant toute demande à Claude ; aucune consommation de tokens IA ici.
+  const webCandidates=braveOffers.filter(o=>o.directProductLink&&o.url).slice(0,8);
+  const structured=await Promise.all(webCandidates.map(o=>merchantProductEvidence(o.url,query)));
+  const pageOffers=structured.filter(o=>o&&o.price!==null);
+  // Priorité au prix constaté sur la page marchande, pas au titre du moteur de recherche.
+  for(const p of pageOffers){
+   const existing=offers.find(o=>o.url===p.url);
+   if(existing)Object.assign(existing,p);else addMore([p]);
+  }
+  if(pageOffers.length)source='brave+merchant_pages';
+  let claudeResearch={status:'web_discovery_not_enabled',attempts:[]};
   // Claude n'utilise les crédits Anthropic que si les offres complètes sont insuffisantes.
-  if(offers.filter(pricedDirect).length<5&&process.env.ENABLE_CLAUDE_RESEARCH!=='false'&&process.env.ANTHROPIC_API_KEY){
+  if(offers.filter(pricedDirect).length<5&&process.env.ENABLE_CLAUDE_WEB_DISCOVERY==='true'&&process.env.ANTHROPIC_API_KEY){
    claudeResearch=await claudeProductCandidates(query);
    addMore(claudeResearch.offers);
    source=braveOffers.length?'brave+claude':'claude_web';
@@ -534,8 +545,8 @@ export default async function handler(req){
   const valid=completion.offers;
   const reply=valid.length
    ?'Voici '+valid.length+' offre(s) avec prix et fiche marchand directe. Les prix sont sourcés mais à confirmer chez le marchand.'
-   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web indépendante : '+source+'. Aucun prix ni URL inventé.';
-  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,attempts:shop.attempts||[],detail:shoppingMessages[shop.status]||shop.status},completionDiagnostic:{...completion.diagnostic,merchantRecovery:recovered.attempts},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
+   :'Aucune offre avec prix ET lien marchand ne peut encore être confirmée. Recherche web : '+source+'. '+(!process.env.BRAVE_SEARCH_API_KEY?'Aucun moteur web externe gratuit configuré. ':'')+'Aucun prix ni URL inventé.';
+  return respond({phase:'results',reply,sessionId:sid,offers:valid,search:{query,criteria:approved.criteria.slice(0,8),source,shoppingDiagnostic:{status:shop.status,received:shop.received,rejected:shop.rejected,attempts:shop.attempts||[],detail:shoppingMessages[shop.status]||shop.status},completionDiagnostic:{...completion.diagnostic,merchantRecovery:recovered.attempts,freeMerchantPagesChecked:webCandidates.length,freeMerchantPrices:pageOffers.length},pricedCount:valid.length,claudeResearch:{status:claudeResearch.status,attempts:claudeResearch.attempts,evidenceCount:claudeResearch.evidenceCount||0,rejected:claudeResearch.rejected||0},observedAt:new Date().toISOString()}})
  }
  if(!message)return respond({error:'Demande vide'},400);
  const turns=Math.max(0,Math.min(4,Number(body.questionCount)||0));
